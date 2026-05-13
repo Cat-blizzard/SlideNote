@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "slidenote"
+version = "0.1.0"
+description = "Coverage-aware course note generator from lecture slides."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "python-pptx>=0.6.23",
+    "PyMuPDF>=1.24.0",
+    "Pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+llm = ["openai>=1.40.0"]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+slidenote = "slidenote.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["slidenote*"]

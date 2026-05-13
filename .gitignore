@@ -1,0 +1,14 @@
+__pycache__/
+.pytest_cache/
+.venv/
+*.egg-info/
+build/
+dist/
+outputs/
+materials/
+.env
+.env.*
+*.key
+*.pem
+.smoke/
+.slidenote-cache/

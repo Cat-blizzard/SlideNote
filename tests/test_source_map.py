@@ -1,0 +1,28 @@
+from pathlib import Path
+
+from slidenote.models import Deck, ImageAsset, SlidePage, TextBlock
+from slidenote.source_map import build_source_map
+
+
+def test_source_map_links_note_blocks_to_elements(tmp_path):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=2,
+                text_blocks=[TextBlock(id="s2_t1", type="paragraph", content="TCP")],
+                images=[
+                    ImageAsset(id="s2_img1", path="images/diagram.png", role="content"),
+                    ImageAsset(id="s2_img2", path="images/icon.png", ignored=True, role="decorative"),
+                ],
+            )
+        ],
+    )
+    notes = "TCP 是传输层协议。\n【对应 PPT：第 2 页，文本块 s2_t1，图片 s2_img1】\n"
+
+    source_map = build_source_map(deck, notes, tmp_path)
+
+    refs = source_map["note_blocks"][0]["source_refs"]
+    assert {ref["element_id"] for ref in refs} == {"s2_t1", "s2_img1"}
+    assert source_map["pages"][0]["images"][1]["ignored"] is True

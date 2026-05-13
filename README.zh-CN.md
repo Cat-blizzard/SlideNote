@@ -1,0 +1,582 @@
+# SlideNote
+
+> 中文版说明。English README: [README.md](README.md)。后续扩展路线图：[ROADMAP.zh-CN.md](ROADMAP.zh-CN.md)
+
+SlideNote 是一个“保真型课程笔记生成器”的 MVP：输入课程 PPTX/PPT/PDF，先解析成逐页结构化 JSON，再用规则草稿或大模型生成带来源页码、图片和覆盖率检查的 Markdown 笔记。
+
+## 功能
+
+- 支持 `.pptx` 和 `.pdf`，`.ppt` 会尝试通过 LibreOffice 转成 PDF 后解析。
+- 逐页抽取标题、正文文本块、表格、嵌入图片。
+- 每页尽量保存页面截图：PDF 原生支持；PPTX 需要本机安装 LibreOffice 或 PowerPoint COM 可用。
+- 生成 `content.json` 作为原始内容清单。
+- 生成 `notes.md`，每段都带 `PPT 第 X 页` 和元素 ID。
+- 生成 `coverage.json` / `coverage.md`，检查哪些元素没有出现在笔记中。
+- 支持多家 LLM：ChatGPT/OpenAI、DeepSeek、通义千问、豆包、GLM、Gemini、Claude。
+
+## 起源
+
+SlideNote 来自一个个人的学习困境。
+
+我一直不是那种特别适合“只靠听课”学习的人。有时候老师讲得很快，或者表达方式不太适合我，我在课堂上并不能完全跟上。相比听课，我更喜欢阅读：文字可以反复看，可以停下来想，也可以按照自己的节奏跳转、回看和整理。
+
+但课下直接读 PPT，我又总觉得差点意思。PPT 本质上更像是老师讲课时的提示板，而不是一份真正适合阅读和复习的笔记。很多内容都是零散的，逻辑藏在老师的讲解里，关键知识还经常出现在图、表、流程图、公式截图和页面布局中。
+
+当然，我也试过自己整理笔记，但这件事既耗时间，也很难保证不遗漏。而且手写笔记的字迹和排版有时会让我自己都不太想回头看。
+
+所以我想做一个工具，把课程 PPT/PDF 转换成结构清晰、内容完整、保留图片、可追溯到原页码的课程笔记。它不只是总结课件，而是尽量把展示材料变成真正适合学习的文字材料。
+
+于是就有了 SlideNote。
+
+## 本机环境要求
+
+SlideNote 不需要本机 GPU。基础解析、OCR、视觉理解和大模型改写可以分层启用：你只用本地规则草稿时，环境很轻；启用 LLM/OCR/视觉时，需要配置对应平台的 API key。
+
+### 必需环境
+
+- Python `3.10` 或更高版本。
+- 推荐使用虚拟环境 `.venv`。
+- 基础 Python 依赖由 `pyproject.toml` 管理：
+  - `python-pptx`：解析 `.pptx` 结构、文本、表格和嵌入图片。
+  - `PyMuPDF`：解析 `.pdf`，渲染 PDF 页面截图。
+  - `Pillow`：处理、缩放和保存图片。
+
+### 可选但强烈推荐的软件
+
+| 软件 | 是否必需 | 用途 |
+| --- | --- | --- |
+| LibreOffice | 推荐 | 在没有 PowerPoint 时，把 `.ppt` / `.pptx` 转成 PDF，并生成整页截图。 |
+| Microsoft PowerPoint | 可选 | Windows 上可通过 COM 导出 PPTX 整页截图。 |
+| WPS | 手动可用 | 当前 CLI 不会自动调用 WPS，但可以用 WPS 手动把 PPT 导出成 PDF 后再交给 SlideNote。 |
+
+Windows 用户如果没有 PowerPoint，推荐安装 Windows 版 LibreOffice。常见路径是：
+
+```powershell
+C:\Program Files\LibreOffice\program\soffice.exe
+```
+
+当前代码会从系统 PATH 里查找 `soffice` 或 `libreoffice`。安装后可以用下面命令检查：
+
+```powershell
+soffice --version
+```
+
+如果提示找不到命令，可以把下面目录加入 Windows 的 PATH：
+
+```text
+C:\Program Files\LibreOffice\program
+```
+
+PowerPoint 路线需要额外安装 `pywin32`：
+
+```powershell
+python -m pip install pywin32
+```
+
+如果 LibreOffice 和 PowerPoint 都不可用：
+
+- `.pdf` 仍然可以正常解析。
+- `.pptx` 仍然可以提取文本、表格和嵌入图片，但整页截图可能缺失。
+- `.ppt` 老格式通常无法直接处理，建议先用 WPS、PowerPoint 或 LibreOffice 手动导出为 PDF。
+
+### API Key 配置
+
+LLM、OCR 和视觉解析都是可选能力。不开启对应功能时，不需要配置 API key。
+
+常见环境变量示例：
+
+```powershell
+# LLM
+$env:OPENAI_API_KEY="..."
+$env:DEEPSEEK_API_KEY="..."
+$env:DASHSCOPE_API_KEY="..."
+$env:ARK_API_KEY="..."
+$env:GLM_API_KEY="..."
+$env:GEMINI_API_KEY="..."
+$env:ANTHROPIC_API_KEY="..."
+
+# OCR
+$env:BAIDU_OCR_API_KEY="..."
+$env:BAIDU_OCR_SECRET_KEY="..."
+$env:MATHPIX_APP_ID="..."
+$env:MATHPIX_APP_KEY="..."
+$env:GOOGLE_VISION_API_KEY="..."
+```
+
+PowerShell 里的 `$env:...="..."` 只对当前终端会话生效。长期使用时，可以把这些变量配置到 Windows 系统环境变量里，或者每次运行前重新设置。
+
+### 按功能选择配置
+
+| 目标 | 需要什么 |
+| --- | --- |
+| 只解析 PDF / PPTX 并生成本地规则草稿 | Python 3.10+ 和基础依赖 |
+| 使用 LLM 改写正式笔记 | 安装 `.[llm]`，配置对应 LLM API key |
+| 处理扫描 PDF、图片型 PPT | 配置 OCR API，运行时加 `--ocr auto` |
+| 理解流程图、截图、图表等视觉信息 | 配置视觉模型 API，运行时加 `--vision auto` |
+| 让 PPTX 保留整页截图 | 安装 LibreOffice，或 Windows 上安装 PowerPoint + `pywin32` |
+| 处理 `.ppt` 老格式 | 推荐安装 LibreOffice；或先手动导出 PDF |
+
+## 安装
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev,llm]"
+```
+
+如果只需要本地规则草稿，不需要 LLM：
+
+```powershell
+python -m pip install -e ".[dev]"
+```
+
+## 基本使用
+
+本地规则草稿：
+
+```powershell
+python -m slidenote build path\to\lecture.pptx --out outputs\lecture
+```
+
+LLM 正式改写：
+
+```powershell
+python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --provider openai
+```
+
+输出目录结构：
+
+```text
+outputs/lecture/
+  content.json
+  notes.md
+  llm_usage.json
+  ocr.json
+  ocr_usage.json
+  visuals.json
+  vision_usage.json
+  coverage.json
+  coverage.md
+  source_map.json
+  progress.json
+  run_summary.json
+  images/
+  screenshots/
+```
+
+## 环境检测
+
+如果不确定本机缺什么，可以先运行：
+
+```powershell
+python -m slidenote doctor
+```
+
+它会检查：
+
+- Python 版本。
+- 核心依赖：PyMuPDF、python-pptx、Pillow。
+- 可选依赖：OpenAI SDK、pywin32。
+- 外部软件：LibreOffice / `soffice`。
+- 常见 LLM/OCR API key 环境变量。
+
+也可以把结果写成 JSON：
+
+```powershell
+python -m slidenote doctor --json doctor.json
+```
+
+## 速度、进度与局部刷新
+
+长 PPT/PDF 可能需要较长时间，尤其是开启 OCR、视觉解析和 LLM 改写时。SlideNote 会默认写入：
+
+```text
+progress.json      # 当前/最近一次运行进度
+  run_summary.json   # 运行完成后的总览报告
+```
+
+CLI 也会显示阶段进度。想关闭终端进度输出但保留 `progress.json`：
+
+```powershell
+python -m slidenote build lecture.pdf --out outputs\lecture --quiet
+```
+
+速度模式不会自动开启 OCR、视觉或 LLM，只会调整未显式设置的限额：
+
+```powershell
+--speed-mode fast      # 更少视觉/OCR targets，更短输出预算
+--speed-mode balanced  # 默认折中
+--speed-mode quality   # 更高图片分辨率和输出预算
+--speed-mode debug     # 小目标数，适合调试
+```
+
+例如：
+
+```powershell
+python -m slidenote build lecture.pdf `
+  --out outputs\lecture-fast `
+  --speed-mode fast `
+  --vision auto `
+  --vision-provider qwen `
+  --use-llm `
+  --provider deepseek
+```
+
+OCR、Vision 和逐页 LLM 可以并发调用 API。并发能加速，但也更容易触发服务商限速；建议先从 `2` 或 `3` 开始：
+
+```powershell
+--concurrency 3
+```
+
+如果希望不同输出目录共用缓存，可以设置全局缓存目录：
+
+```powershell
+python -m slidenote build lecture.pdf `
+  --out outputs\lecture-v2 `
+  --global-cache-dir .slidenote-cache `
+  --use-llm `
+  --provider deepseek
+```
+
+也可以只强制某些页绕过缓存重新生成，其它页仍然尽量命中缓存：
+
+```powershell
+--refresh-pages 3,5-8
+```
+
+注意：当前 `--refresh-pages` 是“绕过这些页的本地缓存”，不是只输出这些页。它适合在同一份材料上局部刷新 OCR、视觉或 LLM 结果。
+
+## 图片过滤与来源映射
+
+PDF/PPT 里经常包含 logo、小图标、背景碎片等装饰性图片。SlideNote 会保留原始图片文件，但会在 `content.json` 中给疑似装饰图打标：
+
+```json
+{
+  "role": "decorative",
+  "ignored": true,
+  "ignore_reason": "tiny_area"
+}
+```
+
+被标记为 `ignored` 的图片默认不会进入笔记、覆盖率检查、OCR fallback 或独立视觉解析目标。整页截图仍会保留在 `screenshots/`，用于兜底保存视觉信息。
+
+`source_map.json` 会记录笔记块和原始元素之间的映射，方便未来 GUI、LaTeX/Word/HTML 导出和来源显示策略使用：
+
+```text
+note block -> PPT/PDF 页码 -> text/table/image element id
+```
+
+即使正文未来选择隐藏来源，底层仍可以保留这份映射。
+
+## LLM Provider
+
+OpenAI-compatible 的平台使用 OpenAI SDK，所以安装 `.[llm]` 后即可使用。Gemini 和 Claude 走原生 REST，不需要额外 SDK。
+
+当前 LLM 改写步骤默认是文本调用：不会把图片二进制直接传给模型。对 DeepSeek 这类非多模态模型，SlideNote 会只提供文本块、表格、图片路径和元素 ID；提示词会要求模型保留图片引用，但不能猜测图片内容。图片理解应作为独立步骤完成，例如先用 OCR 或视觉模型生成 `visual_summary`，再交给 DeepSeek 做文字改写。
+
+| Provider | 用法 | 默认模型 | API Key 环境变量 | Base URL |
+| --- | --- | --- | --- | --- |
+| ChatGPT/OpenAI | `--provider openai` | `gpt-4.1-mini` | `OPENAI_API_KEY` | OpenAI SDK 默认 |
+| DeepSeek | `--provider deepseek` | `deepseek-v4-flash` | `DEEPSEEK_API_KEY` | `https://api.deepseek.com` |
+| 通义千问 | `--provider qwen` | 文本默认 `qwen-plus`，视觉默认 `qwen-vl-plus` | `QWEN_API_KEY` 或 `DASHSCOPE_API_KEY` | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| 豆包/火山方舟 | `--provider doubao` | 需传 `--model`；视觉需传 `--vision-model` 或设 `ARK_VISION_MODEL` | `DOUBAO_API_KEY` / `ARK_API_KEY` / `VOLCENGINE_API_KEY` | `https://ark.cn-beijing.volces.com/api/v3` |
+| GLM/智谱 | `--provider glm` | `glm-5.1` | `GLM_API_KEY` / `ZAI_API_KEY` / `ZHIPUAI_API_KEY` | `https://open.bigmodel.cn/api/paas/v4/` |
+| Gemini | `--provider gemini` | `gemini-3-flash-preview` | `GEMINI_API_KEY` 或 `GOOGLE_API_KEY` | `https://generativelanguage.googleapis.com/v1beta` |
+| Claude | `--provider claude` | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` 或 `CLAUDE_API_KEY` | `https://api.anthropic.com` |
+
+示例：
+
+```powershell
+$env:DEEPSEEK_API_KEY="..."
+python -m slidenote build lecture.pptx --out outputs\lecture --use-llm --provider deepseek
+```
+
+```powershell
+$env:DASHSCOPE_API_KEY="..."
+python -m slidenote build lecture.pptx --out outputs\lecture --use-llm --provider qwen --model qwen-plus
+```
+
+```powershell
+$env:ARK_API_KEY="..."
+python -m slidenote build lecture.pptx --out outputs\lecture --use-llm --provider doubao --model ep-xxxxxxxx
+```
+
+```powershell
+$env:GEMINI_API_KEY="..."
+python -m slidenote build lecture.pdf --out outputs\lecture --use-llm --provider gemini
+```
+
+```powershell
+$env:ANTHROPIC_API_KEY="..."
+python -m slidenote build lecture.pdf --out outputs\lecture --use-llm --provider claude
+```
+
+通用覆盖参数：
+
+```powershell
+python -m slidenote build lecture.pptx `
+  --out outputs\lecture `
+  --use-llm `
+  --provider glm `
+  --model glm-5.1 `
+  --max-output-tokens 6000 `
+  --temperature 0.2 `
+  --cache on
+```
+
+如果你使用代理、私有网关或不同地域，可以覆盖 Base URL：
+
+```powershell
+python -m slidenote build lecture.pptx --use-llm --provider qwen --base-url https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+```
+
+也可以用环境变量覆盖模型和 Base URL：
+
+```powershell
+$env:SLIDENOTE_MODEL="qwen-plus"
+$env:SLIDENOTE_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+```
+
+## 专门 OCR
+
+SlideNote 现在把 OCR 和视觉理解分开：
+
+```text
+OCR = 读出图片里的文字
+视觉理解 = 解释图、流程、趋势、布局和视觉关系
+```
+
+专门 OCR 适合扫描版 PDF、图片型 PPT、截图和扫描教材页。OCR 会在视觉理解和笔记生成之前运行，把识别结果写回 `content.json`：
+
+```json
+{
+  "page_ocr_text": "...",
+  "page_ocr_status": "parsed",
+  "images": [
+    {
+      "id": "s12_img1",
+      "ocr_text": "...",
+      "ocr_status": "parsed"
+    }
+  ]
+}
+```
+
+OCR 默认关闭：
+
+```powershell
+--ocr off
+```
+
+中文场景推荐先用百度 OCR：
+
+```powershell
+$env:BAIDU_OCR_API_KEY="..."
+$env:BAIDU_OCR_SECRET_KEY="..."
+
+python -m slidenote build lecture.pdf `
+  --out outputs\lecture `
+  --ocr auto `
+  --ocr-provider baidu
+```
+
+`--ocr auto` 不会 OCR 每一页。系统会先做本地文本抽取；只有抽取文字太少、像扫描件或图片型页面的页，才会被送去 OCR。
+
+已支持 OCR provider：
+
+| Provider | 用法 | 需要的凭据 |
+| --- | --- | --- |
+| 百度 OCR | `--ocr-provider baidu` | `BAIDU_OCR_API_KEY` + `BAIDU_OCR_SECRET_KEY` |
+| Mathpix | `--ocr-provider mathpix` | `MATHPIX_APP_ID` + `MATHPIX_APP_KEY` |
+| Google Vision OCR | `--ocr-provider google` | `GOOGLE_VISION_API_KEY` 或 `GOOGLE_API_KEY` |
+
+示例：
+
+```powershell
+$env:MATHPIX_APP_ID="..."
+$env:MATHPIX_APP_KEY="..."
+python -m slidenote build math_notes.pdf --out outputs\math --ocr auto --ocr-provider mathpix
+```
+
+```powershell
+$env:GOOGLE_VISION_API_KEY="..."
+python -m slidenote build lecture.pdf --out outputs\lecture --ocr auto --ocr-provider google
+```
+
+OCR 控制参数：
+
+```powershell
+--ocr auto                 # 只 OCR 抽取文字较少的页面
+--ocr all                  # 尽量 OCR 每页截图
+--ocr-max-targets 120
+--ocr-min-text-chars 80
+--ocr-max-edge 1800
+--ocr-language CHN_ENG
+--ocr-cache on
+```
+
+OCR 输出：
+
+```text
+ocr.json
+ocr_usage.json
+```
+
+`ocr_usage.json` 会记录目标页、缓存命中、API 调用次数和识别字符数。OCR 结果和视觉摘要分开缓存，所以换笔记模型或视觉模型时，不会强制重新 OCR。
+
+## 视觉解析
+
+很多课程 PPT 的关键信息在图、流程图、截图、公式图片和页面布局里。SlideNote 支持在笔记生成前先跑一个独立视觉解析步骤，把图片中的文字和视觉摘要写回 `content.json`，同时输出：
+
+```text
+visuals.json
+vision_usage.json
+```
+
+视觉解析默认关闭，因为它会额外消耗多模态 token：
+
+```powershell
+--vision off
+```
+
+推荐先用自动选择模式。中国区优先推荐 Qwen-VL 做视觉解析，再用 DeepSeek 做正文改写：
+
+```powershell
+$env:DASHSCOPE_API_KEY="..."
+$env:DEEPSEEK_API_KEY="..."
+
+python -m slidenote build lecture.pptx `
+  --out outputs\lecture `
+  --vision auto `
+  --vision-provider qwen `
+  --use-llm `
+  --provider deepseek
+```
+
+这条命令的含义是：先用 Qwen-VL 解析高价值图片，再用 DeepSeek 做正文改写。视觉解析不是生成孤立 caption，而是会带上本页标题和文字上下文，让视觉摘要尽量说明图片与文字之间的关系；最终笔记生成也会要求把 `visual_summary` 和相关 text/table 合并成同一个知识段落。
+
+豆包/火山方舟也支持视觉解析，但通常需要在方舟控制台创建视觉模型推理接入点，然后把 endpoint/model id 传给 `--vision-model` 或设环境变量 `ARK_VISION_MODEL`：
+
+```powershell
+$env:ARK_API_KEY="..."
+$env:ARK_VISION_MODEL="ep-xxxxxxxx"
+$env:DEEPSEEK_API_KEY="..."
+python -m slidenote build lecture.pptx --out outputs\lecture --vision auto --vision-provider doubao --use-llm --provider deepseek
+```
+
+图片取舍策略：
+
+```powershell
+--vision auto   # 推荐：优先解析整页截图，跳过明显低价值小图
+--vision all    # 尽量解析每一页截图；成本最高
+--vision off    # 不做视觉解析
+```
+
+默认 `auto` 会优先选整页截图，因为一张页截图通常能同时覆盖流程图、形状、箭头、嵌入图片和布局关系，比逐个小图更省调用次数。如果没有页截图，才会按面积选择较大的嵌入图。
+
+成本控制参数：
+
+```powershell
+--vision-max-targets 80       # 最多解析多少张图/页截图；0 表示不限
+--vision-min-area 120000      # auto fallback 时跳过太小的嵌入图
+--vision-max-edge 1400        # 传给模型前缩小长边，降低成本
+--vision-detail low           # OpenAI 低细节模式，适合先跑粗解析
+--vision-cache on             # 默认开启视觉缓存
+```
+
+更保守的低成本配置：
+
+```powershell
+python -m slidenote build lecture.pptx `
+  --out outputs\lecture `
+  --vision auto `
+  --vision-provider qwen `
+  --vision-max-targets 30 `
+  --vision-max-edge 1000 `
+  --use-llm `
+  --provider deepseek
+```
+
+如果你确定课件高度依赖图片，可以用：
+
+```powershell
+python -m slidenote build lecture.pptx --out outputs\lecture --vision all --vision-provider openai --use-llm --provider openai
+```
+
+但不建议默认全量读图。更好的产品策略是：先 `auto`，看 `vision_usage.json` 和 `coverage.md`，再对低质量页面或遗漏页面局部 `refresh`。
+
+视觉结果会写回页面字段：
+
+```json
+{
+  "page_ocr_text": "...",
+  "page_visual_summary": "...",
+  "images": [
+    {
+      "id": "s12_img1",
+      "ocr_text": "...",
+      "visual_summary": "..."
+    }
+  ]
+}
+```
+
+后续 DeepSeek、GLM、千问等文本模型会读取这些文字化视觉结果，而不是直接看图片。
+
+## LLM 缓存与用量报告
+
+LLM 改写默认开启本地缓存。每一页会根据以下信息生成缓存 key：
+
+```text
+结构化页内容 + prompt version + provider + model + base_url + temperature + max-output-tokens
+```
+
+同一页内容和同一参数再次生成时，会直接复用缓存，不再调用模型。缓存命中信息不会污染正文，而是写入 `llm_usage.json`，方便后续 GUI 直接展示。
+
+缓存模式：
+
+```powershell
+--cache on       # 默认：命中就复用，未命中就调用并写入缓存
+--cache refresh  # 不读旧缓存，重新调用模型并覆盖缓存
+--cache off      # 完全关闭缓存
+```
+
+也可以指定缓存目录：
+
+```powershell
+python -m slidenote build lecture.pptx --use-llm --provider deepseek --cache-dir .slidenote-cache\llm
+```
+
+`llm_usage.json` 会记录：
+
+- 每页 `cache_status`：`local_hit`、`miss`、`refresh` 或 `disabled`
+- 每页 `cache_key` 和 `cache_file`
+- 实际调用页数、缓存命中页数
+- provider 返回的 input/output/total tokens
+- provider 侧 cached input tokens，如果该平台返回此字段
+
+## 设计原则
+
+SlideNote 不走 `PPT -> LLM -> 总结` 的捷径，而是：
+
+```text
+PPT/PDF -> 结构化解析 -> 内容清单 -> 笔记生成 -> 覆盖率校验 -> 导出
+```
+
+本地规则草稿只负责把结构化内容“保底写出来”，方便调试解析和覆盖率。正式笔记建议使用 `--use-llm`，但覆盖率检查仍然依靠元素 ID 做硬校验，避免模型把细节悄悄总结掉。
+
+## 参考文档
+
+- [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat/create)
+- [OpenAI Images and vision](https://developers.openai.com/api/docs/guides/images-vision)
+- [DeepSeek API](https://api-docs.deepseek.com/)
+- [阿里云百炼 OpenAI 兼容接口](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope)
+- [火山方舟 OpenAI SDK 兼容](https://www.volcengine.com/docs/82379/1330626)
+- [智谱 GLM OpenAI 兼容](https://docs.bigmodel.cn/cn/guide/develop/openai/introduction)
+- [百度 OCR API](https://ai.baidu.com/ai-doc/REFERENCE/4kru2vqdg)
+- [Mathpix OCR API](https://docs.mathpix.com/reference/post-v3-text)
+- [Google Cloud Vision OCR](https://cloud.google.com/vision/docs/ocr)
+- [Gemini generateContent API](https://ai.google.dev/gemini-api/docs/text-generation)
+- [Gemini image understanding](https://ai.google.dev/gemini-api/docs/image-understanding)
+- [Claude Messages API](https://docs.anthropic.com/en/api/messages)
+- [Claude Vision](https://platform.claude.com/docs/en/build-with-claude/vision)
