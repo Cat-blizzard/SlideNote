@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from slidenote.image_ranking import sorted_images_by_importance
 from slidenote.llm import LLMClient, SYSTEM_PROMPT, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
@@ -49,10 +50,15 @@ class NoteContext:
     pages: list[SlidePage]
 
 
-def estimate_note_generation_steps(deck: Deck, note_context: str = "section", note_strategy: str = "lecture-weave") -> int:
+def estimate_note_generation_steps(
+    deck: Deck,
+    note_context: str = "section",
+    note_strategy: str = "lecture-weave",
+    section_plan: dict[str, Any] | None = None,
+) -> int:
     if note_strategy == "lecture-weave":
-        return len(deck.pages) + len(_select_note_contexts(deck, note_context))
-    return len(_select_note_contexts(deck, note_context))
+        return len(deck.pages) + len(_select_note_contexts(deck, note_context, section_plan=section_plan))
+    return len(_select_note_contexts(deck, note_context, section_plan=section_plan))
 
 
 def generate_notes(
@@ -79,6 +85,7 @@ def generate_notes(
     weave_dedup: str = "soft",
     page_neighborhood: int = 1,
     screenshot_policy: str = "fallback",
+    section_plan: dict[str, Any] | None = None,
 ) -> str:
     return generate_notes_result(
         deck=deck,
@@ -104,6 +111,7 @@ def generate_notes(
         weave_dedup=weave_dedup,
         page_neighborhood=page_neighborhood,
         screenshot_policy=screenshot_policy,
+        section_plan=section_plan,
     ).markdown
 
 
@@ -131,6 +139,7 @@ def generate_notes_result(
     weave_dedup: str = "soft",
     page_neighborhood: int = 1,
     screenshot_policy: str = "fallback",
+    section_plan: dict[str, Any] | None = None,
 ) -> NoteGenerationResult:
     _validate_generation_options(
         asset_mode,
@@ -169,6 +178,7 @@ def generate_notes_result(
             weave_dedup=weave_dedup,
             page_neighborhood=page_neighborhood,
             screenshot_policy=screenshot_policy,
+            section_plan=section_plan,
         )
         result.asset_warnings = (result.asset_warnings or []) + asset_warnings + _validate_markdown_image_links(
             result.markdown, output_root
@@ -257,7 +267,7 @@ def _generate_notes_locally(
             lines.extend(_render_table(page, table, source_display=source_display))
             lines.append("")
 
-        for image in page.images:
+        for image in sorted_images_by_importance(page.images):
             if image.ignored:
                 continue
             lines.extend(_render_image(page, image, asset_map=asset_map, source_display=source_display))
@@ -411,6 +421,7 @@ def _generate_notes_with_llm(
     weave_dedup: str,
     page_neighborhood: int,
     screenshot_policy: str,
+    section_plan: dict[str, Any] | None,
 ) -> NoteGenerationResult:
     runtime = resolve_provider_runtime(provider, model=model, base_url=base_url)
     resolved_provider = str(runtime["provider"])
@@ -445,9 +456,10 @@ def _generate_notes_with_llm(
             page_neighborhood=page_neighborhood,
             screenshot_policy=screenshot_policy,
             supports_image_input=supports_image_input,
+            section_plan=section_plan,
         )
 
-    contexts = _select_note_contexts(deck, note_context)
+    contexts = _select_note_contexts(deck, note_context, section_plan=section_plan)
     resolved_note_context = _resolved_context_mode(deck, note_context)
     lines = [f"# {Path(deck.source_path).stem}", ""]
     refresh_ids = refresh_slide_ids or set()
@@ -555,6 +567,7 @@ def _generate_notes_with_lecture_weave(
     page_neighborhood: int,
     screenshot_policy: str,
     supports_image_input: bool,
+    section_plan: dict[str, Any] | None,
 ) -> NoteGenerationResult:
     refresh_ids = refresh_slide_ids or set()
     workers = max(1, int(concurrency or 1))
@@ -562,7 +575,7 @@ def _generate_notes_with_lecture_weave(
         NoteContext(id=f"p{page.slide_id}", kind="page_note", title=page.title or f"第 {page.slide_id} 页", pages=[page])
         for page in deck.pages
     ]
-    section_titles = _section_title_by_slide(deck)
+    section_titles = _section_title_by_slide(deck, section_plan=section_plan)
     page_results: dict[str, tuple[str, dict[str, Any]]] = {}
 
     def process_page(context: NoteContext) -> tuple[str, str, dict[str, Any]]:
@@ -615,7 +628,7 @@ def _generate_notes_with_lecture_weave(
         page_records.append(record)
 
     resolved_note_context = _resolved_context_mode(deck, note_context)
-    weave_contexts = _select_note_contexts(deck, note_context)
+    weave_contexts = _select_note_contexts(deck, note_context, section_plan=section_plan)
     weave_results: dict[str, tuple[str, dict[str, Any]]] = {}
 
     def process_weave(context: NoteContext) -> tuple[str, str, dict[str, Any]]:
@@ -1265,6 +1278,15 @@ def _page_payload_for_prompt(page: SlidePage, asset_map: dict[str, str], support
     else:
         page_payload["page_screenshot"] = None
     if page_payload.get("images"):
+        page_payload["images"] = sorted(
+            page_payload["images"],
+            key=lambda image: (
+                image.get("ignored", False),
+                image.get("importance_rank") if image.get("importance_rank") is not None else 9999,
+                -(image.get("importance_score") or 0.0),
+                image.get("id") or "",
+            ),
+        )
         for image in page_payload["images"]:
             image["path"] = _asset_display_path(image["path"], asset_map)
             image["visual_status"] = (
@@ -1428,7 +1450,7 @@ def _iter_note_asset_paths(deck: Deck, screenshot_policy: str) -> list[tuple[str
     for page in deck.pages:
         if _should_render_screenshot(page, screenshot_policy):
             paths.append((page.page_screenshot, "screenshots"))
-        for image in page.images:
+        for image in sorted_images_by_importance(page.images):
             if not image.ignored:
                 kind = "figures" if image.role == "figure_crop" else "images"
                 paths.append((image.path, kind))
@@ -1552,9 +1574,9 @@ def _page_brief(page: SlidePage, limit: int = 260) -> str:
     return text[: limit - 1] + "…"
 
 
-def _section_title_by_slide(deck: Deck) -> dict[int, str]:
+def _section_title_by_slide(deck: Deck, section_plan: dict[str, Any] | None = None) -> dict[int, str]:
     result: dict[int, str] = {}
-    for context in _section_contexts(deck):
+    for context in _section_contexts(deck, section_plan=section_plan):
         for page in context.pages:
             result[page.slide_id] = context.title
     return result
@@ -1702,7 +1724,7 @@ def _source_tokens(markdown: str) -> set[str]:
     return set(re.findall(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", markdown))
 
 
-def _select_note_contexts(deck: Deck, requested: str) -> list[NoteContext]:
+def _select_note_contexts(deck: Deck, requested: str, section_plan: dict[str, Any] | None = None) -> list[NoteContext]:
     resolved = _resolved_context_mode(deck, requested)
     if resolved == "document":
         return [NoteContext(id="doc", kind="document", title=Path(deck.source_path).stem, pages=list(deck.pages))]
@@ -1711,7 +1733,7 @@ def _select_note_contexts(deck: Deck, requested: str) -> list[NoteContext]:
             NoteContext(id=f"p{page.slide_id}", kind="page", title=page.title or f"第 {page.slide_id} 页", pages=[page])
             for page in deck.pages
         ]
-    return _section_contexts(deck)
+    return _section_contexts(deck, section_plan=section_plan)
 
 
 def _resolved_context_mode(deck: Deck, requested: str) -> str:
@@ -1732,9 +1754,13 @@ def _structured_char_count(deck: Deck) -> int:
     return total
 
 
-def _section_contexts(deck: Deck) -> list[NoteContext]:
+def _section_contexts(deck: Deck, section_plan: dict[str, Any] | None = None) -> list[NoteContext]:
     if not deck.pages:
         return []
+    if section_plan:
+        planned_contexts = _section_contexts_from_plan(deck, section_plan)
+        if planned_contexts:
+            return planned_contexts
     boundaries = _section_boundaries(deck)
     if len(boundaries) <= 1:
         boundaries = [deck.pages[index].slide_id for index in range(0, len(deck.pages), 8)]
@@ -1750,6 +1776,27 @@ def _section_contexts(deck: Deck) -> list[NoteContext]:
             continue
         title = _context_title(pages, position + 1)
         contexts.append(NoteContext(id=f"sec{position + 1}", kind="section", title=title, pages=pages))
+    return contexts
+
+
+def _section_contexts_from_plan(deck: Deck, section_plan: dict[str, Any]) -> list[NoteContext]:
+    pages_by_id = {page.slide_id: page for page in deck.pages}
+    contexts: list[NoteContext] = []
+    sections = section_plan.get("sections")
+    if not isinstance(sections, list):
+        return []
+    for index, section in enumerate(sections, start=1):
+        if not isinstance(section, dict):
+            continue
+        raw_ids = section.get("slide_ids")
+        if not isinstance(raw_ids, list):
+            continue
+        pages = [pages_by_id[slide_id] for slide_id in raw_ids if isinstance(slide_id, int) and slide_id in pages_by_id]
+        if not pages:
+            continue
+        context_id = str(section.get("section_id") or f"sec{index}")
+        title = str(section.get("title") or _context_title(pages, index)).strip() or _context_title(pages, index)
+        contexts.append(NoteContext(id=context_id, kind="section", title=title, pages=pages))
     return contexts
 
 

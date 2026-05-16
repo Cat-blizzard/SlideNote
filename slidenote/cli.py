@@ -8,11 +8,13 @@ from slidenote.coverage import analyze_coverage, render_coverage_markdown
 from slidenote.doctor import render_doctor_report, run_doctor
 from slidenote.extractors import extract_deck
 from slidenote.figures import enrich_deck_with_figures
+from slidenote.image_ranking import rank_deck_images
 from slidenote.llm import supported_provider_names
 from slidenote.modality import enrich_deck_with_modalities
 from slidenote.notes import estimate_note_generation_steps, generate_notes_result
 from slidenote.ocr import enrich_deck_with_ocr
 from slidenote.progress import ProgressReporter
+from slidenote.sections import build_section_plan
 from slidenote.source_map import build_source_map
 from slidenote.utils import ensure_clean_dir, write_json, write_text
 from slidenote.vision import enrich_deck_with_vision
@@ -118,6 +120,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="How notes.md includes full-page screenshots. fallback shows them only when no local figure/image exists.",
     )
     build.add_argument(
+        "--section-detection",
+        choices=["auto", "local", "llm"],
+        default="auto",
+        help="How SlideNote detects section boundaries. auto uses LLM section detection when LLM notes are enabled, otherwise local rules.",
+    )
+    build.add_argument(
+        "--section-cache",
+        choices=["on", "off", "refresh"],
+        default="on",
+        help="Section detection cache mode when --section-detection uses an LLM.",
+    )
+    build.add_argument("--section-cache-dir", type=Path, default=None, help="Section detection cache directory. Defaults to <out>/.cache/sections.")
+    build.add_argument(
         "--cache",
         choices=["on", "off", "refresh"],
         default="on",
@@ -165,6 +180,12 @@ def _build_parser() -> argparse.ArgumentParser:
     build.add_argument("--figure-max-crops-per-page", type=int, default=3, help="Maximum local figure crops per page.")
     build.add_argument("--figure-min-confidence", type=float, default=0.45, help="Minimum model confidence for accepting a figure crop.")
     build.add_argument("--figure-min-area", type=int, default=40000, help="Minimum crop area in pixels.")
+    build.add_argument(
+        "--image-ranking",
+        choices=["off", "local"],
+        default="local",
+        help="Rank images by study value before vision and note generation.",
+    )
     build.add_argument(
         "--figure-cache",
         choices=["on", "off", "refresh"],
@@ -264,6 +285,12 @@ def _build(args: argparse.Namespace) -> int:
             )
             progress.finish_stage("Figure crop complete")
 
+        image_importance_report = None
+        if args.image_ranking != "off":
+            progress.start_stage("image_importance", message="Ranking image importance")
+            image_importance_report = rank_deck_images(deck, output_root, mode=args.image_ranking, stage="pre_vision")
+            progress.finish_stage("Image importance ranking complete")
+
         ocr_report = None
         if args.ocr != "off":
             progress.start_stage("ocr", message="Running OCR")
@@ -313,8 +340,31 @@ def _build(args: argparse.Namespace) -> int:
             )
             progress.finish_stage("Vision analysis complete")
 
+        if image_importance_report is not None and vision_report is not None:
+            image_importance_report = rank_deck_images(deck, output_root, mode=args.image_ranking, stage="post_vision")
+
+        progress.start_stage("sections", message="Detecting note sections")
+        section_report = build_section_plan(
+            deck,
+            output_root=output_root,
+            mode=args.section_detection,
+            use_llm=args.use_llm and (args.note_context == "section" or (args.note_context == "auto" and len(deck.pages) > 12)),
+            provider=args.provider,
+            model=args.model,
+            api_key=args.api_key,
+            base_url=args.base_url,
+            cache_mode=args.section_cache,
+            cache_dir=cache_dirs["sections"],
+            max_output_tokens=min(args.max_output_tokens or 1800, 2500),
+            temperature=0.0,
+        )
+        write_json(output_root / "sections.json", section_report)
+        progress.finish_stage("Section detection complete")
+
         progress.start_stage("export_content", message="Writing structured content")
         write_json(output_root / "content.json", deck.to_dict())
+        if image_importance_report is not None:
+            write_json(output_root / "image_importance.json", image_importance_report)
         if figure_report is not None:
             write_json(output_root / "figures.json", _build_figures_export(deck, figure_report))
             write_json(output_root / "figure_usage.json", figure_report)
@@ -326,7 +376,7 @@ def _build(args: argparse.Namespace) -> int:
             write_json(output_root / "vision_usage.json", vision_report)
         progress.finish_stage("Structured content written")
 
-        note_total = estimate_note_generation_steps(deck, args.note_context, args.note_strategy) if args.use_llm else None
+        note_total = estimate_note_generation_steps(deck, args.note_context, args.note_strategy, section_plan=section_report) if args.use_llm else None
         progress.start_stage("notes", total=note_total, message="Generating notes")
         notes_result = generate_notes_result(
             deck,
@@ -352,6 +402,7 @@ def _build(args: argparse.Namespace) -> int:
             weave_dedup=args.weave_dedup,
             page_neighborhood=args.page_neighborhood,
             screenshot_policy=args.screenshot_policy,
+            section_plan=section_report,
         )
         notes_markdown = notes_result.markdown
         write_text(output_root / "notes.md", notes_markdown)
@@ -382,6 +433,8 @@ def _build(args: argparse.Namespace) -> int:
             output_root=output_root,
             deck=deck,
             modality_report=modality_report,
+            image_importance_report=image_importance_report,
+            section_report=section_report,
             figure_report=figure_report,
             ocr_report=ocr_report,
             vision_report=vision_report,
@@ -405,8 +458,11 @@ def _build(args: argparse.Namespace) -> int:
         print(f"- coverage: {output_root / 'coverage.md'}")
         print(f"- sources:  {output_root / 'source_map.json'}")
         print(f"- modalities: {output_root / 'page_modalities.json'}")
+        print(f"- sections: {output_root / 'sections.json'}")
         print(f"- progress: {progress.path}")
         print(f"- summary:  {output_root / 'run_summary.json'}")
+        if image_importance_report is not None:
+            print(f"- image rank: {output_root / 'image_importance.json'}")
         if notes_result.llm_usage is not None:
             print(f"- llm use:  {output_root / 'llm_usage.json'}")
         if notes_result.page_notes is not None:
@@ -482,6 +538,7 @@ def _resolve_cache_dirs(args: argparse.Namespace, output_root: Path) -> dict[str
         "ocr": args.ocr_cache_dir.resolve() if args.ocr_cache_dir else (global_cache / "ocr" if global_cache else None),
         "vision": args.vision_cache_dir.resolve() if args.vision_cache_dir else (global_cache / "vision" if global_cache else None),
         "figure": args.figure_cache_dir.resolve() if args.figure_cache_dir else (global_cache / "figure" if global_cache else None),
+        "sections": args.section_cache_dir.resolve() if args.section_cache_dir else (global_cache / "sections" if global_cache else None),
     }
 
 
@@ -546,6 +603,8 @@ def _build_run_summary(
     output_root: Path,
     deck,
     modality_report: dict[str, Any],
+    image_importance_report: dict[str, Any] | None,
+    section_report: dict[str, Any],
     figure_report: dict[str, Any] | None,
     ocr_report: dict[str, Any] | None,
     vision_report: dict[str, Any] | None,
@@ -577,6 +636,8 @@ def _build_run_summary(
             "note_depth": args.note_depth,
             "weave_dedup": args.weave_dedup,
             "page_neighborhood": args.page_neighborhood,
+            "section_detection": args.section_detection,
+            "image_ranking": args.image_ranking,
             "figure_crop": args.figure_crop,
             "screenshot_policy": args.screenshot_policy,
         },
@@ -590,6 +651,8 @@ def _build_run_summary(
         },
         "figure_crop": figure_report.get("summary") if figure_report else None,
         "page_modalities": modality_report.get("summary") if modality_report else None,
+        "image_importance": image_importance_report.get("summary") if image_importance_report else None,
+        "sections": section_report.get("summary") if section_report else None,
         "ocr": ocr_report.get("summary") if ocr_report else None,
         "vision": vision_report.get("summary") if vision_report else None,
         "llm": llm_usage.get("summary") if llm_usage else None,
@@ -615,6 +678,8 @@ def _build_run_summary(
             "progress": _display_path(progress.path, output_root),
             "run_summary": "run_summary.json",
             "page_modalities": "page_modalities.json",
+            "image_importance": "image_importance.json" if image_importance_report else None,
+            "sections": "sections.json",
             "figures": "figures.json" if figure_report else None,
             "figure_usage": "figure_usage.json" if figure_report else None,
             "llm_usage": "llm_usage.json" if llm_usage else None,
@@ -685,6 +750,9 @@ def _build_figures_export(deck, figure_report):
                         "confidence": image.confidence,
                         "width": image.width,
                         "height": image.height,
+                        "importance_score": image.importance_score,
+                        "importance_rank": image.importance_rank,
+                        "importance_reason": image.importance_reason,
                     }
                     for image in page.images
                     if image.role == "figure_crop"
@@ -718,6 +786,8 @@ def _build_visuals_export(deck, vision_report):
                         "ocr_status": image.ocr_status,
                         "visual_summary": image.visual_summary,
                         "visual_status": image.visual_status,
+                        "importance_score": image.importance_score,
+                        "importance_rank": image.importance_rank,
                     }
                     for image in page.images
                 ],

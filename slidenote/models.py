@@ -41,6 +41,9 @@ class ImageAsset:
     crop_bbox: list[float] | None = None
     crop_method: str | None = None
     confidence: float | None = None
+    importance_score: float | None = None
+    importance_rank: int | None = None
+    importance_reason: str | None = None
 
 
 @dataclass(slots=True)

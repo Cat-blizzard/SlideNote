@@ -47,12 +47,18 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     run_summary = json.loads((out / "run_summary.json").read_text(encoding="utf-8"))
     source_map = json.loads((out / "source_map.json").read_text(encoding="utf-8"))
     page_modalities = json.loads((out / "page_modalities.json").read_text(encoding="utf-8"))
+    sections = json.loads((out / "sections.json").read_text(encoding="utf-8"))
+    image_importance = json.loads((out / "image_importance.json").read_text(encoding="utf-8"))
     assert progress["status"] == "complete"
     assert run_summary["counts"]["pages"] == 1
     assert run_summary["artifacts"]["progress"] == "progress.json"
     assert run_summary["artifacts"]["source_map"] == "source_map.json"
     assert run_summary["artifacts"]["page_modalities"] == "page_modalities.json"
+    assert run_summary["artifacts"]["sections"] == "sections.json"
+    assert run_summary["artifacts"]["image_importance"] == "image_importance.json"
     assert page_modalities["summary"]["pages_total"] == 1
+    assert sections["summary"]["sections_total"] == 1
+    assert image_importance["summary"]["images_total"] == 0
     assert run_summary["artifacts"]["note_assets"] == "notes.assets"
     assert source_map["default_display_mode"] == "hidden"
 
@@ -84,6 +90,8 @@ def test_quality_first_defaults_are_exposed_by_parser():
     assert args.note_strategy == "lecture-weave"
     assert args.note_context == "section"
     assert args.note_depth == "detailed"
+    assert args.section_detection == "auto"
+    assert args.image_ranking == "local"
 
 
 def test_doctor_command_writes_json(tmp_path):

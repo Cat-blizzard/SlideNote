@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from PIL import Image
 
+from slidenote.image_ranking import sorted_images_by_importance
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.modality import page_has_hint
@@ -29,6 +30,7 @@ class VisionTarget:
     path: str
     image_id: str | None = None
     reason: str = ""
+    importance_score: float | None = None
 
 
 def enrich_deck_with_vision(
@@ -270,14 +272,24 @@ def _page_deserves_screenshot(page: SlidePage) -> bool:
 
 def _large_image_targets(page: SlidePage, output_root: Path, min_area: int, first_only: bool) -> list[VisionTarget]:
     targets: list[VisionTarget] = []
-    for image in page.images:
+    for image in sorted_images_by_importance(page.images):
         if image.ignored or image.role == "page_image":
             continue
         path = output_root / image.path
         area = _image_area(path)
         if area is not None and area < min_area:
             continue
-        targets.append(VisionTarget(page.slide_id, "image", image.path, image_id=image.id, reason="large_embedded_image"))
+        reason = "ranked_embedded_image" if image.importance_score is not None else "large_embedded_image"
+        targets.append(
+            VisionTarget(
+                page.slide_id,
+                "image",
+                image.path,
+                image_id=image.id,
+                reason=reason,
+                importance_score=image.importance_score,
+            )
+        )
         if first_only:
             break
     return targets
@@ -285,14 +297,23 @@ def _large_image_targets(page: SlidePage, output_root: Path, min_area: int, firs
 
 def _role_image_targets(page: SlidePage, output_root: Path, role: str, min_area: int, first_only: bool) -> list[VisionTarget]:
     targets: list[VisionTarget] = []
-    for image in page.images:
+    for image in sorted_images_by_importance(page.images):
         if image.ignored or image.role != role:
             continue
         path = output_root / image.path
         area = _image_area(path)
         if area is not None and area < min_area:
             continue
-        targets.append(VisionTarget(page.slide_id, "image", image.path, image_id=image.id, reason=f"{role}_image"))
+        targets.append(
+            VisionTarget(
+                page.slide_id,
+                "image",
+                image.path,
+                image_id=image.id,
+                reason=f"{role}_image",
+                importance_score=image.importance_score,
+            )
+        )
         if first_only:
             break
     return targets
@@ -460,6 +481,7 @@ def _base_record(target: VisionTarget, cache_key: str, cache_path: Path, output_
         "image_id": target.image_id,
         "path": target.path,
         "reason": target.reason,
+        "importance_score": target.importance_score,
         "cache_key": cache_key,
         "cache_file": _display_path(cache_path, output_root),
         "image_meta": image_meta,
@@ -473,6 +495,7 @@ def _skipped_record(target: VisionTarget, status: str, output_root: Path) -> dic
         "image_id": target.image_id,
         "path": target.path,
         "reason": target.reason,
+        "importance_score": target.importance_score,
         "cache_status": "skipped",
         "skip_reason": status,
         "llm_call": False,

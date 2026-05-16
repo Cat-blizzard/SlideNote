@@ -85,6 +85,9 @@ python -m slidenote build lecture.pdf `
 | `--note-depth` | `detailed` | `concise` / `balanced` / `detailed` | 笔记详细程度。 |
 | `--weave-dedup` | `soft` | `soft` / `normal` / `aggressive` | `lecture-weave` 编织阶段的去重强度。 |
 | `--page-neighborhood` | `1` | `0` / `1` / `2` | 逐页深讲时可看到前后几页标题/摘要。 |
+| `--section-detection` | `auto` | `auto` / `local` / `llm` | 章节边界识别方式。 |
+| `--section-cache` | `on` | `on` / `off` / `refresh` | LLM 章节识别缓存模式。 |
+| `--section-cache-dir` | `<out>/.cache/sections` | 路径 | LLM 章节识别缓存目录。 |
 
 ### `note-strategy`
 
@@ -111,6 +114,16 @@ lecture-weave
 
 在 `lecture-weave` 下，第一阶段永远是逐页深讲，`note-context` 控制第二阶段如何编织。
 
+### `section-detection`
+
+| 值 | 含义 | 适合场景 |
+| --- | --- | --- |
+| `auto` | 默认。不开 LLM 时用本地规则；启用章节式 LLM 笔记时用模型辅助识别章节。 | 推荐。 |
+| `local` | 只用目录页、章节标题页和固定页数组合的本地规则。 | 离线、快速、可复现。 |
+| `llm` | 强制调用文本模型识别章节边界。 | 课件结构混乱、标题页不明显时。 |
+
+章节计划会写入 `sections.json`，其中包含每节的标题、起止页、页码列表、识别原因、缓存和 token 用量。`lecture-weave` 会用这份计划决定最终编织边界。
+
 ## 图片、来源与截图呈现
 
 | 参数 | 默认值 | 可选值 | 说明 |
@@ -118,8 +131,11 @@ lecture-weave
 | `--asset-mode` | `bundle` | `bundle` / `absolute` / `embed` | Markdown 图片引用方式。 |
 | `--source-display` | `hidden` | `hidden` / `footnote` / `inline` | 来源页码和元素 ID 的显示方式。 |
 | `--screenshot-policy` | `fallback` | `fallback` / `always` / `never` | 整页截图是否进入 `notes.md`。 |
+| `--image-ranking` | `local` | `off` / `local` | 是否给图片做学习价值排序。 |
 
 `hidden` 会把来源写成 HTML 注释，正文干净，但 `coverage.md` 和 `source_map.json` 仍可追溯。
+
+`image-ranking` 会写入 `image_importance.json`，记录每张图的分数、排名和原因。当前实现是本地启发式：优先局部裁剪图、面积合适的内容图、有 OCR/视觉摘要的图，惩罚装饰图、整页背景图、极细长图片和过小图片。
 
 ## LLM 缓存
 
@@ -198,6 +214,8 @@ lecture-weave
 ```text
 content.json
 page_modalities.json
+image_importance.json
+sections.json
 notes.md
 page_notes.md
 page_notes.json

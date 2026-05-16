@@ -38,9 +38,11 @@
 - 支持 `.pptx` 和 `.pdf`，`.ppt` 会尝试通过 LibreOffice 转成 PDF 后解析。
 - 逐页抽取标题、正文文本块、表格、嵌入图片。
 - 自动识别页面类型：原生文字页、图文混合页、整页图片页、形状图页、装饰页，并据此路由 OCR、视觉解析和局部图裁剪。
+- 自动给图片做学习价值排序，让视觉调用和笔记优先使用图表、流程图、局部裁剪图和高信息量图片。
+- 生成 `sections.json`；开启 LLM 时，`--section-detection auto` 可以用模型辅助修正章节边界，再交给 Lecture-Weave 编织。
 - 每页尽量保存页面截图：PDF 原生支持；PPTX 需要本机安装 LibreOffice 或 PowerPoint COM 可用。
 - 生成 `content.json` 作为原始内容清单。
-- 生成 `notes.md`，每段都带 `PPT 第 X 页` 和元素 ID。
+- 生成 `notes.md`，默认隐藏来源标记，也可选择显示简洁页码或详细元素 ID。
 - 生成 `coverage.json` / `coverage.md`，检查哪些元素没有出现在笔记中。
 - 支持多家 LLM：ChatGPT/OpenAI、DeepSeek、通义千问、豆包、GLM、Gemini、Claude。
 - 支持 `lecture-weave` 高质量笔记策略：先逐页深讲，再按章节编织成连贯笔记。
@@ -181,6 +183,8 @@ python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --
 outputs/lecture/
   content.json
   page_modalities.json
+  image_importance.json
+  sections.json
   notes.md
   page_notes.md
   page_notes.json
@@ -212,6 +216,10 @@ outputs/lecture/
 - `image_only`：优先对整页截图做 OCR、局部图裁剪和整页视觉解析。
 - `shape_diagram`：说明图可能由 PPT 形状/箭头/文本框拼成，适合从整页截图中裁剪局部图。
 - `decorative`：低优先级页面，除非用户显式刷新或需要保留。
+
+`image_importance.json` 会记录每张图片的学习价值分数、排序和原因。`--vision auto` 会优先选择排序靠前的局部裁剪图或嵌入图，再回退到整页截图。
+
+`sections.json` 会记录最终采用的章节计划。不开 LLM 时使用本地规则；在 `--section-detection auto` 且启用章节式 LLM 笔记时，会先调用文本模型辅助识别章节边界。
 
 ## 环境检测
 

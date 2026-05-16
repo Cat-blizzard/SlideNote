@@ -289,6 +289,56 @@ def test_llm_auto_context_uses_sections_for_large_deck(tmp_path, monkeypatch):
     assert result.llm_usage["summary"]["contexts_total"] == len(prompts)
 
 
+def test_llm_context_uses_supplied_section_plan(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="large.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(slide_id=i, text_blocks=[TextBlock(id=f"s{i}_t1", type="paragraph", content=f"Page {i}")])
+            for i in range(1, 5)
+        ],
+    )
+    section_plan = {
+        "sections": [
+            {"section_id": "sec_intro", "title": "Intro", "slide_ids": [1, 2]},
+            {"section_id": "sec_apply", "title": "Apply", "slide_ids": [3, 4]},
+        ]
+    }
+    prompts = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            prompts.append(prompt)
+
+            class Result:
+                text = "## Section\n\n正文。"
+                usage = {}
+
+            return Result()
+
+    monkeypatch.setattr("slidenote.notes.LLMClient", FakeClient)
+
+    result = generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="openai",
+        api_key="test",
+        note_strategy="direct",
+        note_context="section",
+        section_plan=section_plan,
+    )
+
+    assert len(prompts) == 2
+    assert '"context_id": "sec_intro"' in prompts[0]
+    assert '"slide_id": 1' in prompts[0]
+    assert '"slide_id": 3' in prompts[1]
+    assert result.llm_usage["summary"]["contexts_total"] == 2
+
+
 def test_lecture_weave_generates_page_notes_then_weaves_sections(tmp_path, monkeypatch):
     deck = Deck(
         source_path="lecture.pdf",

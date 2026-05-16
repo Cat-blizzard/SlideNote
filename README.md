@@ -38,8 +38,10 @@
 - Supports `.pptx` and `.pdf`; `.ppt` is handled by attempting a LibreOffice conversion to PDF.
 - Extracts titles, text blocks, tables, embedded images, and slide/page screenshots.
 - Classifies each page as native text, mixed, image-only, shape-diagram-like, or decorative to route OCR, vision, and figure cropping.
+- Ranks images by study value so vision calls and notes prefer diagrams, charts, figure crops, and high-signal visuals.
+- Writes `sections.json`; with LLM enabled, `--section-detection auto` can ask the model to refine section boundaries before Lecture-Weave.
 - Produces `content.json` as the source inventory.
-- Produces `notes.md` with source page numbers and element IDs.
+- Produces `notes.md` with hidden source markers by default, plus optional visible page references.
 - Produces `coverage.json` / `coverage.md` to flag elements that may be missing from the notes.
 - Optional vision extraction writes OCR text and visual summaries back into the structured content.
 - Optional LLM generation supports OpenAI/ChatGPT, DeepSeek, Qwen, Doubao/Volcengine Ark, GLM, Gemini, and Claude.
@@ -180,6 +182,8 @@ Output structure:
 outputs/lecture/
   content.json
   page_modalities.json
+  image_importance.json
+  sections.json
   notes.md
   page_notes.md
   page_notes.json
@@ -211,6 +215,10 @@ By default, `notes.md` references bundled image copies under `notes.assets/`. If
 - `image_only`: prefer page OCR, figure cropping, and page-level vision.
 - `shape_diagram`: use extracted labels plus page screenshot cropping, because the diagram may be built from PPT shapes.
 - `decorative`: low priority unless the user explicitly refreshes it.
+
+`image_importance.json` records per-image study-value scores and reasons. Vision `auto` uses that ranking to choose the best local figure crop or embedded image before falling back to a full-page screenshot.
+
+`sections.json` records the section plan used by `--note-context section` and `lecture-weave`. In `--section-detection auto`, SlideNote uses local rules without LLM notes, and switches to LLM-assisted section detection when section-based LLM notes are enabled.
 
 ## Environment Check
 

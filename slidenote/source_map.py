@@ -124,6 +124,9 @@ def _page_sources(page: SlidePage) -> dict[str, Any]:
                 "crop_bbox": image.crop_bbox,
                 "crop_method": image.crop_method,
                 "confidence": image.confidence,
+                "importance_score": image.importance_score,
+                "importance_rank": image.importance_rank,
+                "importance_reason": image.importance_reason,
             }
             for image in page.images
         ],
@@ -166,6 +169,9 @@ def _image_ref(deck: Deck, page: SlidePage, image: ImageAsset) -> dict[str, Any]
         "crop_bbox": image.crop_bbox,
         "crop_method": image.crop_method,
         "confidence": image.confidence,
+        "importance_score": image.importance_score,
+        "importance_rank": image.importance_rank,
+        "importance_reason": image.importance_reason,
         "preview": image.caption or image.path,
     }
 

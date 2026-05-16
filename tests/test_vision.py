@@ -32,6 +32,33 @@ def test_auto_vision_prefers_extracted_image_before_page_screenshot(tmp_path):
     assert targets[0].image_id == "s1_img1"
 
 
+def test_auto_vision_uses_image_importance_order(tmp_path):
+    low = tmp_path / "images" / "low.png"
+    high = tmp_path / "images" / "high.png"
+    low.parent.mkdir()
+    Image.new("RGB", (500, 300), "white").save(low)
+    Image.new("RGB", (500, 300), "white").save(high)
+    deck = Deck(
+        source_path="lecture.pptx",
+        source_type="pptx",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                images=[
+                    ImageAsset(id="s1_img1", path="images/low.png", importance_score=0.2, importance_rank=2),
+                    ImageAsset(id="s1_img2", path="images/high.png", importance_score=0.9, importance_rank=1),
+                ],
+            )
+        ],
+    )
+
+    targets = select_vision_targets(deck, tmp_path, mode="auto", min_area=0)
+
+    assert len(targets) == 1
+    assert targets[0].image_id == "s1_img2"
+    assert targets[0].importance_score == 0.9
+
+
 def test_auto_vision_prefers_figure_crop_before_embedded_image(tmp_path):
     figure = tmp_path / "figures" / "slide1_fig1.png"
     figure.parent.mkdir()
