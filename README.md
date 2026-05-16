@@ -159,9 +159,12 @@ outputs/lecture/
   source_map.json
   progress.json
   run_summary.json
+  notes.assets/
   images/
   screenshots/
 ```
+
+By default, `notes.md` references bundled image copies under `notes.assets/`. If you move or package `notes.md` together with `notes.assets/`, images should continue to render.
 
 ## Environment Check
 
@@ -221,7 +224,7 @@ python -m slidenote build lecture.pdf `
   --provider deepseek
 ```
 
-OCR, vision, and page-level LLM calls can run concurrently. Higher concurrency can be faster, but may hit provider rate limits. Start with `2` or `3`:
+OCR, vision, and LLM note contexts can run concurrently. Higher concurrency can be faster, but may hit provider rate limits. Start with `2` or `3`:
 
 ```powershell
 --concurrency 3
@@ -245,6 +248,29 @@ To force selected slides to bypass local cache while other slides still reuse ca
 
 Note: `--refresh-pages` currently means "bypass local cache for these slides", not "only output these slides".
 
+## Note Rendering Options
+
+The default output favors readable article-style notes. Source element IDs are hidden from the visible body, and images without OCR/vision summaries are inserted without noisy "image not parsed" explanations:
+
+```powershell
+--note-style article       # Default: rewrite bullets into readable prose
+--source-display hidden    # Default: store source refs in HTML comments and source_map.json
+--asset-mode bundle        # Default: copy images into notes.assets/
+--note-context auto        # Default: document context for short files, section context for larger files
+```
+
+To show compact page references in the note body:
+
+```powershell
+--source-display footnote
+```
+
+For strict debugging, use page context and inline source references:
+
+```powershell
+--note-context page --source-display inline --note-style faithful
+```
+
 ## Image Filtering And Source Map
 
 PDF/PPT files often contain logos, tiny icons, background fragments, and decorative image resources. SlideNote keeps the raw files, but marks likely decorative images in `content.json`:
@@ -265,7 +291,7 @@ Ignored images are skipped by default in notes, coverage checks, OCR fallback, a
 note block -> PPT/PDF page -> text/table/image element id
 ```
 
-This lets future GUI and exporters choose strict, compact, or hidden source display without losing traceability.
+By default, visible notes use hidden comments such as `<!-- slidenote-source: p4:s4_t1,s4_t2 -->`, while `source_map.json` keeps the full mapping. This keeps reading clean without losing coverage checks or GUI traceability.
 
 ## LLM Providers
 
@@ -517,7 +543,7 @@ Text-only models such as DeepSeek can then use these textualized vision results 
 LLM rewriting uses local caching by default. Each page cache key is based on:
 
 ```text
-structured page content + prompt version + provider + model + base_url + temperature + max-output-tokens
+structured note context + prompt version + provider + model + base_url + temperature + max-output-tokens + note rendering options
 ```
 
 If the same page and parameters are generated again, SlideNote reuses the local cache instead of calling the model. Cache hit metadata is not inserted into the note body; it is written to `llm_usage.json` for GUI and debugging use.

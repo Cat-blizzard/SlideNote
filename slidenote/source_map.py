@@ -36,13 +36,14 @@ def build_source_map(deck: Deck, notes_markdown: str, output_root: Path) -> dict
         "generated_at": utc_now_iso(),
         "source_path": deck.source_path,
         "source_type": deck.source_type,
-        "display_modes": ["strict", "compact", "hidden"],
-        "default_display_mode": "compact",
+        "display_modes": ["hidden", "footnote", "inline"],
+        "default_display_mode": "hidden",
         "pages": [_page_sources(page) for page in deck.pages],
         "note_blocks": note_blocks,
         "artifacts": {
             "notes": "notes.md",
             "content": "content.json",
+            "note_assets": "notes.assets",
         },
     }
 

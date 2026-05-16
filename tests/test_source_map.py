@@ -26,3 +26,18 @@ def test_source_map_links_note_blocks_to_elements(tmp_path):
     refs = source_map["note_blocks"][0]["source_refs"]
     assert {ref["element_id"] for ref in refs} == {"s2_t1", "s2_img1"}
     assert source_map["pages"][0]["images"][1]["ignored"] is True
+    assert source_map["default_display_mode"] == "hidden"
+
+
+def test_source_map_links_hidden_source_comments(tmp_path):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[SlidePage(slide_id=3, text_blocks=[TextBlock(id="s3_t1", type="paragraph", content="一致性")])],
+    )
+    notes = "一致性模型描述读写可见性。\n<!-- slidenote-source: p3:s3_t1 -->\n"
+
+    source_map = build_source_map(deck, notes, tmp_path)
+
+    refs = source_map["note_blocks"][0]["source_refs"]
+    assert [ref["element_id"] for ref in refs] == ["s3_t1"]

@@ -66,5 +66,6 @@ def test_non_vision_prompt_marks_images_as_not_provided():
 
     prompt = _llm_page_prompt(page, supports_image_input=False)
 
-    assert "image pixels are NOT provided" in prompt
+    assert "image pixels are not attached to this note-writing call" in prompt
+    assert "不要写“未提供图片像素”" in prompt
     assert "s1_img1" in prompt

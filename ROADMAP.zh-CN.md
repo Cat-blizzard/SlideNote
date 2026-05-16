@@ -24,10 +24,14 @@ SlideNote 当前的核心定位仍然是：
 - 支持 `slidenote doctor` 环境检测。
 - 支持疑似小图标/装饰图标记，默认从笔记、覆盖率、OCR fallback 和视觉目标中过滤。
 - 支持 `source_map.json`，记录笔记块与原始 PPT/PDF 元素之间的来源映射。
+- 支持 `notes.assets/` 图片资产目录，默认让 `notes.md` 使用便携相对图片路径。
+- 支持 `--note-context auto|document|section|page`，短材料整份生成，长材料按章节/分组生成，逐页模式保留为调试选项。
+- 支持 `--source-display hidden|footnote|inline`，默认隐藏正文来源但保留覆盖率和溯源。
+- 支持 `--note-style article|faithful`，默认更偏文章式课程笔记。
 
 ## 1. 上下文策略增强
 
-当前主要是按页组织材料，再逐页生成或检查。后续可以支持多种上下文粒度：
+当前已经有基础版 `--note-context auto|document|section|page`。后续重点不是从零实现上下文粒度，而是增强章节识别、溢出回退和缓存策略：
 
 - 页级上下文：适合低风险、可追溯生成，也适合精细缓存。
 - 小节级上下文：适合默认模式，在速度、质量、缓存粒度之间取得平衡。
@@ -63,13 +67,18 @@ file mode
 
 全文件生成。适合做全局大纲、课程总结、知识结构重排，不适合作为默认正文生成模式。
 
-可能参数：
+已实现的基础参数：
 
 ```powershell
---context-mode page
---context-mode section
---context-mode chapter
---context-mode file
+--note-context auto
+--note-context document
+--note-context section
+--note-context page
+```
+
+后续可继续扩展的参数：
+
+```powershell
 --max-pages-per-section 12
 --max-input-tokens-per-section 30000
 --fallback-to-page-on-overflow
@@ -1215,7 +1224,7 @@ Coverage Agent 重新检查
 
 当系统同时使用 PPT、个人笔记、教材和 AI 补充时，不同用户对“来源显示”和“内容融合”的偏好会明显不同。
 
-当前基础版已经实现 `source_map.json`，记录笔记块、元素 ID 和来源页之间的映射。后续要继续支持严格/简洁/隐藏来源显示，以及 GUI 点击笔记跳回原页。
+当前基础版已经实现 `source_map.json`，记录笔记块、元素 ID 和来源页之间的映射，并支持 `--source-display hidden|footnote|inline`。后续重点是让 GUI 可以点击笔记跳回原页，并支持个人笔记、教材和 AI 补充的多来源融合。
 
 一些用户希望严格区分：
 
@@ -1266,7 +1275,7 @@ integrated
 ### 来源显示程度
 
 ```text
-strict
+inline
 ```
 
 详细显示来源，例如：
@@ -1278,7 +1287,7 @@ strict
 适合保真、审查、学术和怕 AI 编造的场景。
 
 ```text
-compact
+footnote
 ```
 
 正文只显示简短来源，例如：
@@ -1287,23 +1296,23 @@ compact
 【对应：PPT 第 12 页；个人笔记第 3 条】
 ```
 
-适合作为默认显示策略。
+适合想保留轻量页码提示的读者。
 
 ```text
 hidden
 ```
 
-正文不显示来源，但仍在结构化 metadata 中保留映射关系。适合只想读顺滑讲义的用户。
+正文不显示来源，但仍在 HTML 隐藏注释和结构化 metadata 中保留映射关系。这是当前默认模式，适合只想读顺滑讲义的用户。
 
 ### 推荐组合
 
 | 用户偏好 | 内容融合程度 | 来源显示程度 |
 | --- | --- | --- |
-| 想严格区分来源 | `separated` | `strict` |
-| 想读得顺，但仍能追溯 | `blended` | `compact` |
+| 想严格区分来源 | `separated` | `inline` |
+| 想读得顺，但仍能追溯 | `blended` | `footnote` |
 | 只想要完整讲义 | `integrated` | `hidden` |
-| 想保留个人笔记独立性 | `separated` | `compact` |
-| 做课程项目展示 | `blended` | `strict` |
+| 想保留个人笔记独立性 | `separated` | `footnote` |
+| 做课程项目展示 | `blended` | `inline` |
 
 ### 设计原则
 
@@ -1317,7 +1326,7 @@ hidden
 
 ```powershell
 --fusion-mode blended
---source-display compact
+--source-display footnote
 ```
 
 可能输出：
@@ -1510,9 +1519,9 @@ CLI 对新手不够友好，尤其是多个服务商都要 key。
 - 课程工作区基础模型：Course / Source / Chapter。
 - 多 PPT / 多 PDF 课程级整合。
 - 更好的 GUI 前置准备：结构化 usage / cache / coverage 输出保持稳定。
-- 小节级上下文默认模式：`--context-mode section`、分层缓存、overflow fallback。
+- 小节级上下文增强：基础 `--note-context auto|document|section|page` 已实现；后续补更强章节识别、分层缓存、overflow fallback。
 - PPT 章节切分与分批输出：`split`、`--split-by section`、`section_index.json`。
-- 来源显示与内容融合策略：基础 `source_map.json` 已实现；后续补 `fusion_mode` + `source_display`。
+- 来源显示与内容融合策略：基础 `source_map.json` 和 `--source-display hidden|footnote|inline` 已实现；后续补 `fusion_mode`、多来源 metadata 和 GUI 切换。
 - 更智能的视觉目标选择。基础装饰图过滤已实现；后续补内容图分类和用户选择。
 - LaTeX 默认模板设计。
 

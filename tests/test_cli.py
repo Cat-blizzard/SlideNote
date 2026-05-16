@@ -50,7 +50,8 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["counts"]["pages"] == 1
     assert run_summary["artifacts"]["progress"] == "progress.json"
     assert run_summary["artifacts"]["source_map"] == "source_map.json"
-    assert source_map["default_display_mode"] == "compact"
+    assert run_summary["artifacts"]["note_assets"] == "notes.assets"
+    assert source_map["default_display_mode"] == "hidden"
 
 
 def test_doctor_command_writes_json(tmp_path):

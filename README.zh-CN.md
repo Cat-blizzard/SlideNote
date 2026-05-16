@@ -160,9 +160,12 @@ outputs/lecture/
   source_map.json
   progress.json
   run_summary.json
+  notes.assets/
   images/
   screenshots/
 ```
+
+默认情况下，`notes.md` 会引用 `notes.assets/` 中的图片副本，所以把 `notes.md` 和 `notes.assets/` 一起移动或打包时，图片仍然能显示。
 
 ## 环境检测
 
@@ -222,7 +225,7 @@ python -m slidenote build lecture.pdf `
   --provider deepseek
 ```
 
-OCR、Vision 和逐页 LLM 可以并发调用 API。并发能加速，但也更容易触发服务商限速；建议先从 `2` 或 `3` 开始：
+OCR、Vision 和 LLM 笔记上下文可以并发调用 API。并发能加速，但也更容易触发服务商限速；建议先从 `2` 或 `3` 开始：
 
 ```powershell
 --concurrency 3
@@ -246,6 +249,29 @@ python -m slidenote build lecture.pdf `
 
 注意：当前 `--refresh-pages` 是“绕过这些页的本地缓存”，不是只输出这些页。它适合在同一份材料上局部刷新 OCR、视觉或 LLM 结果。
 
+## 笔记呈现选项
+
+默认输出更偏“可直接阅读的文章式笔记”，不会在正文里反复显示元素 ID，也不会为没有视觉解析的图片写大段说明：
+
+```powershell
+--note-style article       # 默认：把 bullet 改写成较连贯的笔记
+--source-display hidden    # 默认：来源写入 HTML 隐藏注释和 source_map.json
+--asset-mode bundle        # 默认：图片复制到 notes.assets/
+--note-context auto        # 默认：短材料整份生成，长材料按章节/分组生成
+```
+
+如果希望正文显示简洁来源页码，可以用：
+
+```powershell
+--source-display footnote
+```
+
+如果要调试严格覆盖率，可以回到逐页上下文和详细来源：
+
+```powershell
+--note-context page --source-display inline --note-style faithful
+```
+
 ## 图片过滤与来源映射
 
 PDF/PPT 里经常包含 logo、小图标、背景碎片等装饰性图片。SlideNote 会保留原始图片文件，但会在 `content.json` 中给疑似装饰图打标：
@@ -266,7 +292,7 @@ PDF/PPT 里经常包含 logo、小图标、背景碎片等装饰性图片。Slid
 note block -> PPT/PDF 页码 -> text/table/image element id
 ```
 
-即使正文未来选择隐藏来源，底层仍可以保留这份映射。
+默认正文会把来源写入类似 `<!-- slidenote-source: p4:s4_t1,s4_t2 -->` 的隐藏注释，并在 `source_map.json` 中保存完整映射。这样阅读时不被元素 ID 打断，覆盖率检查和 GUI 溯源仍然可用。
 
 ## LLM Provider
 
@@ -528,7 +554,7 @@ python -m slidenote build lecture.pptx --out outputs\lecture --vision all --visi
 LLM 改写默认开启本地缓存。每一页会根据以下信息生成缓存 key：
 
 ```text
-结构化页内容 + prompt version + provider + model + base_url + temperature + max-output-tokens
+结构化笔记上下文 + prompt version + provider + model + base_url + temperature + max-output-tokens + 笔记呈现选项
 ```
 
 同一页内容和同一参数再次生成时，会直接复用缓存，不再调用模型。缓存命中信息不会污染正文，而是写入 `llm_usage.json`，方便后续 GUI 直接展示。

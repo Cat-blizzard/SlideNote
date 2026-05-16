@@ -27,6 +27,8 @@ def test_local_notes_include_all_element_ids():
     report = analyze_coverage(deck, notes)
 
     assert "本页主题是“Transport”。" in notes
+    assert "【对应 PPT" not in notes
+    assert "<!-- slidenote-source: p1:s1_t1" in notes
     assert report["missing"] == 0
 
 
@@ -89,6 +91,49 @@ def test_local_notes_skip_ignored_images_in_coverage():
     assert report["missing"] == 0
 
 
+def test_local_notes_bundle_assets_and_use_renderable_image_links(tmp_path):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    (image_dir / "diagram.png").write_bytes(b"fake")
+    screenshots_dir = tmp_path / "screenshots"
+    screenshots_dir.mkdir()
+    (screenshots_dir / "slide1.png").write_bytes(b"fake")
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                page_screenshot="screenshots/slide1.png",
+                images=[ImageAsset(id="s1_img1", path="images/diagram.png")],
+            )
+        ],
+    )
+
+    result = generate_notes_result(deck, tmp_path)
+
+    assert "`![" not in result.markdown
+    assert "![第 1 页截图](notes.assets/screenshots/slide1.png)" in result.markdown
+    assert "![第 1 页图片](notes.assets/images/diagram.png)" in result.markdown
+    assert (tmp_path / "notes.assets" / "screenshots" / "slide1.png").exists()
+    assert (tmp_path / "notes.assets" / "images" / "diagram.png").exists()
+    assert result.asset_warnings == []
+
+
+def test_source_display_footnote_keeps_clean_page_reference():
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[SlidePage(slide_id=4, text_blocks=[TextBlock(id="s4_t1", type="paragraph", content="复制提高可靠性")])],
+    )
+
+    notes = generate_notes(deck, Path("out"), source_display="footnote")
+
+    assert "（PPT 第 4 页）" in notes
+    assert "<!-- slidenote-source: p4:s4_t1 -->" in notes
+    assert "【对应 PPT" not in notes
+
+
 def test_llm_generation_uses_local_cache(tmp_path, monkeypatch):
     deck = Deck(
         source_path="lecture.pptx",
@@ -109,7 +154,7 @@ def test_llm_generation_uses_local_cache(tmp_path, monkeypatch):
 
         def generate_with_usage(self, prompt):
             class Result:
-                text = "TCP 是传输层协议。\n【对应 PPT：第 1 页，文本块 s1_t1】"
+                text = "好的，这是根据您提供的 JSON 生成的课程笔记。\n\n# 课程笔记：Transport\n\nTCP 是传输层协议。\n【对应 PPT：第 1 页，文本块 s1_t1】\n\n`![图](notes.assets/images/a.png)`"
                 usage = {"input_tokens": 10, "output_tokens": 8, "total_tokens": 18}
 
             return Result()
@@ -126,6 +171,11 @@ def test_llm_generation_uses_local_cache(tmp_path, monkeypatch):
     )
     assert first.llm_usage["pages"][0]["cache_status"] == "miss"
     assert first.llm_usage["summary"]["llm_calls"] == 1
+    assert "好的，这是" not in first.markdown
+    assert "# 课程笔记" not in first.markdown
+    assert "【对应 PPT" not in first.markdown
+    assert "<!-- slidenote-source: p1:s1_t1 -->" in first.markdown
+    assert "`![" not in first.markdown
 
     class FailingClient:
         def __init__(self, **kwargs):
@@ -153,3 +203,69 @@ def test_llm_prompt_uses_page_visual_summary():
 
     assert "page_visual_summary" in prompt
     assert "三次握手" in prompt
+
+
+def test_llm_auto_context_uses_document_for_short_deck(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="short.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(slide_id=1, text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="A")]),
+            SlidePage(slide_id=2, text_blocks=[TextBlock(id="s2_t1", type="paragraph", content="B")]),
+        ],
+    )
+    prompts = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            prompts.append(prompt)
+
+            class Result:
+                text = "## 短材料\n\nA 与 B 构成同一节内容。<!-- slidenote-source: p1:s1_t1 -->"
+                usage = {}
+
+            return Result()
+
+    monkeypatch.setattr("slidenote.notes.LLMClient", FakeClient)
+
+    result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test")
+
+    assert len(prompts) == 1
+    assert '"context_kind": "document"' in prompts[0]
+    assert result.llm_usage["summary"]["contexts_total"] == 1
+
+
+def test_llm_auto_context_uses_sections_for_large_deck(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="large.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(slide_id=i, text_blocks=[TextBlock(id=f"s{i}_t1", type="paragraph", content="A" * 50)])
+            for i in range(1, 18)
+        ],
+    )
+    prompts = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            prompts.append(prompt)
+
+            class Result:
+                text = "## 分组内容\n\n正文。"
+                usage = {}
+
+            return Result()
+
+    monkeypatch.setattr("slidenote.notes.LLMClient", FakeClient)
+
+    result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test")
+
+    assert len(prompts) >= 2
+    assert '"context_kind": "section"' in prompts[0]
+    assert result.llm_usage["summary"]["contexts_total"] == len(prompts)

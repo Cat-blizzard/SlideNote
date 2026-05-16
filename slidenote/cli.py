@@ -61,6 +61,30 @@ def _build_parser() -> argparse.ArgumentParser:
     build.add_argument("--max-output-tokens", type=int, default=None, help="Maximum generated tokens per page.")
     build.add_argument("--temperature", type=float, default=None, help="Optional model temperature.")
     build.add_argument(
+        "--asset-mode",
+        choices=["bundle", "absolute", "embed"],
+        default="bundle",
+        help="How notes.md references images. bundle copies assets into notes.assets, absolute uses local absolute paths, embed writes data URLs.",
+    )
+    build.add_argument(
+        "--source-display",
+        choices=["hidden", "footnote", "inline"],
+        default="hidden",
+        help="How source page/element references appear in notes.md.",
+    )
+    build.add_argument(
+        "--note-context",
+        choices=["auto", "document", "section", "page"],
+        default="auto",
+        help="LLM note generation context. auto uses document context for short files and section context for larger files.",
+    )
+    build.add_argument(
+        "--note-style",
+        choices=["article", "faithful"],
+        default="article",
+        help="Article mode favors fluent notes; faithful mode keeps closer slide order.",
+    )
+    build.add_argument(
         "--cache",
         choices=["on", "off", "refresh"],
         default="on",
@@ -232,6 +256,10 @@ def _build(args: argparse.Namespace) -> int:
             concurrency=concurrency,
             refresh_slide_ids=refresh_slide_ids,
             progress_callback=_llm_progress(progress),
+            asset_mode=args.asset_mode,
+            source_display=args.source_display,
+            note_context=args.note_context,
+            note_style=args.note_style,
         )
         notes_markdown = notes_result.markdown
         write_text(output_root / "notes.md", notes_markdown)
@@ -263,6 +291,7 @@ def _build(args: argparse.Namespace) -> int:
             cache_dirs=cache_dirs,
             refresh_slide_ids=refresh_slide_ids,
             progress=progress,
+            note_asset_warnings=notes_result.asset_warnings or [],
         )
         write_json(output_root / "run_summary.json", run_summary)
     except Exception as exc:
@@ -386,11 +415,12 @@ def _target_progress(progress: ProgressReporter, name: str):
 
 
 def _llm_progress(progress: ProgressReporter):
-    def callback(page_record: dict[str, Any]) -> None:
+    def callback(record: dict[str, Any]) -> None:
+        label = record.get("context_id") or record.get("slide_id")
         progress.advance(
-            message=f"LLM slide {page_record.get('slide_id')}",
-            cache_hit=page_record.get("cache_status") == "local_hit",
-            api_call=bool(page_record.get("llm_call")),
+            message=f"LLM context {label}",
+            cache_hit=record.get("cache_status") == "local_hit",
+            api_call=bool(record.get("llm_call")),
         )
 
     return callback
@@ -409,6 +439,7 @@ def _build_run_summary(
     cache_dirs: dict[str, Path | None],
     refresh_slide_ids: set[int],
     progress: ProgressReporter,
+    note_asset_warnings: list[str],
 ) -> dict[str, Any]:
     pages = deck.pages
     images_count = sum(len(page.images) for page in pages)
@@ -422,6 +453,10 @@ def _build_run_summary(
             "concurrency": max(1, args.concurrency),
             "refresh_slide_ids": sorted(refresh_slide_ids),
             "cache_dirs": {name: str(path) if path else None for name, path in cache_dirs.items()},
+            "asset_mode": args.asset_mode,
+            "source_display": args.source_display,
+            "note_context": args.note_context,
+            "note_style": args.note_style,
         },
         "counts": {
             "pages": len(pages),
@@ -443,9 +478,13 @@ def _build_run_summary(
             "note_blocks": len(source_map.get("note_blocks", [])),
             "default_display_mode": source_map.get("default_display_mode"),
         },
+        "warnings": {
+            "note_assets": note_asset_warnings,
+        },
         "artifacts": {
             "content": "content.json",
             "notes": "notes.md",
+            "note_assets": "notes.assets" if args.asset_mode == "bundle" else None,
             "coverage": "coverage.md",
             "source_map": "source_map.json",
             "progress": _display_path(progress.path, output_root),
