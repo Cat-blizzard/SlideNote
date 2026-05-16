@@ -1,18 +1,49 @@
-# SlideNote
+<p align="center">
+  <img src="assets/slidenote-logo.png" alt="SlideNote" width="520">
+</p>
 
-> 中文版说明。English README: [README.md](README.md)。后续扩展路线图：[ROADMAP.zh-CN.md](ROADMAP.zh-CN.md)
+<h1 align="center">SlideNote</h1>
 
-SlideNote 是一个“保真型课程笔记生成器”的 MVP：输入课程 PPTX/PPT/PDF，先解析成逐页结构化 JSON，再用规则草稿或大模型生成带来源页码、图片和覆盖率检查的 Markdown 笔记。
+<p align="center">
+  <strong>面向课程幻灯片的覆盖率感知笔记生成系统</strong>
+</p>
+
+<p align="center">
+  把 PPT/PDF 转换成结构清晰、可追溯、保留图片、支持 OCR/视觉解析和 Lecture-Weave 改写的课程笔记。
+</p>
+
+<p align="center">
+  <em>不只是总结课件，而是把展示材料整理成真正适合学习的文字材料。</em>
+</p>
+
+<p align="center">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
+  <img alt="PPT PDF" src="https://img.shields.io/badge/Input-PPTX%20%7C%20PDF-2F6FED">
+  <img alt="LLM" src="https://img.shields.io/badge/LLM-Multi--provider-7C3AED">
+  <img alt="Vision OCR" src="https://img.shields.io/badge/Vision%20%2B%20OCR-supported-0F766E">
+  <img alt="Status" src="https://img.shields.io/badge/Status-MVP-F59E0B">
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> |
+  <a href="README.zh-CN.md">中文</a> |
+  <a href="CONFIG.zh-CN.md">配置参考</a> |
+  <a href="ROADMAP.zh-CN.md">路线图</a>
+</p>
+
+---
 
 ## 功能
 
 - 支持 `.pptx` 和 `.pdf`，`.ppt` 会尝试通过 LibreOffice 转成 PDF 后解析。
 - 逐页抽取标题、正文文本块、表格、嵌入图片。
+- 自动识别页面类型：原生文字页、图文混合页、整页图片页、形状图页、装饰页，并据此路由 OCR、视觉解析和局部图裁剪。
 - 每页尽量保存页面截图：PDF 原生支持；PPTX 需要本机安装 LibreOffice 或 PowerPoint COM 可用。
 - 生成 `content.json` 作为原始内容清单。
 - 生成 `notes.md`，每段都带 `PPT 第 X 页` 和元素 ID。
 - 生成 `coverage.json` / `coverage.md`，检查哪些元素没有出现在笔记中。
 - 支持多家 LLM：ChatGPT/OpenAI、DeepSeek、通义千问、豆包、GLM、Gemini、Claude。
+- 支持 `lecture-weave` 高质量笔记策略：先逐页深讲，再按章节编织成连贯笔记。
 
 ## 起源
 
@@ -135,7 +166,7 @@ python -m pip install -e ".[dev]"
 本地规则草稿：
 
 ```powershell
-python -m slidenote build path\to\lecture.pptx --out outputs\lecture
+python -m slidenote build path\to\lecture.pptx --out outputs\lecture --vision off
 ```
 
 LLM 正式改写：
@@ -149,8 +180,14 @@ python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --
 ```text
 outputs/lecture/
   content.json
+  page_modalities.json
   notes.md
+  page_notes.md
+  page_notes.json
+  weave_report.json
   llm_usage.json
+  figures.json
+  figure_usage.json
   ocr.json
   ocr_usage.json
   visuals.json
@@ -161,11 +198,20 @@ outputs/lecture/
   progress.json
   run_summary.json
   notes.assets/
+  figures/
   images/
   screenshots/
 ```
 
 默认情况下，`notes.md` 会引用 `notes.assets/` 中的图片副本，所以把 `notes.md` 和 `notes.assets/` 一起移动或打包时，图片仍然能显示。
+
+`page_modalities.json` 会记录本地页面类型检测结果，用来让后续步骤选择更省钱、更稳定的处理路线：
+
+- `native_text`：优先直接使用可提取文本。
+- `mixed`：使用可提取文本，同时保留和解析嵌入图片。
+- `image_only`：优先对整页截图做 OCR、局部图裁剪和整页视觉解析。
+- `shape_diagram`：说明图可能由 PPT 形状/箭头/文本框拼成，适合从整页截图中裁剪局部图。
+- `decorative`：低优先级页面，除非用户显式刷新或需要保留。
 
 ## 环境检测
 
@@ -191,6 +237,8 @@ python -m slidenote doctor --json doctor.json
 
 ## 速度、进度与局部刷新
 
+完整参数说明见 [CONFIG.zh-CN.md](CONFIG.zh-CN.md)。
+
 长 PPT/PDF 可能需要较长时间，尤其是开启 OCR、视觉解析和 LLM 改写时。SlideNote 会默认写入：
 
 ```text
@@ -204,12 +252,12 @@ CLI 也会显示阶段进度。想关闭终端进度输出但保留 `progress.js
 python -m slidenote build lecture.pdf --out outputs\lecture --quiet
 ```
 
-速度模式不会自动开启 OCR、视觉或 LLM，只会调整未显式设置的限额：
+速度模式不会自动开启 OCR 或 LLM。当前默认是质量优先，视觉解析默认为 `auto`；如果只想本地解析，可以显式加 `--vision off`。速度模式会调整未显式设置的限额：
 
 ```powershell
 --speed-mode fast      # 更少视觉/OCR targets，更短输出预算
---speed-mode balanced  # 默认折中
---speed-mode quality   # 更高图片分辨率和输出预算
+--speed-mode balanced  # 成本/速度折中
+--speed-mode quality   # 默认：更高图片分辨率和输出预算
 --speed-mode debug     # 小目标数，适合调试
 ```
 
@@ -257,8 +305,22 @@ python -m slidenote build lecture.pdf `
 --note-style article       # 默认：把 bullet 改写成较连贯的笔记
 --source-display hidden    # 默认：来源写入 HTML 隐藏注释和 source_map.json
 --asset-mode bundle        # 默认：图片复制到 notes.assets/
---note-context auto        # 默认：短材料整份生成，长材料按章节/分组生成
+--note-context section     # 默认：按章节/分组编织最终笔记
+--note-strategy lecture-weave  # 默认：先逐页深讲，再章节编织
+--note-depth detailed      # 默认：尽量保留逐页讲解细节
 ```
+
+`lecture-weave` 现在是默认 LLM 笔记策略。这个模式会更耗时、更耗 token，但更接近“逐页问 AI：请你讲讲这一页”的效果：先为每页生成详细讲解，再把这些逐页讲解编织成连贯章节。
+
+```powershell
+python -m slidenote build lecture.pdf `
+  --out outputs\lecture `
+  --use-llm `
+  --provider deepseek `
+  --weave-dedup soft
+```
+
+`lecture-weave` 会额外输出 `page_notes.json`、`page_notes.md` 和 `weave_report.json`。这些是中间产物和调试报告；最终阅读仍以 `notes.md` 为准。
 
 如果希望正文显示简洁来源页码，可以用：
 
@@ -270,6 +332,12 @@ python -m slidenote build lecture.pdf `
 
 ```powershell
 --note-context page --source-display inline --note-style faithful
+```
+
+整页截图默认只作兜底：如果某页已经有嵌入图片或局部裁剪图，`notes.md` 默认不再插入整页截图。需要改回强证据风格时可以用：
+
+```powershell
+--screenshot-policy always
 ```
 
 ## 图片过滤与来源映射
@@ -285,6 +353,36 @@ PDF/PPT 里经常包含 logo、小图标、背景碎片等装饰性图片。Slid
 ```
 
 被标记为 `ignored` 的图片默认不会进入笔记、覆盖率检查、OCR fallback 或独立视觉解析目标。整页截图仍会保留在 `screenshots/`，用于兜底保存视觉信息。
+
+## 局部图裁剪
+
+有些课件不是把图作为独立图片存储，而是把整页做成扫描图，或用 PPT 形状、箭头、文本框拼出一张“看起来像图”的区域。SlideNote 支持在笔记生成前尝试把这类局部图从整页截图中裁出来：
+
+```powershell
+--figure-crop auto     # 默认：只有开启 --vision 时才会额外调用视觉模型定位局部图
+--figure-crop vision   # 即使 --vision off，也强制用视觉模型做 bbox 定位
+--figure-crop off      # 关闭局部图裁剪
+```
+
+裁剪结果会写入：
+
+```text
+figures/
+figures.json
+figure_usage.json
+```
+
+默认参数：
+
+```powershell
+--figure-max-targets 80
+--figure-max-crops-per-page 3
+--figure-min-confidence 0.45
+--figure-min-area 40000
+--figure-cache on
+```
+
+局部图裁剪使用视觉模型返回 bbox，然后由本地程序裁剪图片。它不是强保证：如果视觉模型没有找到可靠局部图，系统会回退到整页截图。
 
 `source_map.json` 会记录笔记块和原始元素之间的映射，方便未来 GUI、LaTeX/Word/HTML 导出和来源显示策略使用：
 
@@ -459,7 +557,7 @@ visuals.json
 vision_usage.json
 ```
 
-视觉解析默认关闭，因为它会额外消耗多模态 token：
+视觉解析现在默认是 `auto`，因为当前默认策略更重视笔记质量而不是节省 token。它需要配置视觉模型 API key；如果只想本地解析或纯文本改写，可以关闭：
 
 ```powershell
 --vision off
@@ -498,7 +596,7 @@ python -m slidenote build lecture.pptx --out outputs\lecture --vision auto --vis
 --vision off    # 不做视觉解析
 ```
 
-默认 `auto` 会优先选整页截图，因为一张页截图通常能同时覆盖流程图、形状、箭头、嵌入图片和布局关系，比逐个小图更省调用次数。如果没有页截图，才会按面积选择较大的嵌入图。
+默认 `auto` 会优先解析已经裁剪出的局部图，其次是较大的嵌入图片，最后才回退到整页截图。这样视觉摘要更聚焦在真正的图、表、流程图或截图上，而不是描述整张 PPT。
 
 成本控制参数：
 
@@ -551,13 +649,15 @@ python -m slidenote build lecture.pptx --out outputs\lecture --vision all --visi
 
 ## LLM 缓存与用量报告
 
-LLM 改写默认开启本地缓存。每一页会根据以下信息生成缓存 key：
+LLM 改写默认开启本地缓存。每个笔记上下文会根据以下信息生成缓存 key：
 
 ```text
-结构化笔记上下文 + prompt version + provider + model + base_url + temperature + max-output-tokens + 笔记呈现选项
+结构化笔记上下文 + prompt version + note strategy + provider + model + base_url + temperature + max-output-tokens + 局部图/截图呈现选项
 ```
 
-同一页内容和同一参数再次生成时，会直接复用缓存，不再调用模型。缓存命中信息不会污染正文，而是写入 `llm_usage.json`，方便后续 GUI 直接展示。
+同一上下文内容和同一参数再次生成时，会直接复用缓存，不再调用模型。缓存命中信息不会污染正文，而是写入 `llm_usage.json`，方便后续 GUI 直接展示。
+
+在 `lecture-weave` 模式下，逐页深讲缓存和章节编织缓存是分开的。比如 `--refresh-pages 12` 会重跑第 12 页的逐页讲解，以及包含第 12 页的编织上下文；其它页仍然可以命中缓存。
 
 缓存模式：
 
@@ -575,9 +675,10 @@ python -m slidenote build lecture.pptx --use-llm --provider deepseek --cache-dir
 
 `llm_usage.json` 会记录：
 
-- 每页 `cache_status`：`local_hit`、`miss`、`refresh` 或 `disabled`
-- 每页 `cache_key` 和 `cache_file`
-- 实际调用页数、缓存命中页数
+- 每个上下文的 `cache_status`：`local_hit`、`miss`、`refresh` 或 `disabled`
+- 每个上下文的 `cache_key` 和 `cache_file`
+- 实际调用次数、缓存命中次数
+- `lecture-weave` 模式下的 `page_note_calls` 和 `weave_calls`
 - provider 返回的 input/output/total tokens
 - provider 侧 cached input tokens，如果该平台返回此字段
 

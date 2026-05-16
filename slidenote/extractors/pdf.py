@@ -32,7 +32,7 @@ def extract_pdf(input_path: Path, output_root: Path) -> Deck:
         slide.tables = _extract_tables(page, page_index)
         slide.images = _extract_images(doc, page, page_index, images_dir, output_root)
         slide.page_screenshot = _render_page(page, page_index, screenshots_dir, output_root)
-        if not text_blocks and not slide.images:
+        if not text_blocks and not any(not image.ignored for image in slide.images):
             slide.warnings.append("No selectable text or embedded images detected. This page may need OCR.")
         pages.append(slide)
 
@@ -102,21 +102,56 @@ def _extract_images(doc: object, page: object, page_index: int, images_dir: Path
         image_path = unique_path(images_dir / f"slide{page_index}_img{image_index}.{ext}")
         image_path.write_bytes(extracted["image"])
         meta = image_metadata(image_path)
+        bbox = _image_bbox(page, xref)
+        page_like = _is_page_like_bbox(bbox, _page_size(page))
+        role = "page_image" if page_like else meta["role"]
+        ignored = True if page_like else meta["ignored"]
+        ignore_reason = "full_page_image" if page_like else meta["ignore_reason"]
         images.append(
             ImageAsset(
                 id=f"s{page_index}_img{image_index}",
                 path=normalize_rel_path(image_path, output_root),
                 caption=f"第 {page_index} 页嵌入图片 {image_index}",
                 source_format=ext,
+                bbox=bbox,
                 width=meta["width"],
                 height=meta["height"],
                 file_size=meta["file_size"],
-                role=meta["role"],
-                ignored=meta["ignored"],
-                ignore_reason=meta["ignore_reason"],
+                role=role,
+                ignored=ignored,
+                ignore_reason=ignore_reason,
             )
         )
     return images
+
+
+def _image_bbox(page: object, xref: int) -> list[float] | None:
+    try:
+        rects = page.get_image_rects(xref)
+    except Exception:
+        return None
+    if not rects:
+        return None
+    rect = rects[0]
+    return [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+
+
+def _page_size(page: object) -> tuple[float, float] | None:
+    try:
+        return float(page.rect.width), float(page.rect.height)
+    except Exception:
+        return None
+
+
+def _is_page_like_bbox(bbox: list[float] | None, page_size: tuple[float, float] | None) -> bool:
+    if not bbox or not page_size:
+        return False
+    width, height = page_size
+    if width <= 0 or height <= 0:
+        return False
+    x1, y1, x2, y2 = bbox
+    area_ratio = max(0.0, x2 - x1) * max(0.0, y2 - y1) / (width * height)
+    return area_ratio >= 0.85
 
 
 def _render_page(page: object, page_index: int, screenshots_dir: Path, output_root: Path) -> str:

@@ -8,7 +8,7 @@ from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 
 
-ELEMENT_PATTERN = re.compile(r"\bs\d+_(?:t|tbl|img)\d+\b")
+ELEMENT_PATTERN = re.compile(r"\bs\d+_(?:t|tbl|img|fig)\d+\b")
 
 
 def build_source_map(deck: Deck, notes_markdown: str, output_root: Path) -> dict[str, Any]:
@@ -120,6 +120,10 @@ def _page_sources(page: SlidePage) -> dict[str, Any]:
                 "role": image.role,
                 "ignored": image.ignored,
                 "ignore_reason": image.ignore_reason,
+                "crop_source_path": image.crop_source_path,
+                "crop_bbox": image.crop_bbox,
+                "crop_method": image.crop_method,
+                "confidence": image.confidence,
             }
             for image in page.images
         ],
@@ -158,6 +162,10 @@ def _image_ref(deck: Deck, page: SlidePage, image: ImageAsset) -> dict[str, Any]
         "role": image.role,
         "width": image.width,
         "height": image.height,
+        "crop_source_path": image.crop_source_path,
+        "crop_bbox": image.crop_bbox,
+        "crop_method": image.crop_method,
+        "confidence": image.confidence,
         "preview": image.caption or image.path,
     }
 

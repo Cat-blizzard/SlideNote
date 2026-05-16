@@ -37,6 +37,10 @@ class ImageAsset:
     role: str | None = None
     ignored: bool = False
     ignore_reason: str | None = None
+    crop_source_path: str | None = None
+    crop_bbox: list[float] | None = None
+    crop_method: str | None = None
+    confidence: float | None = None
 
 
 @dataclass(slots=True)
@@ -53,6 +57,10 @@ class SlidePage:
     page_visual_status: str | None = None
     notes: str | None = None
     warnings: list[str] = field(default_factory=list)
+    page_modality: str | None = None
+    modality_confidence: float | None = None
+    modality_reasons: list[str] = field(default_factory=list)
+    processing_hints: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

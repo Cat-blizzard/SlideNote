@@ -40,3 +40,21 @@ def test_coverage_reads_hidden_source_markers():
     report = analyze_coverage(deck, "hello\n<!-- slidenote-source: p2:s2_t1,s2_img1 -->")
 
     assert report["missing"] == 0
+
+
+def test_coverage_tracks_figure_crop_ids():
+    deck = Deck(
+        source_path="demo.pptx",
+        source_type="pptx",
+        pages=[
+            SlidePage(
+                slide_id=3,
+                images=[ImageAsset(id="s3_fig1", path="figures/slide3_fig1.png", role="figure_crop")],
+            )
+        ],
+    )
+
+    report = analyze_coverage(deck, "<!-- slidenote-source: p3:s3_fig1 -->")
+
+    assert report["covered"] == 1
+    assert report["missing"] == 0

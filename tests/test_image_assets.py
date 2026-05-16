@@ -1,4 +1,6 @@
 from slidenote.image_assets import classify_image_asset
+from slidenote.extractors.pdf import _is_page_like_bbox
+from slidenote.extractors.pptx import _is_page_like_shape
 
 
 def test_classify_tiny_image_as_decorative():
@@ -15,3 +17,13 @@ def test_classify_normal_image_as_content():
     assert role == "content"
     assert ignored is False
     assert reason is None
+
+
+def test_pdf_page_like_bbox_detection():
+    assert _is_page_like_bbox([0, 0, 950, 950], (1000, 1000)) is True
+    assert _is_page_like_bbox([100, 100, 500, 500], (1000, 1000)) is False
+
+
+def test_pptx_page_like_shape_detection():
+    assert _is_page_like_shape([0, 0, 950, 950], 1000, 1000) is True
+    assert _is_page_like_shape([0, 0, 400, 400], 1000, 1000) is False

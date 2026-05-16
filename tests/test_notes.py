@@ -113,11 +113,27 @@ def test_local_notes_bundle_assets_and_use_renderable_image_links(tmp_path):
     result = generate_notes_result(deck, tmp_path)
 
     assert "`![" not in result.markdown
-    assert "![第 1 页截图](notes.assets/screenshots/slide1.png)" in result.markdown
+    assert "![第 1 页截图]" not in result.markdown
     assert "![第 1 页图片](notes.assets/images/diagram.png)" in result.markdown
-    assert (tmp_path / "notes.assets" / "screenshots" / "slide1.png").exists()
+    assert not (tmp_path / "notes.assets" / "screenshots" / "slide1.png").exists()
     assert (tmp_path / "notes.assets" / "images" / "diagram.png").exists()
     assert result.asset_warnings == []
+
+
+def test_screenshot_policy_fallback_keeps_screenshot_when_no_local_image(tmp_path):
+    screenshots_dir = tmp_path / "screenshots"
+    screenshots_dir.mkdir()
+    (screenshots_dir / "slide1.png").write_bytes(b"fake")
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[SlidePage(slide_id=1, page_screenshot="screenshots/slide1.png")],
+    )
+
+    result = generate_notes_result(deck, tmp_path)
+
+    assert "![第 1 页截图](notes.assets/screenshots/slide1.png)" in result.markdown
+    assert (tmp_path / "notes.assets" / "screenshots" / "slide1.png").exists()
 
 
 def test_source_display_footnote_keeps_clean_page_reference():
@@ -168,6 +184,7 @@ def test_llm_generation_uses_local_cache(tmp_path, monkeypatch):
         provider="openai",
         api_key="test-key",
         cache_dir=tmp_path / "cache",
+        note_strategy="direct",
     )
     assert first.llm_usage["pages"][0]["cache_status"] == "miss"
     assert first.llm_usage["summary"]["llm_calls"] == 1
@@ -189,6 +206,7 @@ def test_llm_generation_uses_local_cache(tmp_path, monkeypatch):
         use_llm=True,
         provider="openai",
         cache_dir=tmp_path / "cache",
+        note_strategy="direct",
     )
     assert second.llm_usage["pages"][0]["cache_status"] == "local_hit"
     assert second.llm_usage["summary"]["llm_calls"] == 0
@@ -231,7 +249,7 @@ def test_llm_auto_context_uses_document_for_short_deck(tmp_path, monkeypatch):
 
     monkeypatch.setattr("slidenote.notes.LLMClient", FakeClient)
 
-    result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test")
+    result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct", note_context="auto")
 
     assert len(prompts) == 1
     assert '"context_kind": "document"' in prompts[0]
@@ -264,8 +282,155 @@ def test_llm_auto_context_uses_sections_for_large_deck(tmp_path, monkeypatch):
 
     monkeypatch.setattr("slidenote.notes.LLMClient", FakeClient)
 
-    result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test")
+    result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct", note_context="auto")
 
     assert len(prompts) >= 2
     assert '"context_kind": "section"' in prompts[0]
     assert result.llm_usage["summary"]["contexts_total"] == len(prompts)
+
+
+def test_lecture_weave_generates_page_notes_then_weaves_sections(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(slide_id=1, title="Replication", text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Replica")]),
+            SlidePage(slide_id=2, title="Quorum", text_blocks=[TextBlock(id="s2_t1", type="paragraph", content="Quorum")]),
+        ],
+    )
+    prompts = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            prompts.append(prompt)
+
+            class Result:
+                usage = {"input_tokens": 3, "output_tokens": 4, "total_tokens": 7}
+
+            result = Result()
+            if '"task": "page_lecture"' in prompt and '"context_id": "p1"' in prompt:
+                result.text = "## Replication\n\n副本用于提高可用性。<!-- slidenote-source: p1:s1_t1 -->"
+            elif '"task": "page_lecture"' in prompt and '"context_id": "p2"' in prompt:
+                result.text = "## Quorum\n\nQuorum 解释读写交集。<!-- slidenote-source: p2:s2_t1 -->"
+            else:
+                result.text = (
+                    "好的，这是根据 JSON 生成的课程笔记。\n\n"
+                    "# 课程笔记：副本与 Quorum\n\n"
+                    "副本先解决可用性问题。<!-- slidenote-source: p1:s1_t1 -->\n\n"
+                    "Quorum 进一步说明读写交集。<!-- slidenote-source: p2:s2_t1 -->"
+                )
+            return result
+
+    monkeypatch.setattr("slidenote.notes.LLMClient", FakeClient)
+
+    result = generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="openai",
+        api_key="test",
+        note_strategy="lecture-weave",
+        note_depth="detailed",
+        note_context="document",
+    )
+
+    assert len(prompts) == 3
+    assert '"task": "page_lecture"' in prompts[0]
+    assert '"task": "page_lecture"' in prompts[1]
+    assert '"task": "weave_page_lectures"' in prompts[2]
+    assert result.page_notes is not None
+    assert result.weave_report is not None
+    assert result.page_notes_markdown is not None
+    assert result.llm_usage["summary"]["page_note_calls"] == 2
+    assert result.llm_usage["summary"]["weave_calls"] == 1
+    assert "好的，这是" not in result.markdown
+    assert "# 课程笔记" not in result.markdown
+    assert sum(1 for line in result.markdown.splitlines() if line.startswith("# ")) == 1
+    assert "<!-- slidenote-source: p1:s1_t1 -->" in result.markdown
+    assert "<!-- slidenote-source: p2:s2_t1 -->" in result.markdown
+    assert analyze_coverage(deck, result.markdown)["missing"] == 0
+
+
+def test_lecture_weave_cache_and_refresh_are_split_by_page_and_weave(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(slide_id=1, text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="A")]),
+            SlidePage(slide_id=2, text_blocks=[TextBlock(id="s2_t1", type="paragraph", content="B")]),
+        ],
+    )
+    cache_dir = tmp_path / "cache"
+
+    class FirstClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            class Result:
+                usage = {}
+
+            result = Result()
+            if '"task": "page_lecture"' in prompt and '"context_id": "p1"' in prompt:
+                result.text = "A detail. <!-- slidenote-source: p1:s1_t1 -->"
+            elif '"task": "page_lecture"' in prompt and '"context_id": "p2"' in prompt:
+                result.text = "B detail. <!-- slidenote-source: p2:s2_t1 -->"
+            else:
+                result.text = "A detail. <!-- slidenote-source: p1:s1_t1 -->\n\nB detail. <!-- slidenote-source: p2:s2_t1 -->"
+            return result
+
+    monkeypatch.setattr("slidenote.notes.LLMClient", FirstClient)
+    generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="openai",
+        api_key="test",
+        note_strategy="lecture-weave",
+        note_context="document",
+        cache_dir=cache_dir,
+    )
+
+    class FailingClient:
+        def __init__(self, **kwargs):
+            raise AssertionError("cache hit should not call the LLM")
+
+    monkeypatch.setattr("slidenote.notes.LLMClient", FailingClient)
+    cached = generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="openai",
+        api_key="test",
+        note_strategy="lecture-weave",
+        note_context="document",
+        cache_dir=cache_dir,
+    )
+    assert cached.llm_usage["summary"]["llm_calls"] == 0
+
+    calls = []
+
+    class RefreshClient(FirstClient):
+        def generate_with_usage(self, prompt):
+            calls.append(prompt)
+            return super().generate_with_usage(prompt)
+
+    monkeypatch.setattr("slidenote.notes.LLMClient", RefreshClient)
+    refreshed = generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="openai",
+        api_key="test",
+        note_strategy="lecture-weave",
+        note_context="document",
+        cache_dir=cache_dir,
+        refresh_slide_ids={2},
+    )
+
+    assert len(calls) == 2
+    assert refreshed.llm_usage["summary"]["page_note_calls"] == 1
+    assert refreshed.llm_usage["summary"]["weave_calls"] == 1

@@ -11,6 +11,7 @@ from PIL import Image
 
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
+from slidenote.modality import page_has_hint
 from slidenote.models import Deck, ImageAsset, SlidePage
 
 VISION_PROMPT_VERSION = "vision-extract-v1"
@@ -240,10 +241,15 @@ def select_vision_targets(
     targets: list[VisionTarget] = []
     for page in deck.pages:
         if mode == "auto":
-            if page.page_screenshot and _page_deserves_screenshot(page):
+            figure_targets = _role_image_targets(page, output_root, role="figure_crop", min_area=0, first_only=False)
+            if figure_targets:
+                targets.extend(figure_targets)
+                continue
+            image_targets = _large_image_targets(page, output_root, min_area=min_area, first_only=True)
+            if image_targets:
+                targets.extend(image_targets)
+            elif page.page_screenshot and _page_deserves_screenshot(page):
                 targets.append(VisionTarget(page.slide_id, "page_screenshot", page.page_screenshot, reason="auto_page_visual"))
-            elif not page.page_screenshot:
-                targets.extend(_large_image_targets(page, output_root, min_area=min_area, first_only=True))
         else:
             if page.page_screenshot:
                 targets.append(VisionTarget(page.slide_id, "page_screenshot", page.page_screenshot, reason="all_page_screenshot"))
@@ -255,6 +261,8 @@ def select_vision_targets(
 
 
 def _page_deserves_screenshot(page: SlidePage) -> bool:
+    if page_has_hint(page, "vision_page_screenshot"):
+        return True
     text_len = sum(len(block.content.strip()) for block in page.text_blocks)
     has_content_images = any(not image.ignored for image in page.images)
     return bool(has_content_images or page.tables or text_len < 500 or page.warnings)
@@ -263,13 +271,28 @@ def _page_deserves_screenshot(page: SlidePage) -> bool:
 def _large_image_targets(page: SlidePage, output_root: Path, min_area: int, first_only: bool) -> list[VisionTarget]:
     targets: list[VisionTarget] = []
     for image in page.images:
-        if image.ignored:
+        if image.ignored or image.role == "page_image":
             continue
         path = output_root / image.path
         area = _image_area(path)
         if area is not None and area < min_area:
             continue
         targets.append(VisionTarget(page.slide_id, "image", image.path, image_id=image.id, reason="large_embedded_image"))
+        if first_only:
+            break
+    return targets
+
+
+def _role_image_targets(page: SlidePage, output_root: Path, role: str, min_area: int, first_only: bool) -> list[VisionTarget]:
+    targets: list[VisionTarget] = []
+    for image in page.images:
+        if image.ignored or image.role != role:
+            continue
+        path = output_root / image.path
+        area = _image_area(path)
+        if area is not None and area < min_area:
+            continue
+        targets.append(VisionTarget(page.slide_id, "image", image.path, image_id=image.id, reason=f"{role}_image"))
         if first_only:
             break
     return targets

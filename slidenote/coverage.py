@@ -64,7 +64,7 @@ def render_coverage_markdown(report: dict[str, object]) -> str:
 
 def _collect_items(deck: Deck, notes_markdown: str) -> list[CoverageItem]:
     items: list[CoverageItem] = []
-    tokens = set(re.findall(r"\bs\d+_(?:t|tbl|img)\d+\b", notes_markdown))
+    tokens = set(re.findall(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", notes_markdown))
     for page in deck.pages:
         items.extend(_page_items(page, tokens))
     return items

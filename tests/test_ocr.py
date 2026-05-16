@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from slidenote.modality import enrich_deck_with_modalities
 from slidenote.models import Deck, SlidePage, TextBlock
 from slidenote.ocr import enrich_deck_with_ocr, select_ocr_targets
 
@@ -38,6 +39,19 @@ def test_ocr_auto_selects_low_text_page_screenshot(tmp_path):
 
     assert len(targets) == 1
     assert targets[0].kind == "page_screenshot"
+
+
+def test_ocr_auto_uses_image_only_modality_hint(tmp_path):
+    screenshot = tmp_path / "screenshots" / "slide1.png"
+    screenshot.parent.mkdir()
+    Image.new("RGB", (800, 450), "white").save(screenshot)
+    deck = Deck(source_path="lecture.pdf", source_type="pdf", pages=[SlidePage(slide_id=1, page_screenshot="screenshots/slide1.png")])
+    enrich_deck_with_modalities(deck)
+
+    targets = select_ocr_targets(deck, tmp_path, mode="auto", min_text_chars=0)
+
+    assert len(targets) == 1
+    assert targets[0].reason == "image_only"
 
 
 def test_ocr_enrichment_writes_text_and_uses_cache(tmp_path, monkeypatch):

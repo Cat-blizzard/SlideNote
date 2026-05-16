@@ -3,11 +3,12 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from slidenote.modality import enrich_deck_with_modalities
 from slidenote.models import Deck, ImageAsset, SlidePage, TextBlock
 from slidenote.vision import enrich_deck_with_vision, select_vision_targets
 
 
-def test_auto_vision_prefers_page_screenshot(tmp_path):
+def test_auto_vision_prefers_extracted_image_before_page_screenshot(tmp_path):
     screenshot = tmp_path / "screenshots" / "slide1.png"
     screenshot.parent.mkdir()
     Image.new("RGB", (800, 450), "white").save(screenshot)
@@ -27,7 +28,49 @@ def test_auto_vision_prefers_page_screenshot(tmp_path):
     targets = select_vision_targets(deck, tmp_path, mode="auto")
 
     assert len(targets) == 1
+    assert targets[0].kind == "image"
+    assert targets[0].image_id == "s1_img1"
+
+
+def test_auto_vision_prefers_figure_crop_before_embedded_image(tmp_path):
+    figure = tmp_path / "figures" / "slide1_fig1.png"
+    figure.parent.mkdir()
+    Image.new("RGB", (500, 300), "white").save(figure)
+    embedded = tmp_path / "images" / "slide1_img1.png"
+    embedded.parent.mkdir()
+    Image.new("RGB", (500, 300), "white").save(embedded)
+    deck = Deck(
+        source_path="lecture.pptx",
+        source_type="pptx",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                images=[
+                    ImageAsset(id="s1_img1", path="images/slide1_img1.png"),
+                    ImageAsset(id="s1_fig1", path="figures/slide1_fig1.png", role="figure_crop"),
+                ],
+            )
+        ],
+    )
+
+    targets = select_vision_targets(deck, tmp_path, mode="auto")
+
+    assert len(targets) == 1
+    assert targets[0].image_id == "s1_fig1"
+
+
+def test_auto_vision_uses_modality_hint_for_image_only_page(tmp_path):
+    screenshot = tmp_path / "screenshots" / "slide1.png"
+    screenshot.parent.mkdir()
+    Image.new("RGB", (800, 450), "white").save(screenshot)
+    deck = Deck(source_path="lecture.pdf", source_type="pdf", pages=[SlidePage(slide_id=1, page_screenshot="screenshots/slide1.png")])
+    enrich_deck_with_modalities(deck)
+
+    targets = select_vision_targets(deck, tmp_path, mode="auto")
+
+    assert len(targets) == 1
     assert targets[0].kind == "page_screenshot"
+    assert targets[0].reason == "auto_page_visual"
 
 
 def test_vision_enrichment_writes_summary_and_uses_cache(tmp_path, monkeypatch):

@@ -1,18 +1,49 @@
-# SlideNote
+<p align="center">
+  <img src="assets/slidenote-logo.png" alt="SlideNote" width="520">
+</p>
 
-> English README. 中文版说明: [README.zh-CN.md](README.zh-CN.md). Future roadmap: [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md)
+<h1 align="center">SlideNote</h1>
 
-SlideNote is a coverage-aware course note generator MVP. It ingests lecture PPTX/PPT/PDF files, converts them into page-level structured JSON, then generates Markdown notes with source page references, preserved images, vision summaries, LLM usage metadata, and coverage checks.
+<p align="center">
+  <strong>Coverage-aware course notes from lecture slides</strong>
+</p>
+
+<p align="center">
+  Turn PPT/PDF into readable, traceable notes with images, OCR/vision, Lecture-Weave writing, and coverage checks.
+</p>
+
+<p align="center">
+  <em>Not just a slide summarizer — a faithful study-document pipeline.</em>
+</p>
+
+<p align="center">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
+  <img alt="PPT PDF" src="https://img.shields.io/badge/Input-PPTX%20%7C%20PDF-2F6FED">
+  <img alt="LLM" src="https://img.shields.io/badge/LLM-Multi--provider-7C3AED">
+  <img alt="Vision OCR" src="https://img.shields.io/badge/Vision%20%2B%20OCR-supported-0F766E">
+  <img alt="Status" src="https://img.shields.io/badge/Status-MVP-F59E0B">
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> |
+  <a href="README.zh-CN.md">中文</a> |
+  <a href="CONFIG.zh-CN.md">Config</a> |
+  <a href="ROADMAP.zh-CN.md">Roadmap</a>
+</p>
+
+---
 
 ## Features
 
 - Supports `.pptx` and `.pdf`; `.ppt` is handled by attempting a LibreOffice conversion to PDF.
 - Extracts titles, text blocks, tables, embedded images, and slide/page screenshots.
+- Classifies each page as native text, mixed, image-only, shape-diagram-like, or decorative to route OCR, vision, and figure cropping.
 - Produces `content.json` as the source inventory.
 - Produces `notes.md` with source page numbers and element IDs.
 - Produces `coverage.json` / `coverage.md` to flag elements that may be missing from the notes.
 - Optional vision extraction writes OCR text and visual summaries back into the structured content.
 - Optional LLM generation supports OpenAI/ChatGPT, DeepSeek, Qwen, Doubao/Volcengine Ark, GLM, Gemini, and Claude.
+- Optional `lecture-weave` note strategy first generates detailed per-page explanations, then weaves them into coherent sections.
 - Local caching and usage reports make token cost visible and reusable by a future GUI.
 
 ## Origin
@@ -134,7 +165,7 @@ python -m pip install -e ".[dev]"
 Rule-based draft:
 
 ```powershell
-python -m slidenote build path\to\lecture.pptx --out outputs\lecture
+python -m slidenote build path\to\lecture.pptx --out outputs\lecture --vision off
 ```
 
 LLM rewriting:
@@ -148,8 +179,14 @@ Output structure:
 ```text
 outputs/lecture/
   content.json
+  page_modalities.json
   notes.md
+  page_notes.md
+  page_notes.json
+  weave_report.json
   llm_usage.json
+  figures.json
+  figure_usage.json
   ocr.json
   ocr_usage.json
   visuals.json
@@ -160,11 +197,20 @@ outputs/lecture/
   progress.json
   run_summary.json
   notes.assets/
+  figures/
   images/
   screenshots/
 ```
 
 By default, `notes.md` references bundled image copies under `notes.assets/`. If you move or package `notes.md` together with `notes.assets/`, images should continue to render.
+
+`page_modalities.json` records the local page-type detector. It helps later stages choose the cheaper stable path:
+
+- `native_text`: use extracted text directly.
+- `mixed`: use extracted text plus embedded images.
+- `image_only`: prefer page OCR, figure cropping, and page-level vision.
+- `shape_diagram`: use extracted labels plus page screenshot cropping, because the diagram may be built from PPT shapes.
+- `decorative`: low priority unless the user explicitly refreshes it.
 
 ## Environment Check
 
@@ -190,6 +236,8 @@ python -m slidenote doctor --json doctor.json
 
 ## Speed, Progress, And Partial Refresh
 
+For the complete configuration reference, see [CONFIG.zh-CN.md](CONFIG.zh-CN.md).
+
 Large decks can take time, especially with OCR, vision extraction, and LLM rewriting enabled. SlideNote now writes:
 
 ```text
@@ -203,12 +251,12 @@ The CLI also prints live stage progress. To suppress terminal progress while sti
 python -m slidenote build lecture.pdf --out outputs\lecture --quiet
 ```
 
-Speed modes do not enable OCR, vision, or LLM by themselves. They only fill unset limits:
+Speed modes do not enable OCR or LLM by themselves. Vision is `auto` by the quality-first default and can be disabled with `--vision off`. Speed modes fill unset limits:
 
 ```powershell
 --speed-mode fast      # Fewer OCR/vision targets and smaller output budgets
---speed-mode balanced  # Default tradeoff
---speed-mode quality   # Higher image resolution and output budgets
+--speed-mode balanced  # Cost/time tradeoff
+--speed-mode quality   # Default: higher image resolution and output budgets
 --speed-mode debug     # Small target counts for debugging
 ```
 
@@ -256,8 +304,22 @@ The default output favors readable article-style notes. Source element IDs are h
 --note-style article       # Default: rewrite bullets into readable prose
 --source-display hidden    # Default: store source refs in HTML comments and source_map.json
 --asset-mode bundle        # Default: copy images into notes.assets/
---note-context auto        # Default: document context for short files, section context for larger files
+--note-context section     # Default: weave notes by section
+--note-strategy lecture-weave  # Default: explain each page, then weave sections
+--note-depth detailed      # Default: favor detailed page explanations
 ```
+
+`lecture-weave` is the default LLM note strategy. This mode is more expensive, but it better matches the "explain this slide" workflow: first each page is explained in detail, then those page notes are woven into coherent sections.
+
+```powershell
+python -m slidenote build lecture.pdf `
+  --out outputs\lecture `
+  --use-llm `
+  --provider deepseek `
+  --weave-dedup soft
+```
+
+`lecture-weave` also writes `page_notes.json`, `page_notes.md`, and `weave_report.json`. These are intermediate/debug artifacts; `notes.md` remains the final readable note.
 
 To show compact page references in the note body:
 
@@ -269,6 +331,12 @@ For strict debugging, use page context and inline source references:
 
 ```powershell
 --note-context page --source-display inline --note-style faithful
+```
+
+Full-page screenshots are now a fallback by default. If a page already has an embedded image or a local figure crop, `notes.md` does not insert the full-page screenshot unless you opt back into it:
+
+```powershell
+--screenshot-policy always
 ```
 
 ## Image Filtering And Source Map
@@ -284,6 +352,36 @@ PDF/PPT files often contain logos, tiny icons, background fragments, and decorat
 ```
 
 Ignored images are skipped by default in notes, coverage checks, OCR fallback, and standalone vision targets. Full-page screenshots are still preserved in `screenshots/` as the visual fallback.
+
+## Local Figure Cropping
+
+Some lecture materials do not store diagrams as independent image objects. A page may be a scanned image, or a diagram may be made from PowerPoint shapes, arrows, and text boxes. SlideNote can ask a vision model to locate meaningful local figure regions on the full-page screenshot, then crop those regions locally:
+
+```powershell
+--figure-crop auto     # Default: only calls the vision model when --vision is enabled
+--figure-crop vision   # Force bbox detection even if --vision is off
+--figure-crop off      # Disable local figure cropping
+```
+
+Outputs:
+
+```text
+figures/
+figures.json
+figure_usage.json
+```
+
+Default limits:
+
+```powershell
+--figure-max-targets 80
+--figure-max-crops-per-page 3
+--figure-min-confidence 0.45
+--figure-min-area 40000
+--figure-cache on
+```
+
+Figure cropping is best-effort. The model returns bounding boxes, and SlideNote validates, filters, deduplicates, and crops them locally. If no reliable local figure is found, notes fall back to the full-page screenshot.
 
 `source_map.json` records the mapping between note blocks and source elements:
 
@@ -448,7 +546,7 @@ visuals.json
 vision_usage.json
 ```
 
-Vision extraction is off by default because it uses extra multimodal tokens:
+Vision extraction is `auto` by default because SlideNote now favors note quality over token savings. It requires a vision-capable provider API key. Disable it when you only want local parsing or text-only LLM rewriting:
 
 ```powershell
 --vision off
@@ -487,7 +585,7 @@ Selection modes:
 --vision off    # Disable vision extraction
 ```
 
-By default, `auto` prioritizes full-page screenshots. A page screenshot often captures diagrams, arrows, grouped shapes, embedded images, and spatial relationships in one call. If no page screenshot is available, SlideNote falls back to large embedded images by area.
+By default, `auto` prioritizes local figure crops when they exist, then large embedded images, and only falls back to full-page screenshots when no better local visual target is available. This keeps visual summaries focused on the actual diagram instead of the entire slide.
 
 Cost controls:
 
@@ -540,13 +638,15 @@ Text-only models such as DeepSeek can then use these textualized vision results 
 
 ## LLM Cache And Usage Reports
 
-LLM rewriting uses local caching by default. Each page cache key is based on:
+LLM rewriting uses local caching by default. Each note context cache key is based on:
 
 ```text
-structured note context + prompt version + provider + model + base_url + temperature + max-output-tokens + note rendering options
+structured note context + prompt version + note strategy + provider + model + base_url + temperature + max-output-tokens + figure/screenshot rendering options
 ```
 
-If the same page and parameters are generated again, SlideNote reuses the local cache instead of calling the model. Cache hit metadata is not inserted into the note body; it is written to `llm_usage.json` for GUI and debugging use.
+If the same context and parameters are generated again, SlideNote reuses the local cache instead of calling the model. Cache hit metadata is not inserted into the note body; it is written to `llm_usage.json` for GUI and debugging use.
+
+In `lecture-weave` mode, page-note caches and weave caches are separate. Refreshing one slide with `--refresh-pages 12` reruns that slide's page explanation and the weave context that contains it, while unrelated page explanations can still hit cache.
 
 Cache modes:
 
@@ -564,9 +664,10 @@ python -m slidenote build lecture.pptx --use-llm --provider deepseek --cache-dir
 
 `llm_usage.json` records:
 
-- Per-page `cache_status`: `local_hit`, `miss`, `refresh`, or `disabled`
-- Per-page `cache_key` and `cache_file`
+- Per-context `cache_status`: `local_hit`, `miss`, `refresh`, or `disabled`
+- Per-context `cache_key` and `cache_file`
 - Actual LLM call count and cache hit count
+- `page_note_calls` and `weave_calls` when `--note-strategy lecture-weave` is enabled
 - Provider-reported input/output/total tokens
 - Provider-side cached input tokens, when returned by the API
 

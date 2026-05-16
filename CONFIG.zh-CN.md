@@ -1,0 +1,217 @@
+# SlideNote 配置参考
+
+> 本文档整理 `python -m slidenote build` 的主要参数、默认值和适用场景。README 负责快速上手，这里负责完整配置查阅。
+
+## 推荐组合
+
+质量优先，适合正式生成笔记：
+
+```powershell
+python -m slidenote build lecture.pdf `
+  --out outputs\lecture `
+  --use-llm `
+  --provider deepseek `
+  --vision-provider qwen
+```
+
+当前默认已经偏质量优先：
+
+```text
+--speed-mode quality
+--vision auto
+--note-strategy lecture-weave
+--note-context section
+--note-depth detailed
+--weave-dedup soft
+--page-neighborhood 1
+--figure-crop auto
+```
+
+只想本地解析，不调用视觉模型：
+
+```powershell
+python -m slidenote build lecture.pdf --out outputs\lecture --vision off
+```
+
+调试覆盖率和来源映射：
+
+```powershell
+python -m slidenote build lecture.pdf `
+  --out outputs\debug `
+  --use-llm `
+  --note-strategy direct `
+  --note-context page `
+  --note-style faithful `
+  --source-display inline `
+  --vision off
+```
+
+## 基础运行
+
+| 参数 | 默认值 | 可选值 / 格式 | 说明 |
+| --- | --- | --- | --- |
+| `input` | 必填 | `.pptx` / `.ppt` / `.pdf` | 输入课程材料。 |
+| `--out` | `outputs/slidenote` | 路径 | 输出目录。 |
+| `--speed-mode` | `quality` | `fast` / `balanced` / `quality` / `debug` | 成本、速度和质量预设。只填充未显式设置的限额。 |
+| `--concurrency` | `1` | 正整数 | OCR、Vision、Figure Crop 和 LLM 的并发 API 调用数。 |
+| `--global-cache-dir` | 无 | 路径 | 多个输出目录共享缓存。 |
+| `--refresh-pages` | 无 | `3,5-8` | 指定页绕过本地缓存重新生成。 |
+| `--progress-json` | `<out>/progress.json` | 路径 | 进度 JSON 路径。 |
+| `--quiet` | 关闭 | flag | 不打印实时进度，但仍写 `progress.json`。 |
+
+## Speed Mode 预设
+
+| speed-mode | `max-output-tokens` | OCR targets | OCR edge | Figure targets | Vision targets | Vision edge | Vision output | Vision detail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `fast` | `2500` | `40` | `1200` | `25` | `25` | `1000` | `800` | `low` |
+| `balanced` | `4096` | `120` | `1800` | `80` | `80` | `1400` | `1200` | `low` |
+| `quality` | `7000` | `0` 不限 | `2200` | `160` | `160` | `1800` | `2000` | `high` |
+| `debug` | `4096` | `20` | `1400` | `20` | `20` | `1200` | `1000` | `low` |
+
+## LLM 与笔记生成
+
+| 参数 | 默认值 | 可选值 / 格式 | 说明 |
+| --- | --- | --- | --- |
+| `--use-llm` | 关闭 | flag | 开启大模型改写。默认不强制开启，避免无 API key 时无法本地解析。 |
+| `--provider` | `openai` | `openai` / `deepseek` / `qwen` / `doubao` / `glm` / `gemini` / `claude` | 文本模型服务商。 |
+| `--model` | provider 默认 | 模型名或 endpoint id | 手动指定文本模型。 |
+| `--api-key` | 环境变量 | 字符串 | 手动传入文本模型 API key。 |
+| `--base-url` | provider 默认 | URL | OpenAI-compatible 或代理接口地址。 |
+| `--max-output-tokens` | `speed-mode` 决定 | 整数 | 每次文本生成的输出上限。 |
+| `--temperature` | 不传 | 数值 | 不传时由服务商默认处理。 |
+| `--note-strategy` | `lecture-weave` | `direct` / `lecture-weave` | `lecture-weave` 会先逐页深讲，再章节编织。 |
+| `--note-context` | `section` | `auto` / `document` / `section` / `page` | 直接生成或编织阶段的一次上下文粒度。 |
+| `--note-style` | `article` | `article` / `faithful` | 文章式改写或更贴近原顺序。 |
+| `--note-depth` | `detailed` | `concise` / `balanced` / `detailed` | 笔记详细程度。 |
+| `--weave-dedup` | `soft` | `soft` / `normal` / `aggressive` | `lecture-weave` 编织阶段的去重强度。 |
+| `--page-neighborhood` | `1` | `0` / `1` / `2` | 逐页深讲时可看到前后几页标题/摘要。 |
+
+### `note-strategy`
+
+```text
+direct
+```
+
+直接把 `note-context` 选中的上下文交给模型生成笔记。成本较低，但可能在“细节”和“连贯”之间取舍明显。
+
+```text
+lecture-weave
+```
+
+先对每页做详细讲解，再把逐页讲解编织成章节笔记。质量更好，但调用次数和 token 成本更高。
+
+### `note-context`
+
+| 值 | 含义 | 适合场景 |
+| --- | --- | --- |
+| `auto` | 短材料整份生成，长材料按章节/分组 | 通用懒人设置。 |
+| `document` | 整份文件一个上下文 | 很短的课件。 |
+| `section` | 按章节/小节生成或编织 | 当前质量优先默认。 |
+| `page` | 每页一个上下文 | 调试覆盖率，或极端保真模式。 |
+
+在 `lecture-weave` 下，第一阶段永远是逐页深讲，`note-context` 控制第二阶段如何编织。
+
+## 图片、来源与截图呈现
+
+| 参数 | 默认值 | 可选值 | 说明 |
+| --- | --- | --- | --- |
+| `--asset-mode` | `bundle` | `bundle` / `absolute` / `embed` | Markdown 图片引用方式。 |
+| `--source-display` | `hidden` | `hidden` / `footnote` / `inline` | 来源页码和元素 ID 的显示方式。 |
+| `--screenshot-policy` | `fallback` | `fallback` / `always` / `never` | 整页截图是否进入 `notes.md`。 |
+
+`hidden` 会把来源写成 HTML 注释，正文干净，但 `coverage.md` 和 `source_map.json` 仍可追溯。
+
+## LLM 缓存
+
+| 参数 | 默认值 | 可选值 / 格式 | 说明 |
+| --- | --- | --- | --- |
+| `--cache` | `on` | `on` / `off` / `refresh` | 文本 LLM 缓存模式。 |
+| `--cache-dir` | `<out>/.cache/llm` | 路径 | 文本 LLM 缓存目录。 |
+
+`lecture-weave` 会分开缓存逐页深讲和章节编织。局部 `--refresh-pages` 会刷新指定页的 page note，以及包含该页的 weave context。
+
+## OCR
+
+| 参数 | 默认值 | 可选值 / 格式 | 说明 |
+| --- | --- | --- | --- |
+| `--ocr` | `off` | `off` / `auto` / `all` | 专门 OCR 阶段。 |
+| `--ocr-provider` | `baidu` | `baidu` / `mathpix` / `google` | OCR 服务商。 |
+| `--ocr-api-key` | 环境变量 | 字符串 | OCR API key 或 app id。 |
+| `--ocr-secret-key` | 环境变量 | 字符串 | OCR secret key 或 app key。 |
+| `--ocr-endpoint` | 无 | URL | 自定义 OCR endpoint。 |
+| `--ocr-language` | `CHN_ENG` | `CHN_ENG` / `ENG` / `CHN` 等 | OCR 语言提示。 |
+| `--ocr-cache` | `on` | `on` / `off` / `refresh` | OCR 缓存模式。 |
+| `--ocr-cache-dir` | `<out>/.cache/ocr` | 路径 | OCR 缓存目录。 |
+| `--ocr-max-targets` | `speed-mode` 决定 | 整数，`0` 表示不限 | 最大 OCR 目标数。 |
+| `--ocr-min-text-chars` | `80` | 整数 | `auto` 模式下，低于该文本量的页更可能 OCR。 |
+| `--ocr-min-area` | `120000` | 整数 | OCR 嵌入图最小面积。 |
+| `--ocr-max-edge` | `speed-mode` 决定 | 整数 | OCR 前缩放图片长边。 |
+
+## Figure Crop 局部图裁剪
+
+| 参数 | 默认值 | 可选值 / 格式 | 说明 |
+| --- | --- | --- | --- |
+| `--figure-crop` | `auto` | `off` / `auto` / `vision` | 局部图裁剪策略。 |
+| `--figure-max-targets` | `speed-mode` 决定 | 整数，`0` 表示不限 | 最多送多少页做 bbox 检测。 |
+| `--figure-max-crops-per-page` | `3` | 整数 | 每页最多裁几张局部图。 |
+| `--figure-min-confidence` | `0.45` | 0 到 1 | 接受 bbox 的最低置信度。 |
+| `--figure-min-area` | `40000` | 整数 | 裁剪图最小面积。 |
+| `--figure-cache` | `on` | `on` / `off` / `refresh` | 裁剪 bbox 缓存模式。 |
+| `--figure-cache-dir` | `<out>/.cache/figure` | 路径 | Figure Crop 缓存目录。 |
+
+`auto` 表示只有在启用 `--vision auto/all` 时才顺带裁剪；`vision` 表示即使不做视觉摘要，也强制调用视觉模型做 bbox 裁剪。
+
+## Vision 视觉解析
+
+| 参数 | 默认值 | 可选值 / 格式 | 说明 |
+| --- | --- | --- | --- |
+| `--vision` | `auto` | `off` / `auto` / `all` | 视觉解析模式。当前默认质量优先。 |
+| `--vision-provider` | `openai` | `openai` / `qwen` / `doubao` / `gemini` / `claude` | 视觉模型服务商。 |
+| `--vision-model` | provider 默认 | 模型名或 endpoint id | 手动指定视觉模型。 |
+| `--vision-api-key` | 环境变量 | 字符串 | 视觉模型 API key。 |
+| `--vision-base-url` | provider 默认 | URL | 自定义视觉 API base URL。 |
+| `--vision-cache` | `on` | `on` / `off` / `refresh` | 视觉解析缓存模式。 |
+| `--vision-cache-dir` | `<out>/.cache/vision` | 路径 | 视觉解析缓存目录。 |
+| `--vision-max-targets` | `speed-mode` 决定 | 整数，`0` 表示不限 | 最大视觉目标数。 |
+| `--vision-min-area` | `120000` | 整数 | `auto` 选择嵌入图的最小面积。 |
+| `--vision-max-edge` | `speed-mode` 决定 | 整数 | 视觉调用前缩放图片长边。 |
+| `--vision-max-output-tokens` | `speed-mode` 决定 | 整数 | 每张图视觉输出上限。 |
+| `--vision-temperature` | `0.0` | 数值 | 视觉模型温度。 |
+| `--vision-detail` | `speed-mode` 决定 | `low` / `high` / `auto` | OpenAI image detail 参数。 |
+
+## Provider 默认模型
+
+| Provider | 文本默认模型 | 视觉默认模型 | API key 环境变量 |
+| --- | --- | --- | --- |
+| `openai` | `gpt-4.1-mini` | `gpt-4.1-mini` | `OPENAI_API_KEY` |
+| `deepseek` | `deepseek-v4-flash` | 不支持视觉 | `DEEPSEEK_API_KEY` |
+| `qwen` | `qwen-plus` | `qwen-vl-plus` | `QWEN_API_KEY` / `DASHSCOPE_API_KEY` |
+| `doubao` | 需传 `--model` | 需传 `--vision-model` | `DOUBAO_API_KEY` / `ARK_API_KEY` / `VOLCENGINE_API_KEY` |
+| `glm` | `glm-5.1` | 不支持视觉 | `GLM_API_KEY` / `ZAI_API_KEY` / `ZHIPUAI_API_KEY` |
+| `gemini` | `gemini-3-flash-preview` | `gemini-3-flash-preview` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
+| `claude` | `claude-sonnet-4-20250514` | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY` |
+
+## 输出文件
+
+常见输出：
+
+```text
+content.json
+page_modalities.json
+notes.md
+page_notes.md
+page_notes.json
+weave_report.json
+llm_usage.json
+coverage.json
+coverage.md
+source_map.json
+progress.json
+run_summary.json
+notes.assets/
+images/
+figures/
+screenshots/
+```
+
+只有启用对应功能时，才会生成 `ocr_usage.json`、`vision_usage.json`、`figure_usage.json` 等文件。

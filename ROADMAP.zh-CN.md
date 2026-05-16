@@ -28,6 +28,8 @@ SlideNote 当前的核心定位仍然是：
 - 支持 `--note-context auto|document|section|page`，短材料整份生成，长材料按章节/分组生成，逐页模式保留为调试选项。
 - 支持 `--source-display hidden|footnote|inline`，默认隐藏正文来源但保留覆盖率和溯源。
 - 支持 `--note-style article|faithful`，默认更偏文章式课程笔记。
+- 支持基础局部图裁剪 `--figure-crop auto|vision|off`，可用视觉模型定位整页截图中的局部图并裁剪到 `figures/`。
+- 支持 `--screenshot-policy fallback|always|never`，默认有局部图/嵌入图时不在笔记里重复插入整页截图。
 
 ## 1. 上下文策略增强
 
@@ -1520,9 +1522,11 @@ CLI 对新手不够友好，尤其是多个服务商都要 key。
 - 多 PPT / 多 PDF 课程级整合。
 - 更好的 GUI 前置准备：结构化 usage / cache / coverage 输出保持稳定。
 - 小节级上下文增强：基础 `--note-context auto|document|section|page` 已实现；后续补更强章节识别、分层缓存、overflow fallback。
+- 分层生成策略：基础 `--note-strategy lecture-weave` 已实现，可先逐页深讲再章节编织；后续补质量评分、自动补回遗漏细节和 GUI 对比页。
 - PPT 章节切分与分批输出：`split`、`--split-by section`、`section_index.json`。
 - 来源显示与内容融合策略：基础 `source_map.json` 和 `--source-display hidden|footnote|inline` 已实现；后续补 `fusion_mode`、多来源 metadata 和 GUI 切换。
-- 更智能的视觉目标选择。基础装饰图过滤已实现；后续补内容图分类和用户选择。
+- 更智能的视觉目标选择。基础装饰图过滤、figure crop 优先级已实现；后续补内容图分类、用户选择和本地版面分析。
+- 页面类型检测与处理路由：基础 `page_modalities.json` 已实现，可区分原生文字、图文混合、整页图片、形状图和装饰页；后续补更准的版面分析和 GUI 手动修正。
 - LaTeX 默认模板设计。
 
 ### P1：中期能力

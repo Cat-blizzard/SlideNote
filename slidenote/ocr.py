@@ -15,6 +15,7 @@ from typing import Any, Callable
 from PIL import Image
 
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, utc_now_iso
+from slidenote.modality import page_has_hint
 from slidenote.models import Deck, ImageAsset, SlidePage
 
 OCR_SCHEMA_VERSION = 1
@@ -307,10 +308,10 @@ def select_ocr_targets(
     targets: list[OCRTarget] = []
     for page in deck.pages:
         text_len = sum(len(block.content.strip()) for block in page.text_blocks)
-        needs_page_ocr = text_len < min_text_chars or bool(page.warnings)
+        needs_page_ocr = page_has_hint(page, "ocr_page_screenshot") or text_len < min_text_chars or bool(page.warnings)
         if mode == "all" or needs_page_ocr:
             if page.page_screenshot:
-                reason = "all_page_screenshot" if mode == "all" else "low_extracted_text"
+                reason = "all_page_screenshot" if mode == "all" else page.page_modality or "low_extracted_text"
                 targets.append(OCRTarget(page.slide_id, "page_screenshot", page.page_screenshot, reason=reason))
                 continue
             targets.extend(_large_image_targets(page, output_root, min_area=0 if mode == "all" else min_area, first_only=mode != "all"))

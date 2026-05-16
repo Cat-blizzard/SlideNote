@@ -36,7 +36,15 @@ def extract_pptx(input_path: Path, output_root: Path) -> Deck:
                 continue
 
             if _is_picture(shape):
-                image = _extract_picture(shape, slide_index, counters["image"], images_dir, output_root)
+                image = _extract_picture(
+                    shape,
+                    slide_index,
+                    counters["image"],
+                    images_dir,
+                    output_root,
+                    slide_width=float(presentation.slide_width),
+                    slide_height=float(presentation.slide_height),
+                )
                 if image:
                     page.images.append(image)
                     counters["image"] += 1
@@ -124,7 +132,15 @@ def _is_picture(shape: object) -> bool:
         return hasattr(shape, "image")
 
 
-def _extract_picture(shape: object, slide_index: int, image_index: int, images_dir: Path, output_root: Path) -> ImageAsset | None:
+def _extract_picture(
+    shape: object,
+    slide_index: int,
+    image_index: int,
+    images_dir: Path,
+    output_root: Path,
+    slide_width: float,
+    slide_height: float,
+) -> ImageAsset | None:
     if not hasattr(shape, "image"):
         return None
     image = shape.image
@@ -132,18 +148,23 @@ def _extract_picture(shape: object, slide_index: int, image_index: int, images_d
     image_path = unique_path(images_dir / f"slide{slide_index}_img{image_index}.{ext}")
     image_path.write_bytes(image.blob)
     meta = image_metadata(image_path)
+    bbox = _shape_bbox(shape)
+    page_like = _is_page_like_shape(bbox, slide_width, slide_height)
+    role = "page_image" if page_like else meta["role"]
+    ignored = True if page_like else meta["ignored"]
+    ignore_reason = "full_page_image" if page_like else meta["ignore_reason"]
     return ImageAsset(
         id=f"s{slide_index}_img{image_index}",
         path=normalize_rel_path(image_path, output_root),
         caption=f"第 {slide_index} 页嵌入图片 {image_index}",
-        bbox=_shape_bbox(shape),
+        bbox=bbox,
         source_format=ext,
         width=meta["width"],
         height=meta["height"],
         file_size=meta["file_size"],
-        role=meta["role"],
-        ignored=meta["ignored"],
-        ignore_reason=meta["ignore_reason"],
+        role=role,
+        ignored=ignored,
+        ignore_reason=ignore_reason,
     )
 
 
@@ -152,6 +173,13 @@ def _shape_bbox(shape: object) -> list[float] | None:
         return [float(shape.left), float(shape.top), float(shape.width), float(shape.height)]
     except Exception:
         return None
+
+
+def _is_page_like_shape(bbox: list[float] | None, slide_width: float, slide_height: float) -> bool:
+    if not bbox or slide_width <= 0 or slide_height <= 0:
+        return False
+    _, _, width, height = bbox
+    return max(0.0, width) * max(0.0, height) / (slide_width * slide_height) >= 0.85
 
 
 def _fallback_title(blocks: list[TextBlock]) -> str | None:

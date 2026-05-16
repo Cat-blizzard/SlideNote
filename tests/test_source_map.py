@@ -41,3 +41,33 @@ def test_source_map_links_hidden_source_comments(tmp_path):
 
     refs = source_map["note_blocks"][0]["source_refs"]
     assert [ref["element_id"] for ref in refs] == ["s3_t1"]
+
+
+def test_source_map_includes_figure_crop_metadata(tmp_path):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=4,
+                images=[
+                    ImageAsset(
+                        id="s4_fig1",
+                        path="figures/slide4_fig1.png",
+                        role="figure_crop",
+                        crop_source_path="screenshots/slide4.png",
+                        crop_bbox=[0.1, 0.2, 0.6, 0.8],
+                        crop_method="vision_bbox",
+                        confidence=0.88,
+                    )
+                ],
+            )
+        ],
+    )
+
+    source_map = build_source_map(deck, "<!-- slidenote-source: p4:s4_fig1 -->", tmp_path)
+
+    ref = source_map["note_blocks"][0]["source_refs"][0]
+    assert ref["element_id"] == "s4_fig1"
+    assert ref["crop_bbox"] == [0.1, 0.2, 0.6, 0.8]
+    assert source_map["pages"][0]["images"][0]["crop_method"] == "vision_bbox"
