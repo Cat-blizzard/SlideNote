@@ -103,3 +103,7 @@ def test_doctor_command_writes_json(tmp_path):
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["schema_version"] == 1
     assert "checks" in report
+    assert "recommended_actions" in report
+    assert "gui" in report
+    assert all("category" in check and "impact" in check for check in report["checks"])
+    assert isinstance(report["gui"]["ready_for_local_parse"], bool)

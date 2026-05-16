@@ -235,6 +235,7 @@ It checks:
 - Optional dependencies: OpenAI SDK, pywin32.
 - External tools: LibreOffice / `soffice`.
 - Common LLM/OCR API key environment variables.
+- Per-check impact, fix suggestions, and GUI-readable readiness flags.
 
 You can also write the report as JSON:
 

@@ -236,6 +236,7 @@ python -m slidenote doctor
 - 可选依赖：OpenAI SDK、pywin32。
 - 外部软件：LibreOffice / `soffice`。
 - 常见 LLM/OCR API key 环境变量。
+- 每个检查项的影响范围、修复建议和 GUI 可读取的 readiness 状态。
 
 也可以把结果写成 JSON：
 

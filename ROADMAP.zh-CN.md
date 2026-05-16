@@ -1496,7 +1496,7 @@ python -m slidenote update-course outputs/my-course
 python -m slidenote doctor
 ```
 
-输出本机配置诊断报告，告诉用户缺什么、怎么补。
+输出本机配置诊断报告，告诉用户缺什么、怎么补。当前已包含每项检查的影响范围、修复建议、推荐下一步和 GUI 可读取的 readiness metadata；后续重点是 GUI 里做一键诊断和更友好的 API key 配置引导。
 
 ## 24. 更友好的 API Key 配置
 
@@ -1537,7 +1537,7 @@ CLI 对新手不够友好，尤其是多个服务商都要 key。
 
 ### P0：近期最值得做
 
-- `slidenote doctor` 环境检测。基础版已实现，后续补更详细的修复建议和 GUI 诊断。
+- `slidenote doctor` 环境检测。基础版和结构化修复建议已实现，后续补 GUI 一键诊断和更友好的 API key 配置引导。
 - 运行进度显示增强：基础版 CLI 实时进度、`progress.json`、`run_summary.json` 已有；后续补 ETA、失败恢复和更细状态。
 - 加速与成本调度增强：基础版 `--speed-mode`、`--concurrency`、`--global-cache-dir`、`--refresh-pages` 已有；后续补限速、重试、真正只重跑/只输出指定小节。
 - 课程工作区基础模型：Course / Source / Chapter。
