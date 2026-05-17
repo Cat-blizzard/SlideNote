@@ -33,6 +33,9 @@ SlideNote 当前的核心定位仍然是：
 - 支持基础图片学习价值排序 `--image-ranking local|off`，输出 `image_importance.json`，供视觉目标选择、笔记插图和未来 GUI 使用。
 - 支持章节计划输出 `sections.json`，并提供 `--section-detection auto|local|llm`；开启章节式 LLM 笔记时可用模型辅助识别章节边界。
 - 支持 `--note-language auto|zh|en` 和 `--term-policy preserve|translate|bilingual`，可让英文课件输出中文/英文笔记，并控制专业术语保留方式。
+- 支持 Lecture-Weave 分层生成策略：`--note-strategy lecture-weave`（默认），先逐页让模型"讲课"，再按章节编织成连贯笔记。输出中间产物 `page_notes.json`、`page_notes.md` 和 `weave_report.json`。
+- 支持 Deck Brief 课程全景图：`--deck-brief auto` 可用 LLM 生成课程主题、核心问题、概念依赖关系和页面角色划分，作为后续笔记生成的全局导航。
+- 支持 Figure Grounding 图文锚定：`--figure-grounding local|vision` 将图片锚定到页面内最近的文本或表格元素，让笔记中的图片出现在相关概念附近而非堆积在页尾。输出 `figure_grounding.json`。
 
 ## 1. 上下文策略增强
 
@@ -537,111 +540,26 @@ GUI 阶段则做成：
 
 ## 8. 运行进度与状态报告
 
-长课件、图像驱动型课件、多模型调用都会让运行时间变长。如果 CLI 在运行时没有反馈，用户很容易不知道程序是卡住了、还在调用 API，还是已经处理到后半段。因此进度系统应作为近期基础能力建设。
+长课件、图像驱动型课件、多模型调用都会让运行时间变长。如果 CLI 在运行时没有反馈，用户很容易不知道程序是卡住了、还在调用 API，还是已经处理到后半段。
 
-当前基础版已经实现：CLI 阶段进度、`progress.json` 和 `run_summary.json`。后续还需要继续增强 ETA、失败恢复、GUI 任务状态和更细粒度的阶段统计。
+**当前已实现：**
 
-### CLI 实时进度
-
-运行时应显示当前阶段和处理数量，例如：
+- **CLI 实时进度**（[progress.py](../blob/main/slidenote/progress.py) `ProgressReporter`）：运行时显示当前阶段编号和名称，以及在处理数量、缓存命中数、实际 API 调用数、跳过数。输出示例：
 
 ```text
-[1/6] Parsing input file...
-[2/6] Rendering page screenshots... 257 pages
-[3/6] OCR... 8/32 targets, cache hits 3, API calls 5
-[4/6] Vision analysis... 12/80 targets, cache hits 4, API calls 8
-[5/6] LLM note generation... page 43/257, cache hits 18, API calls 25
-[6/6] Coverage check...
+[1] Parsing input file...
+[2] Rendering page screenshots...
+[3] OCR: 8/32 targets, cache hits 3, API calls 5
+[4] Vision analysis: 12/80 targets, cache hits 4, API calls 8
+[5] LLM note generation: page 43/257, cache hits 18, API calls 25
+[6] Coverage check...
 ```
 
-需要展示：
+- **`progress.json`**：结构化进度文件，记录 `status`、当前 `stage`、`current/total`、`cache_hits`、`api_calls`、`elapsed_seconds` 等字段，可供 GUI 直接读取。
+- **`run_summary.json`**：运行结束后汇总总页数、各阶段目标数、缓存命中次数、实际 API 调用次数、总耗时、token 用量、失败/跳过页等。
+- **`--quiet`**：静默模式，只写 JSON 不打印终端进度。
 
-- 当前阶段：Parsing / Rendering / OCR / Vision / LLM / Coverage / Export。
-- 当前进度：第几页 / 总页数，或第几个 target / 总 target。
-- 缓存命中数。
-- 实际 API 调用数。
-- 已耗时。
-- 简单 ETA。
-- 当前正在处理的文件、页码或图片。
-
-### 结构化进度文件
-
-为了未来 GUI，不应只把进度打印到终端。运行时应同步写入：
-
-```text
-progress.json
-```
-
-示例结构：
-
-```json
-{
-  "status": "running",
-  "stage": "vision",
-  "stage_index": 4,
-  "stage_total": 6,
-  "current": 12,
-  "total": 80,
-  "message": "Analyzing slide 12 screenshot",
-  "cache_hits": 3,
-  "api_calls": 9,
-  "started_at": "...",
-  "updated_at": "...",
-  "elapsed_seconds": 512,
-  "estimated_remaining_seconds": 840
-}
-```
-
-价值：
-
-- CLI 可以显示实时状态。
-- GUI 可以直接读它做进度条。
-- 异常退出后能知道停在哪一步。
-- 后续可以支持继续运行、增量更新和任务恢复。
-
-### 最终运行报告
-
-除了已有的 `llm_usage.json`、`vision_usage.json`、`ocr_usage.json` 和 `coverage.json`，还可以增加：
-
-```text
-run_summary.json
-```
-
-用于汇总：
-
-- 总页数。
-- 总图片数。
-- OCR 处理页数 / target 数。
-- Vision 处理页数 / target 数。
-- LLM 处理页数。
-- 缓存命中次数。
-- 实际 API 调用次数。
-- 总耗时。
-- token 用量。
-- 哪一步最慢。
-- 哪些页失败或跳过。
-
-### CLI 参数设想
-
-默认显示简洁进度：
-
-```powershell
-python -m slidenote build lecture.pdf --out outputs/lecture
-```
-
-可选静默模式：
-
-```powershell
---quiet
-```
-
-可选显式指定进度文件：
-
-```powershell
---progress-json outputs/lecture/progress.json
-```
-
-这个能力不只是体验优化，也会成为后续 GUI、课程工作区、多 PPT 整合和持续更新的基础设施。
+**后续待增强：** ETA 估算、失败后断点恢复、GUI 任务状态面板、更细粒度的阶段耗时统计（例如区分 Vision/OCR/LLM 各自的平均每页耗时）。
 
 ## 9. 加速与成本调度
 
@@ -1480,24 +1398,18 @@ python -m slidenote update-course outputs/my-course
 
 ## 23. 本机依赖自动检测
 
-未来 CLI / GUI 都应能自动检测环境：
+`slidenote doctor` 命令（[doctor.py](../blob/main/slidenote/doctor.py)）已实现，可自动检测：
 
 - Python 版本。
-- LibreOffice 是否安装。
-- `soffice` 是否在 PATH。
-- Windows 是否可用 PowerPoint COM。
-- 是否安装 `pywin32`。
-- API key 是否配置。
-- OCR provider 是否可用。
-- 视觉 provider 是否可用。
+- 依赖包版本（PyMuPDF、python-pptx 等）。
+- LibreOffice 是否安装、`soffice` 是否在 PATH。
+- Windows 是否可用 PowerPoint COM、是否安装 `pywin32`。
+- 各 provider 的 API key 是否配置、是否可连通（发送轻量测试请求）。
+- OCR / Vision provider 是否可用。
 
-可以新增命令：
+输出包含每项检查的影响范围、修复建议、推荐下一步，以及 GUI 可读取的 `readiness` metadata。
 
-```powershell
-python -m slidenote doctor
-```
-
-输出本机配置诊断报告，告诉用户缺什么、怎么补。当前已包含每项检查的影响范围、修复建议、推荐下一步和 GUI 可读取的 readiness metadata；后续重点是 GUI 里做一键诊断和更友好的 API key 配置引导。
+**后续待增强：** GUI 里做一键诊断面板，以及更友好的 API key 配置引导（见下一节）。
 
 ## 24. 更友好的 API Key 配置
 
@@ -1538,19 +1450,23 @@ CLI 对新手不够友好，尤其是多个服务商都要 key。
 
 ### P0：近期最值得做
 
-- `slidenote doctor` 环境检测。基础版和结构化修复建议已实现，后续补 GUI 一键诊断和更友好的 API key 配置引导。
-- 运行进度显示增强：基础版 CLI 实时进度、`progress.json`、`run_summary.json` 已有；后续补 ETA、失败恢复和更细状态。
-- 加速与成本调度增强：基础版 `--speed-mode`、`--concurrency`、`--global-cache-dir`、`--refresh-pages` 已有；后续补限速、重试、真正只重跑/只输出指定小节。
+已完成基础版，后续增强：
+
+- `slidenote doctor` 环境检测：已实现完整命令行诊断；后续补 GUI 一键诊断和更友好的 API key 配置引导。
+- 运行进度系统：CLI 实时进度、`progress.json`、`run_summary.json` 已完成；后续补 ETA、失败恢复和更细阶段统计。
+- 加速与成本调度：`--speed-mode`、`--concurrency`、`--global-cache-dir`、`--refresh-pages` 已完成；后续补限速、重试、只重跑指定小节。
+- 分层生成策略：Lecture-Weave（`--note-strategy lecture-weave`）已是默认策略；后续补质量评分、自动补回遗漏细节。
+- 页面类型检测与处理路由：`page_modalities.json` 已实现；后续补更准的版面分析和 GUI 手动修正。
+- 视觉目标选择：装饰图过滤、figure crop 优先级、图片学习价值排序已实现；后续补内容图分类和更强版面分析。
+
+仍待实现：
+
 - 课程工作区基础模型：Course / Source / Chapter。
 - 多 PPT / 多 PDF 课程级整合。
-- 更好的 GUI 前置准备：结构化 usage / cache / coverage 输出保持稳定。
-- 小节级上下文增强：基础 `--note-context auto|document|section|page` 与 `--section-detection auto|local|llm` 已实现；后续补章节置信度、人机修正、overflow fallback。
-- 分层生成策略：基础 `--note-strategy lecture-weave` 已实现，可先逐页深讲再章节编织；后续补质量评分、自动补回遗漏细节和 GUI 对比页。
-- 输出语言与术语策略：基础 `--note-language` 和 `--term-policy` 已实现；后续补术语表抽取、用户自定义词表和按学科 profile 的术语规则。
-- PPT 章节切分与分批输出：`split`、`--split-by section`、`section_index.json`。
-- 来源显示与内容融合策略：基础 `source_map.json` 和 `--source-display hidden|footnote|inline` 已实现；后续补 `fusion_mode`、多来源 metadata 和 GUI 切换。
-- 更智能的视觉目标选择。基础装饰图过滤、figure crop 优先级、图片学习价值排序已实现；后续补内容图分类、用户选择和更强版面分析。
-- 页面类型检测与处理路由：基础 `page_modalities.json` 已实现，可区分原生文字、图文混合、整页图片、形状图和装饰页；后续补更准的版面分析和 GUI 手动修正。
+- PPT 章节切分与分批输出：`split` 子命令、`--split-by section`、`section_index.json` 等。
+- 来源显示与内容融合策略：`--source-display` 已实现三种模式；后续补 `--fusion-mode`（separated/blended/integrated）、多来源 metadata 和 GUI 切换。
+- 小节级上下文增强：`--note-context auto|document|section|page` 与 `--section-detection auto|local|llm` 已实现；后续补 chapter 模式、章节置信度、人机修正、overflow fallback。
+- 输出语言与术语策略增强：`--note-language` 和 `--term-policy` 已实现；后续补术语表抽取、用户自定义词表和按学科 profile 的术语规则。
 - LaTeX 默认模板设计。
 
 ### P1：中期能力

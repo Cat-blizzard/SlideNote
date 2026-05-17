@@ -1690,8 +1690,9 @@ def _llm_context_prompt(
         "如果没有视觉摘要，不要写“未提供图片像素”“无法视觉解析”“建议查看原 PPT”等说明；只插入图片，不猜测图片内容。"
     )
     banned_rule = (
-        "严禁输出与课程内容无关的元叙述，例如“好的，这是……”“以下是根据 JSON……”“笔记已严格遵循……”"
-        "“覆盖了所有文本块……”等。不要出现“课程笔记”作为章节标题；全文 H1 已由系统生成，你只能使用 ## 或更低级标题。"
+        "严禁输出与课程内容无关的元叙述，例如\u201c好的，这是\u2026\u2026\u201d\u201c以下是根据 JSON\u2026\u2026\u201d\u201c笔记已严格遵循\u2026\u2026\u201d"
+        "\u201c覆盖了所有文本块\u2026\u2026\u201d等。不要出现\u201c课程笔记\u201d作为章节标题；全文 H1 已由系统生成，你只能使用 ## 或更低级标题。"
+        "严禁使用\u201c这一页\u201d\u201c本页\u201d\u201c幻灯片\u201d\u201c上一页\u201d\u201c下一页\u201d\u201c此页\u201d\u201c这页\u201d等描述 PPT 页面结构的表述，直接讲解知识即可。"
     )
     return (
         "请把下面的课程材料 JSON 改写成可以直接阅读的 Markdown 笔记。\n"
@@ -1746,26 +1747,26 @@ def _llm_page_lecture_prompt(
     language_rule = _language_prompt_rule(note_language)
     term_rule = _term_policy_prompt_rule(note_language, term_policy)
     style_rule = (
-        "请像给学生讲解这一页 PPT 一样写：先说明本页在讲什么，再把 bullet、图表、公式和例子改写成连续解释。"
+        "请把 current_page 中的知识点写成一段连续的课程讲义：直接解释定义、推导、图表和例子，而不是描述\u201c这一页讲了什么\u201d或\u201c本页包含哪些内容\u201d。"
         if note_style == "article"
-        else "请尽量保留本页原始条目顺序，但仍要写成可以阅读的讲解，而不是复制清单。"
+        else "请尽量保留 current_page 原始条目顺序，但仍要写成可以直接阅读的知识点讲解，而不是复制清单或描述页面构成。"
     )
     return (
-        "请只讲解 JSON 中的 current_page，不要替其他页面写正文。\n"
-        "nearby_pages 只用于理解前后逻辑和减少重复，不能把邻近页内容当成本页内容展开。\n"
+        "请只讲解 JSON 中的 current_page 包含的知识内容，不要替其他页面写正文。\n"
+        "nearby_pages 只用于理解前后逻辑和减少重复，不能把邻近页内容当作 current_page 的内容展开。\n"
         "If deck_brief is present, it is only a navigation map: current_page is the only source for the body; do not omit current_page elements because of the brief; do not pull later-page content into this page.\n"
         f"{style_rule}\n"
         f"{language_rule}\n"
         f"{term_rule}\n"
         f"{depth_rule}\n"
         "硬性要求：\n"
-        "1. 本页的重要定义、条件、例子、公式、表格、图片、OCR 和视觉摘要都要进入讲解。\n"
-        "2. 不要写“这一页展示了若干 bullet”这种空话，要直接解释这些 bullet 在课程中的含义。\n"
+        "1. current_page 中的重要定义、条件、例子、公式、表格、图片、OCR 和视觉摘要都要进入讲解。\n"
+        "2. 严禁使用\u201c这一页\u201d、\u201c本页\u201d、\u201c幻灯片\u201d、\u201c上一页\u201d、\u201c下一页\u201d、\u201c这张幻灯片\u201d、\u201c此页\u201d、\u201c这页\u201d等 PPT 结构表述；直接讲知识，不要描述\u201c幻灯片上展示了什么\u201d或\u201c这一页在上一页的基础上\u201d。\n"
         "3. current_page.ordered_elements 已按版面顺序给出；图片若带 anchor_element_ids，要放在对应概念附近，并用 figure_explanation 解释它补充了什么，避免重复正文定义。\n"
         "4. 对没有视觉摘要的图片，只插入图片，不猜测、不道歉、不说无法解析。\n"
         f"5. {source_rule}\n"
         "6. 图片 alt 文本不能为空，应用简短文字说明图片主题。\n"
-        "7. 只能使用 ### 或更低级标题，严禁输出“好的，这是”“根据 JSON”“课程笔记已严格遵循”等元叙述。\n\n"
+        "7. 只能使用 ### 或更低级标题，严禁输出\u201c好的，这是\u201d\u201c根据 JSON\u201d\u201c课程笔记已严格遵循\u201d等元叙述。\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
@@ -1820,9 +1821,10 @@ def _llm_weave_prompt(
         "硬性要求：\n"
         "1. 保留 page_notes 中已经写出的图片 Markdown 和隐藏来源标记。\n"
         "2. 可以调整顺序、合并段落、补连接句，但必须保留每页独有的知识点。\n"
-        "3. 外层章节标题由系统统一添加；正文小标题只能使用 ### 或更低级标题，不要输出全文 H1，也不要用“课程笔记”当标题。\n"
+        "3. 外层章节标题由系统统一添加；正文小标题只能使用 ### 或更低级标题，不要输出全文 H1，也不要用\u201c课程笔记\u201d当标题。\n"
         f"4. {source_rule}\n"
-        "5. 图片 alt 文本不能为空；严禁输出“好的，这是”“根据 JSON”“笔记已严格遵循”“无法视觉解析”等元叙述。\n\n"
+        "5. 图片 alt 文本不能为空；严禁输出\u201c好的，这是\u201d\u201c根据 JSON\u201d\u201c笔记已严格遵循\u201d\u201c无法视觉解析\u201d等元叙述。\n"
+        "6. 严禁使用\u201c这一页\u201d\u201c本页\u201d\u201c幻灯片\u201d\u201c上一页\u201d\u201c下一页\u201d\u201c此页\u201d等 PPT 页面结构表述；直接讲知识，自然过渡。\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
@@ -2536,6 +2538,7 @@ def _remove_meta_paragraphs(markdown: str) -> str:
 def _is_meta_paragraph(paragraph: str) -> bool:
     normalized = " ".join(line.strip() for line in paragraph.splitlines() if line.strip())
     banned_patterns = [
+        # 元叙述
         "好的，这是",
         "好的，我将",
         "以下是根据",
@@ -2549,6 +2552,7 @@ def _is_meta_paragraph(paragraph: str) -> bool:
         "覆盖每一个文本块",
         "每段均标注",
         "每一段都标注",
+        # 图片借口
         "未提供图片像素",
         "未提供图像像素",
         "未提供图片的 OCR",
@@ -2561,6 +2565,20 @@ def _is_meta_paragraph(paragraph: str) -> bool:
         "若需了解图片具体内容",
         "图片留作原始证据",
         "仅作为证据保留",
+        # PPT 结构语
+        "幻灯片首先提出",
+        "这一页在上一页的基础上",
+        "上一页介绍了",
+        "下一页将",
+        "本页主要讲解",
+        "本页介绍了",
+        "这页展示",
+        "此页内容",
+        "此幻灯片",
+        "这张幻灯片",
+        "这组幻灯片",
+        "该幻灯片",
+        "当前幻灯片",
     ]
     return any(pattern in normalized for pattern in banned_patterns)
 
