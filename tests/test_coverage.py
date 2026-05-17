@@ -42,7 +42,7 @@ def test_coverage_reads_hidden_source_markers():
     assert report["missing"] == 0
 
 
-def test_coverage_distinguishes_trace_and_visible_ids():
+def test_coverage_counts_attached_source_marker_as_visible():
     deck = Deck(
         source_path="demo.pptx",
         source_type="pptx",
@@ -55,6 +55,27 @@ def test_coverage_distinguishes_trace_and_visible_ids():
     )
 
     report = analyze_coverage(deck, "Replication improves availability.\n<!-- slidenote-source: p1:s1_t1 -->")
+
+    assert report["missing"] == 0
+    assert report["trace_coverage"]["covered"] == 1
+    assert report["visible_coverage"]["covered"] == 1
+    assert report["visible_coverage"]["missing"] == 0
+    assert report["marker_only"] == 0
+
+
+def test_coverage_treats_comment_only_marker_as_marker_only():
+    deck = Deck(
+        source_path="demo.pptx",
+        source_type="pptx",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="replication")],
+            )
+        ],
+    )
+
+    report = analyze_coverage(deck, "<!-- slidenote-source: p1:s1_t1 -->")
 
     assert report["missing"] == 0
     assert report["trace_coverage"]["covered"] == 1

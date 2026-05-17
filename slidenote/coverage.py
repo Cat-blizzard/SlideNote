@@ -136,7 +136,7 @@ def render_coverage_markdown(report: dict[str, object]) -> str:
 def _collect_items(deck: Deck, notes_markdown: str) -> list[CoverageItem]:
     items: list[CoverageItem] = []
     trace_tokens = _source_tokens(notes_markdown)
-    visible_tokens = _source_tokens(_strip_html_comments(notes_markdown))
+    visible_tokens = _visible_source_tokens(notes_markdown)
     structural_slide_ids = _structural_slide_ids(deck)
     for page in deck.pages:
         items.extend(
@@ -272,6 +272,30 @@ def _item_record(item: CoverageItem) -> dict[str, object]:
 
 def _source_tokens(markdown: str) -> set[str]:
     return set(re.findall(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", markdown))
+
+
+def _visible_source_tokens(markdown: str) -> set[str]:
+    tokens: set[str] = set()
+    for block in _markdown_blocks(markdown):
+        block_tokens = _source_tokens(block)
+        if block_tokens and _block_has_visible_explanation(block):
+            tokens.update(block_tokens)
+    return tokens
+
+
+def _markdown_blocks(markdown: str) -> list[str]:
+    return [block.strip() for block in re.split(r"\n\s*\n", markdown) if block.strip()]
+
+
+def _block_has_visible_explanation(block: str) -> bool:
+    text = _strip_html_comments(block)
+    text = re.sub(r"!\[[^\]]*]\([^)]+\)", " image ", text)
+    text = re.sub(r"\u3010[^\u3011]*?PPT[^\u3011]*?\u3011", " ", text)
+    text = re.sub(r"\uff08\s*PPT\s*\u7b2c\s*\d+\s*\u9875\s*\uff09", " ", text)
+    text = re.sub(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", " ", text)
+    text = re.sub(r"\bp\d+:", " ", text)
+    text = re.sub(r"[#>*_\-\s`~|:：,，.。;；、()（）\[\]【】]+", "", text)
+    return bool(text)
 
 
 def _strip_html_comments(markdown: str) -> str:
