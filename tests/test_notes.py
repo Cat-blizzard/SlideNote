@@ -534,6 +534,70 @@ def test_lecture_weave_generates_page_notes_then_weaves_sections(tmp_path, monke
     assert analyze_coverage(deck, result.markdown)["missing"] == 0
 
 
+def test_lecture_weave_prompt_uses_deck_brief_as_guarded_navigation(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(slide_id=1, title="Replication", text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Replica")]),
+            SlidePage(slide_id=2, title="Quorum", text_blocks=[TextBlock(id="s2_t1", type="paragraph", content="Quorum")]),
+        ],
+    )
+    deck_brief = {
+        "brief": {
+            "course_title": "Replication",
+            "one_sentence_summary": "A deck about replicated data.",
+            "page_roles": [
+                {"slide_id": 1, "role": "definition", "reason": "Defines replicas"},
+                {"slide_id": 2, "role": "definition", "reason": "Defines quorum"},
+            ],
+            "cross_page_links": [{"from_slide_id": 1, "to_slide_id": 2, "reason": "Quorum builds on replicas"}],
+        }
+    }
+    prompts = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            prompts.append(prompt)
+
+            class Result:
+                usage = {}
+
+            result = Result()
+            if '"task": "page_lecture"' in prompt and '"context_id": "p1"' in prompt:
+                result.text = "Replica detail. <!-- slidenote-source: p1:s1_t1 -->"
+            elif '"task": "page_lecture"' in prompt and '"context_id": "p2"' in prompt:
+                result.text = "Quorum detail. <!-- slidenote-source: p2:s2_t1 -->"
+            else:
+                result.text = "Replica then quorum. <!-- slidenote-source: p1:s1_t1,s2_t1 -->"
+            return result
+
+    monkeypatch.setattr("slidenote.notes.LLMClient", FakeClient)
+
+    result = generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="openai",
+        api_key="test",
+        note_strategy="lecture-weave",
+        note_context="document",
+        deck_brief=deck_brief,
+    )
+
+    assert len(prompts) == 3
+    assert '"deck_brief"' in prompts[0]
+    assert "current_page is the only source for the body" in prompts[0]
+    assert "never compress page_notes into a deck_brief summary" in prompts[2]
+    assert result.llm_usage["request"]["deck_brief_used"] is True
+    assert result.page_notes["request"]["deck_brief_used"] is True
+    assert result.weave_report["request"]["deck_brief_used"] is True
+    assert analyze_coverage(deck, result.markdown)["missing"] == 0
+
+
 def test_section_context_notes_use_numbered_outline_headings(tmp_path, monkeypatch):
     deck = Deck(
         source_path="ch06.pdf",

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from slidenote.deck_brief import deck_brief_for_prompt
 from slidenote.figure_grounding import FIGURE_PLACEMENT_MODES, note_candidate_images, ordered_page_elements
 from slidenote.image_ranking import sorted_images_by_importance
 from slidenote.llm import LLMClient, SYSTEM_PROMPT, resolve_provider_runtime
@@ -92,6 +93,7 @@ def generate_notes(
     screenshot_policy: str = "fallback",
     figure_placement: str = "inline",
     section_plan: dict[str, Any] | None = None,
+    deck_brief: dict[str, Any] | None = None,
 ) -> str:
     return generate_notes_result(
         deck=deck,
@@ -121,6 +123,7 @@ def generate_notes(
         screenshot_policy=screenshot_policy,
         figure_placement=figure_placement,
         section_plan=section_plan,
+        deck_brief=deck_brief,
     ).markdown
 
 
@@ -152,6 +155,7 @@ def generate_notes_result(
     screenshot_policy: str = "fallback",
     figure_placement: str = "inline",
     section_plan: dict[str, Any] | None = None,
+    deck_brief: dict[str, Any] | None = None,
 ) -> NoteGenerationResult:
     _validate_generation_options(
         asset_mode,
@@ -197,6 +201,7 @@ def generate_notes_result(
             screenshot_policy=screenshot_policy,
             figure_placement=figure_placement,
             section_plan=section_plan,
+            deck_brief=deck_brief,
         )
         result.asset_warnings = (result.asset_warnings or []) + asset_warnings + _validate_markdown_image_links(
             result.markdown, output_root
@@ -548,6 +553,7 @@ def _generate_notes_with_llm(
     screenshot_policy: str,
     figure_placement: str,
     section_plan: dict[str, Any] | None,
+    deck_brief: dict[str, Any] | None,
 ) -> NoteGenerationResult:
     runtime = resolve_provider_runtime(provider, model=model, base_url=base_url)
     resolved_provider = str(runtime["provider"])
@@ -586,6 +592,7 @@ def _generate_notes_with_llm(
             figure_placement=figure_placement,
             supports_image_input=supports_image_input,
             section_plan=section_plan,
+            deck_brief=deck_brief,
         )
 
     contexts = _select_note_contexts(deck, note_context, section_plan=section_plan)
@@ -618,6 +625,7 @@ def _generate_notes_with_llm(
             screenshot_policy=screenshot_policy,
             figure_placement=figure_placement,
             source_type=deck.source_type,
+            deck_brief=deck_brief,
         )
         content = _postprocess_llm_markdown(content, source_display=source_display)
         return context.id, content, context_record
@@ -667,6 +675,7 @@ def _generate_notes_with_llm(
         asset_mode=asset_mode,
         screenshot_policy=screenshot_policy,
         figure_placement=figure_placement,
+        deck_brief=deck_brief,
     )
     markdown = _compose_final_markdown(
         deck=deck,
@@ -708,6 +717,7 @@ def _generate_notes_with_lecture_weave(
     figure_placement: str,
     supports_image_input: bool,
     section_plan: dict[str, Any] | None,
+    deck_brief: dict[str, Any] | None,
 ) -> NoteGenerationResult:
     refresh_ids = refresh_slide_ids or set()
     workers = max(1, int(concurrency or 1))
@@ -745,6 +755,7 @@ def _generate_notes_with_lecture_weave(
             section_title=section_titles.get(page.slide_id),
             screenshot_policy=screenshot_policy,
             figure_placement=figure_placement,
+            deck_brief=deck_brief,
         )
         return context.id, _postprocess_llm_markdown(content, source_display=source_display), record
 
@@ -794,6 +805,7 @@ def _generate_notes_with_lecture_weave(
             note_language=note_language,
             term_policy=term_policy,
             weave_dedup=weave_dedup,
+            deck_brief=deck_brief,
         )
         return context.id, _postprocess_llm_markdown(content, source_display=source_display), record
 
@@ -845,6 +857,7 @@ def _generate_notes_with_lecture_weave(
         figure_placement=figure_placement,
         page_contexts=page_records,
         weave_contexts=weave_records,
+        deck_brief=deck_brief,
     )
     markdown = _compose_final_markdown(
         deck=deck,
@@ -867,6 +880,7 @@ def _generate_notes_with_lecture_weave(
         pages=page_contexts,
         page_markdown_by_slide=page_markdown_by_slide,
         page_records=page_records,
+        deck_brief=deck_brief,
     )
     weave_report = _build_weave_report(
         deck=deck,
@@ -880,6 +894,7 @@ def _generate_notes_with_lecture_weave(
         final_chunks=final_chunks,
         page_markdown_by_slide=page_markdown_by_slide,
         weave_records=weave_records,
+        deck_brief=deck_brief,
     )
     return NoteGenerationResult(
         markdown=markdown,
@@ -1230,6 +1245,7 @@ def _generate_llm_context(
     screenshot_policy: str,
     figure_placement: str,
     source_type: str,
+    deck_brief: dict[str, Any] | None = None,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     user_prompt = _llm_context_prompt(
@@ -1244,7 +1260,9 @@ def _generate_llm_context(
         screenshot_policy=screenshot_policy,
         figure_placement=figure_placement,
         source_type=source_type,
+        deck_brief=deck_brief,
     )
+    prompt_brief = _prompt_deck_brief(deck_brief, [page.slide_id for page in context.pages])
     cache_key_payload = {
         "schema_version": LLM_CACHE_SCHEMA_VERSION,
         "prompt_version": NOTE_PROMPT_VERSION,
@@ -1261,6 +1279,7 @@ def _generate_llm_context(
         "term_policy": term_policy,
         "screenshot_policy": screenshot_policy,
         "figure_placement": figure_placement,
+        "deck_brief_hash": _prompt_brief_hash(prompt_brief),
         "system_prompt_hash": sha256_text(SYSTEM_PROMPT),
         "user_prompt_hash": sha256_text(user_prompt),
         "user_prompt": user_prompt,
@@ -1320,6 +1339,7 @@ def _generate_llm_context(
                     "max_output_tokens": max_output_tokens,
                     "note_language": note_language,
                     "term_policy": term_policy,
+                    "deck_brief_used": bool(prompt_brief),
                 },
                 "prompt_hash": prompt_hash,
                 "output_text": content,
@@ -1369,6 +1389,7 @@ def _generate_page_lecture_context(
     section_title: str | None,
     screenshot_policy: str,
     figure_placement: str,
+    deck_brief: dict[str, Any] | None = None,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     user_prompt = _llm_page_lecture_prompt(
@@ -1386,7 +1407,9 @@ def _generate_page_lecture_context(
         screenshot_policy=screenshot_policy,
         figure_placement=figure_placement,
         source_type=deck.source_type,
+        deck_brief=deck_brief,
     )
+    prompt_brief = _prompt_deck_brief(deck_brief, _prompt_slide_scope(deck, context.pages[0].slide_id, page_neighborhood))
     return _generate_cached_llm_text(
         context=context,
         output_root=output_root,
@@ -1412,6 +1435,8 @@ def _generate_page_lecture_context(
             "page_neighborhood": page_neighborhood,
             "screenshot_policy": screenshot_policy,
             "figure_placement": figure_placement,
+            "deck_brief_used": bool(prompt_brief),
+            "deck_brief_hash": _prompt_brief_hash(prompt_brief),
         },
     )
 
@@ -1434,6 +1459,7 @@ def _generate_weave_context(
     note_language: str,
     term_policy: str,
     weave_dedup: str,
+    deck_brief: dict[str, Any] | None = None,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     user_prompt = _llm_weave_prompt(
@@ -1445,7 +1471,9 @@ def _generate_weave_context(
         note_language=note_language,
         term_policy=term_policy,
         weave_dedup=weave_dedup,
+        deck_brief=deck_brief,
     )
+    prompt_brief = _prompt_deck_brief(deck_brief, [page.slide_id for page in context.pages])
     return _generate_cached_llm_text(
         context=NoteContext(id=f"weave_{context.id}", kind=f"weave_{context.kind}", title=context.title, pages=context.pages),
         output_root=output_root,
@@ -1468,6 +1496,8 @@ def _generate_weave_context(
             "note_language": note_language,
             "term_policy": term_policy,
             "weave_dedup": weave_dedup,
+            "deck_brief_used": bool(prompt_brief),
+            "deck_brief_hash": _prompt_brief_hash(prompt_brief),
         },
     )
 
@@ -1613,7 +1643,9 @@ def _llm_context_prompt(
     screenshot_policy: str,
     figure_placement: str,
     source_type: str,
+    deck_brief: dict[str, Any] | None = None,
 ) -> str:
+    prompt_brief = _prompt_deck_brief(deck_brief, [page.slide_id for page in context.pages])
     payload = {
         "context_id": context.id,
         "context_kind": context.kind,
@@ -1624,6 +1656,8 @@ def _llm_context_prompt(
             for page in context.pages
         ],
     }
+    if prompt_brief:
+        payload["deck_brief"] = prompt_brief
     source_rule = {
         "hidden": (
             "在每个主要段落或图片后写 HTML 隐藏来源注释，格式严格为 "
@@ -1661,6 +1695,7 @@ def _llm_context_prompt(
     )
     return (
         "请把下面的课程材料 JSON 改写成可以直接阅读的 Markdown 笔记。\n"
+        "If deck_brief is present, use it only as a global navigation map; it must not replace page evidence or hide missing details.\n"
         f"{context_rule}\n"
         f"{style_rule}\n"
         f"{language_rule}\n"
@@ -1691,8 +1726,10 @@ def _llm_page_lecture_prompt(
     screenshot_policy: str,
     figure_placement: str,
     source_type: str,
+    deck_brief: dict[str, Any] | None = None,
 ) -> str:
     page = context.pages[0]
+    prompt_brief = _prompt_deck_brief(deck_brief, _prompt_slide_scope(deck, page.slide_id, page_neighborhood))
     payload = {
         "task": "page_lecture",
         "context_id": context.id,
@@ -1702,6 +1739,8 @@ def _llm_page_lecture_prompt(
         "current_page": _page_payload_for_prompt(page, asset_map, supports_image_input, screenshot_policy, source_type=source_type),
         "nearby_pages": _nearby_page_payloads(deck, page.slide_id, page_neighborhood),
     }
+    if prompt_brief:
+        payload["deck_brief"] = prompt_brief
     depth_rule = _note_depth_rule(note_depth)
     source_rule = _source_prompt_rule(source_display)
     language_rule = _language_prompt_rule(note_language)
@@ -1714,6 +1753,7 @@ def _llm_page_lecture_prompt(
     return (
         "请只讲解 JSON 中的 current_page，不要替其他页面写正文。\n"
         "nearby_pages 只用于理解前后逻辑和减少重复，不能把邻近页内容当成本页内容展开。\n"
+        "If deck_brief is present, it is only a navigation map: current_page is the only source for the body; do not omit current_page elements because of the brief; do not pull later-page content into this page.\n"
         f"{style_rule}\n"
         f"{language_rule}\n"
         f"{term_rule}\n"
@@ -1739,6 +1779,7 @@ def _llm_weave_prompt(
     note_language: str,
     term_policy: str,
     weave_dedup: str,
+    deck_brief: dict[str, Any] | None = None,
 ) -> str:
     page_notes = [
         {
@@ -1756,6 +1797,9 @@ def _llm_weave_prompt(
         "slide_ids": [page.slide_id for page in context.pages],
         "page_notes": page_notes,
     }
+    prompt_brief = _prompt_deck_brief(deck_brief, [page.slide_id for page in context.pages])
+    if prompt_brief:
+        payload["deck_brief"] = prompt_brief
     source_rule = _source_prompt_rule(source_display)
     depth_rule = _note_depth_rule(note_depth)
     language_rule = _language_prompt_rule(note_language)
@@ -1768,6 +1812,7 @@ def _llm_weave_prompt(
     return (
         "请把下面这些逐页讲解编织成一个连贯的 Markdown 小节。\n"
         "注意：你的任务是编顺、去重、补过渡，不是重新概括 PPT；不要把逐页讲解压缩成摘要。\n"
+        "If deck_brief is present, use it only for transitions and global structure; never compress page_notes into a deck_brief summary.\n"
         f"{language_rule}\n"
         f"{term_rule}\n"
         f"{depth_rule}\n"
@@ -1911,7 +1956,9 @@ def _build_usage_report(
     figure_placement: str,
     page_contexts: list[dict[str, Any]] | None = None,
     weave_contexts: list[dict[str, Any]] | None = None,
+    deck_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    prompt_brief = _prompt_deck_brief(deck_brief)
     summary = {
         "pages_total": len(deck.pages),
         "contexts_total": len(contexts),
@@ -1957,6 +2004,8 @@ def _build_usage_report(
             "asset_mode": asset_mode,
             "screenshot_policy": screenshot_policy,
             "figure_placement": figure_placement,
+            "deck_brief_used": bool(prompt_brief),
+            "deck_brief_hash": _prompt_brief_hash(prompt_brief),
         },
         "summary": summary,
         "pages": contexts,
@@ -2133,6 +2182,26 @@ def _nearby_page_payloads(deck: Deck, slide_id: int, radius: int) -> list[dict[s
     return payloads
 
 
+def _prompt_slide_scope(deck: Deck, slide_id: int, radius: int) -> list[int]:
+    page_indexes = {page.slide_id: index for index, page in enumerate(deck.pages)}
+    current_index = page_indexes.get(slide_id)
+    if current_index is None:
+        return [slide_id]
+    start = max(0, current_index - max(0, radius))
+    end = min(len(deck.pages), current_index + max(0, radius) + 1)
+    return [page.slide_id for page in deck.pages[start:end]]
+
+
+def _prompt_deck_brief(deck_brief: dict[str, Any] | None, slide_ids: list[int] | set[int] | None = None) -> dict[str, Any] | None:
+    return deck_brief_for_prompt(deck_brief, slide_ids=slide_ids)
+
+
+def _prompt_brief_hash(prompt_brief: dict[str, Any] | None) -> str | None:
+    if not prompt_brief:
+        return None
+    return sha256_text(stable_json(prompt_brief))
+
+
 def _page_brief(page: SlidePage, limit: int = 260) -> str:
     parts: list[str] = []
     if page.title:
@@ -2167,7 +2236,9 @@ def _build_page_notes_report(
     pages: list[NoteContext],
     page_markdown_by_slide: dict[int, str],
     page_records: list[dict[str, Any]],
+    deck_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    prompt_brief = _prompt_deck_brief(deck_brief)
     record_by_slide = {record.get("slide_id"): record for record in page_records}
     page_entries: list[dict[str, Any]] = []
     for context in pages:
@@ -2202,6 +2273,8 @@ def _build_page_notes_report(
             "note_language": note_language,
             "term_policy": term_policy,
             "page_neighborhood": page_neighborhood,
+            "deck_brief_used": bool(prompt_brief),
+            "deck_brief_hash": _prompt_brief_hash(prompt_brief),
         },
         "summary": {
             "pages_total": len(page_entries),
@@ -2240,7 +2313,9 @@ def _build_weave_report(
     final_chunks: dict[str, str],
     page_markdown_by_slide: dict[int, str],
     weave_records: list[dict[str, Any]],
+    deck_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    prompt_brief = _prompt_deck_brief(deck_brief)
     record_by_context = {record.get("context_id"): record for record in weave_records}
     context_entries: list[dict[str, Any]] = []
     for context in contexts:
@@ -2287,6 +2362,8 @@ def _build_weave_report(
             "note_language": note_language,
             "term_policy": term_policy,
             "weave_dedup": weave_dedup,
+            "deck_brief_used": bool(prompt_brief),
+            "deck_brief_hash": _prompt_brief_hash(prompt_brief),
         },
         "summary": {
             "contexts_total": len(context_entries),

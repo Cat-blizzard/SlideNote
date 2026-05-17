@@ -23,6 +23,7 @@ python -m slidenote build lecture.pdf `
 --note-strategy lecture-weave
 --note-context section
 --note-depth detailed
+--deck-brief auto
 --note-language zh
 --term-policy bilingual
 --weave-dedup soft
@@ -86,6 +87,7 @@ python -m slidenote build lecture.pdf `
 | `--note-context` | `section` | `auto` / `document` / `section` / `page` | 直接生成或编织阶段的一次上下文粒度。 |
 | `--note-style` | `article` | `article` / `faithful` | 文章式改写或更贴近原顺序。 |
 | `--note-depth` | `detailed` | `concise` / `balanced` / `detailed` | 笔记详细程度。 |
+| `--deck-brief` | `auto` | `auto` / `off` / `force` | 是否在笔记生成前先生成全局课程脉络。`auto` 只在 `--use-llm --note-strategy lecture-weave` 时运行。 |
 | `--note-language` | `zh` | `auto` / `zh` / `en` | 笔记输出语言；可让英文课件生成中文笔记。 |
 | `--term-policy` | `bilingual` | `preserve` / `translate` / `bilingual` | 专业术语处理方式；中文笔记默认保留关键英文术语。 |
 | `--weave-dedup` | `soft` | `soft` / `normal` / `aggressive` | `lecture-weave` 编织阶段的去重强度。 |
@@ -136,6 +138,16 @@ lecture-weave
 | `page` | 每页一个上下文 | 调试覆盖率，或极端保真模式。 |
 
 在 `lecture-weave` 下，第一阶段永远是逐页深讲，`note-context` 控制第二阶段如何编织。
+
+### `deck-brief`
+
+| 值 | 含义 | 适合场景 |
+| --- | --- | --- |
+| `auto` | 默认。只在启用 `--use-llm --note-strategy lecture-weave` 时，先生成全局课程脉络。 | 高质量正式生成。 |
+| `off` | 完全关闭 Deck Brief。 | 想减少一次文本模型调用，或只做本地/调试流程。 |
+| `force` | 即使不是 Lecture-Weave，也尝试生成 `deck_brief.json` / `deck_brief.md`。 | 想单独查看课件总体架构，或为后续 GUI/调试准备。 |
+
+Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主题、核心问题、章节脉络、关键概念、概念依赖、每页角色和跨页关联。逐页深讲阶段会明确约束：`deck_brief` 只能用于理解当前位置和减少重复，正文内容只能来自 `current_page`，不能因为全局脉络而省略当前页元素，也不能把后文内容提前写进当前页。
 
 ### `section-detection`
 
@@ -244,6 +256,8 @@ content.json
 page_modalities.json
 image_importance.json
 sections.json
+deck_brief.md
+deck_brief.json
 notes.md
 page_notes.md
 page_notes.json

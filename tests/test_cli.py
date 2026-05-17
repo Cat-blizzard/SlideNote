@@ -56,6 +56,7 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["artifacts"]["source_map"] == "source_map.json"
     assert run_summary["artifacts"]["page_modalities"] == "page_modalities.json"
     assert run_summary["artifacts"]["sections"] == "sections.json"
+    assert run_summary["artifacts"]["deck_brief"] is None
     assert run_summary["artifacts"]["image_importance"] == "image_importance.json"
     assert run_summary["artifacts"]["figure_grounding"] == "figure_grounding.json"
     assert page_modalities["summary"]["pages_total"] == 1
@@ -66,6 +67,7 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert source_map["default_display_mode"] == "hidden"
     assert run_summary["run"]["note_language"] == "zh"
     assert run_summary["run"]["term_policy"] == "bilingual"
+    assert run_summary["run"]["deck_brief"] == "auto"
 
 
 def test_auto_figure_crop_with_vision_off_does_not_call_api(tmp_path):
@@ -129,6 +131,7 @@ def test_quality_first_defaults_are_exposed_by_parser():
     assert args.note_strategy == "lecture-weave"
     assert args.note_context == "section"
     assert args.note_depth == "detailed"
+    assert args.deck_brief == "auto"
     assert args.note_language == "zh"
     assert args.term_policy == "bilingual"
     assert args.section_detection == "auto"
@@ -151,3 +154,88 @@ def test_doctor_command_writes_json(tmp_path):
     assert "gui" in report
     assert all("category" in check and "impact" in check for check in report["checks"])
     assert isinstance(report["gui"]["ready_for_local_parse"], bool)
+
+
+def test_deck_brief_auto_runs_before_lecture_weave(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Replication")
+    doc.save(source)
+    doc.close()
+    out = tmp_path / "out"
+    calls = []
+
+    class FakeDeckBriefClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt, system_prompt=None):
+            calls.append("deck_brief")
+
+            class Result:
+                text = json.dumps(
+                    {
+                        "course_title": "Replication",
+                        "one_sentence_summary": "Replica basics.",
+                        "page_roles": [{"slide_id": 1, "role": "definition", "reason": "Opening definition"}],
+                    }
+                )
+                usage = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+
+            return Result()
+
+    class FakeNotesClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            class Result:
+                usage = {"input_tokens": 2, "output_tokens": 3, "total_tokens": 5}
+
+            result = Result()
+            if '"task": "page_lecture"' in prompt:
+                calls.append("page_note")
+                result.text = "Replication keeps copies available. <!-- slidenote-source: p1:s1_t1 -->"
+            else:
+                calls.append("weave")
+                result.text = "Replication keeps copies available. <!-- slidenote-source: p1:s1_t1 -->"
+            return result
+
+    monkeypatch.setattr("slidenote.deck_brief.LLMClient", FakeDeckBriefClient)
+    monkeypatch.setattr("slidenote.notes.LLMClient", FakeNotesClient)
+
+    exit_code = main(
+        [
+            "build",
+            str(source),
+            "--out",
+            str(out),
+            "--quiet",
+            "--vision",
+            "off",
+            "--figure-crop",
+            "off",
+            "--use-llm",
+            "--provider",
+            "openai",
+            "--api-key",
+            "test",
+            "--note-context",
+            "document",
+        ]
+    )
+
+    assert exit_code == 0
+    assert calls == ["deck_brief", "page_note", "weave"]
+    assert (out / "deck_brief.json").exists()
+    assert (out / "deck_brief.md").exists()
+    run_summary = json.loads((out / "run_summary.json").read_text(encoding="utf-8"))
+    llm_usage = json.loads((out / "llm_usage.json").read_text(encoding="utf-8"))
+    page_notes = json.loads((out / "page_notes.json").read_text(encoding="utf-8"))
+    weave_report = json.loads((out / "weave_report.json").read_text(encoding="utf-8"))
+    assert run_summary["deck_brief"]["llm_call"] is True
+    assert run_summary["artifacts"]["deck_brief"] == "deck_brief.json"
+    assert llm_usage["request"]["deck_brief_used"] is True
+    assert page_notes["request"]["deck_brief_used"] is True
+    assert weave_report["request"]["deck_brief_used"] is True

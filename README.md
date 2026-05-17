@@ -68,6 +68,7 @@ Open `outputs\lecture\notes.md`. Images are bundled under `outputs\lecture\notes
 - Classifies each page as native text, mixed, image-only, shape-diagram-like, or decorative to route OCR, vision, and figure cropping.
 - Ranks images by study value so vision calls and notes prefer diagrams, charts, figure crops, and high-signal visuals.
 - Writes `sections.json`; with LLM enabled, `--section-detection auto` can ask the model to refine section boundaries before Lecture-Weave.
+- Writes `deck_brief.json` / `deck_brief.md` in high-quality Lecture-Weave mode: a global course map used only as navigation, not as a replacement for page-level coverage.
 - Produces `content.json` as the source inventory.
 - Produces `notes.md` with hidden source markers by default, plus optional visible page references.
 - Produces `coverage.json` / `coverage.md` to flag elements that may be missing from the notes.
@@ -213,6 +214,8 @@ outputs/lecture/
   page_modalities.json
   image_importance.json
   sections.json
+  deck_brief.md
+  deck_brief.json
   notes.md
   page_notes.md
   page_notes.json
@@ -251,6 +254,8 @@ By default, `notes.md` references bundled image copies under `notes.assets/`. If
 `figure_grounding.json` records where each study-value figure belongs in the note: layout order, nearby text/table anchors, grounding confidence, explanation status, and whether the figure needs manual review. `notes.md` uses this metadata to place figures near the relevant paragraph instead of dumping all images at the end.
 
 `sections.json` records the section plan used by `--note-context section` and `lecture-weave`. In `--section-detection auto`, SlideNote uses local rules without LLM notes, and switches to LLM-assisted section detection when section-based LLM notes are enabled.
+
+`deck_brief.json` is generated when `--deck-brief auto` runs with `--use-llm --note-strategy lecture-weave` (or when `--deck-brief force` is set). It stores the deck's topic, core questions, concept map, page roles, and cross-page links. Later page-note prompts treat it as a navigation map only: the current page remains the only source for each page explanation, and coverage checks still use original text/table/image IDs.
 
 ## Environment Check
 
@@ -348,11 +353,12 @@ The default output favors readable article-style notes. Source element IDs are h
 --note-context section     # Default: weave notes by section
 --note-strategy lecture-weave  # Default: explain each page, then weave sections
 --note-depth detailed      # Default: favor detailed page explanations
+--deck-brief auto          # Default: build a global map before Lecture-Weave only
 --note-language zh         # Default: write Simplified Chinese notes
 --term-policy bilingual    # Default: preserve key English academic terms in Chinese notes
 ```
 
-`lecture-weave` is the default LLM note strategy. This mode is more expensive, but it better matches the "explain this slide" workflow: first each page is explained in detail, then those page notes are woven into coherent sections.
+`lecture-weave` is the default LLM note strategy. This mode is more expensive, but it better matches the "explain this slide" workflow: first SlideNote can build a Deck Brief for global navigation, then each page is explained in detail, and finally those page notes are woven into coherent sections. The Deck Brief is explicitly guarded so it cannot replace current-page evidence or make page explanations shorter.
 
 Language controls are independent of the slide language. For English courseware and Chinese notes, use the default `--note-language zh --term-policy bilingual`; key terms are prompted as `中文译名（English term/acronym）` on first mention. For English notes, use `--note-language en`. Use `--term-policy preserve` when you want the source terminology kept as much as possible, or `--term-policy translate` when you prefer translated terms where safe.
 
@@ -364,7 +370,7 @@ python -m slidenote build lecture.pdf `
   --weave-dedup soft
 ```
 
-`lecture-weave` also writes `page_notes.json`, `page_notes.md`, and `weave_report.json`. These are intermediate/debug artifacts; `notes.md` remains the final readable note.
+`lecture-weave` also writes `deck_brief.json`, `deck_brief.md`, `page_notes.json`, `page_notes.md`, and `weave_report.json`. These are intermediate/debug artifacts; `notes.md` remains the final readable note.
 
 To show compact page references in the note body:
 
@@ -705,6 +711,8 @@ If the same context and parameters are generated again, SlideNote reuses the loc
 
 In `lecture-weave` mode, page-note caches and weave caches are separate. Refreshing one slide with `--refresh-pages 12` reruns that slide's page explanation and the weave context that contains it, while unrelated page explanations can still hit cache.
 
+Deck Brief uses the same LLM cache directory with `generation_stage="deck_brief"`, so an unchanged deck and section plan can reuse the global map without calling the model again.
+
 Cache modes:
 
 ```powershell
@@ -724,7 +732,7 @@ python -m slidenote build lecture.pptx --use-llm --provider deepseek --cache-dir
 - Per-context `cache_status`: `local_hit`, `miss`, `refresh`, or `disabled`
 - Per-context `cache_key` and `cache_file`
 - Actual LLM call count and cache hit count
-- `page_note_calls` and `weave_calls` when `--note-strategy lecture-weave` is enabled
+- `deck_brief`, `page_note_calls`, and `weave_calls` when `--note-strategy lecture-weave` is enabled
 - Provider-reported input/output/total tokens
 - Provider-side cached input tokens, when returned by the API
 

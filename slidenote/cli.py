@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from slidenote.coverage import analyze_coverage, render_coverage_markdown
+from slidenote.deck_brief import build_deck_brief, render_deck_brief_markdown
 from slidenote.doctor import render_doctor_report, run_doctor
 from slidenote.extractors import extract_deck
 from slidenote.figure_grounding import enrich_deck_with_figure_grounding
@@ -134,6 +135,12 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=[0, 1, 2],
         default=1,
         help="How many nearby page titles/briefs each page lecture may see.",
+    )
+    build.add_argument(
+        "--deck-brief",
+        choices=["auto", "off", "force"],
+        default="auto",
+        help="Build a global deck map before note generation. auto runs only with --use-llm and lecture-weave.",
     )
     build.add_argument(
         "--screenshot-policy",
@@ -416,6 +423,26 @@ def _build(args: argparse.Namespace) -> int:
         write_json(output_root / "sections.json", section_report)
         progress.finish_stage("Section detection complete")
 
+        deck_brief_report = None
+        if _should_build_deck_brief(args):
+            progress.start_stage("deck_brief", message="Building deck brief")
+            deck_brief_report = build_deck_brief(
+                deck,
+                output_root=output_root,
+                section_plan=section_report,
+                provider=args.provider,
+                model=args.model,
+                api_key=args.api_key,
+                base_url=args.base_url,
+                cache_mode=args.cache,
+                cache_dir=cache_dirs["llm"],
+                max_output_tokens=min(args.max_output_tokens or 3000, 5000),
+                temperature=0.0,
+            )
+            write_json(output_root / "deck_brief.json", deck_brief_report)
+            write_text(output_root / "deck_brief.md", render_deck_brief_markdown(deck_brief_report))
+            progress.finish_stage("Deck brief complete")
+
         progress.start_stage("export_content", message="Writing structured content")
         write_json(output_root / "content.json", deck.to_dict())
         if image_importance_report is not None:
@@ -461,6 +488,7 @@ def _build(args: argparse.Namespace) -> int:
             screenshot_policy=args.screenshot_policy,
             figure_placement=args.figure_placement,
             section_plan=section_report,
+            deck_brief=deck_brief_report,
         )
         notes_markdown = notes_result.markdown
         write_text(output_root / "notes.md", notes_markdown)
@@ -493,6 +521,7 @@ def _build(args: argparse.Namespace) -> int:
             modality_report=modality_report,
             image_importance_report=image_importance_report,
             section_report=section_report,
+            deck_brief_report=deck_brief_report,
             figure_report=figure_report,
             figure_grounding_report=figure_grounding_report,
             ocr_report=ocr_report,
@@ -522,6 +551,8 @@ def _build(args: argparse.Namespace) -> int:
         print(f"- sources:  {output_root / 'source_map.json'}")
         print(f"- modalities: {output_root / 'page_modalities.json'}")
         print(f"- sections: {output_root / 'sections.json'}")
+        if deck_brief_report is not None:
+            print(f"- deck brief: {output_root / 'deck_brief.json'}")
         print(f"- progress: {progress.path}")
         print(f"- summary:  {output_root / 'run_summary.json'}")
         if image_importance_report is not None:
@@ -614,6 +645,14 @@ def _vision_features_enabled(args: argparse.Namespace) -> bool:
         or args.figure_crop == "vision"
         or (args.figure_crop == "auto" and args.vision != "off")
     )
+
+
+def _should_build_deck_brief(args: argparse.Namespace) -> bool:
+    if args.deck_brief == "off":
+        return False
+    if args.deck_brief == "force":
+        return True
+    return bool(args.use_llm and args.note_strategy == "lecture-weave")
 
 
 def _apply_speed_mode_defaults(args: argparse.Namespace) -> None:
@@ -739,6 +778,7 @@ def _build_run_summary(
     modality_report: dict[str, Any],
     image_importance_report: dict[str, Any] | None,
     section_report: dict[str, Any],
+    deck_brief_report: dict[str, Any] | None,
     figure_report: dict[str, Any] | None,
     figure_grounding_report: dict[str, Any] | None,
     ocr_report: dict[str, Any] | None,
@@ -771,6 +811,7 @@ def _build_run_summary(
             "term_policy": args.term_policy,
             "note_strategy": args.note_strategy,
             "note_depth": args.note_depth,
+            "deck_brief": args.deck_brief,
             "weave_dedup": args.weave_dedup,
             "page_neighborhood": args.page_neighborhood,
             "section_detection": args.section_detection,
@@ -794,6 +835,7 @@ def _build_run_summary(
         "page_modalities": modality_report.get("summary") if modality_report else None,
         "image_importance": image_importance_report.get("summary") if image_importance_report else None,
         "sections": section_report.get("summary") if section_report else None,
+        "deck_brief": deck_brief_report.get("summary") if deck_brief_report else None,
         "ocr": ocr_report.get("summary") if ocr_report else None,
         "vision": vision_report.get("summary") if vision_report else None,
         "llm": llm_usage.get("summary") if llm_usage else None,
@@ -822,6 +864,8 @@ def _build_run_summary(
             "page_modalities": "page_modalities.json",
             "image_importance": "image_importance.json" if image_importance_report else None,
             "sections": "sections.json",
+            "deck_brief": "deck_brief.json" if deck_brief_report else None,
+            "deck_brief_markdown": "deck_brief.md" if deck_brief_report else None,
             "figures": "figures.json" if figure_report else None,
             "figure_usage": "figure_usage.json" if figure_report else None,
             "figure_grounding": "figure_grounding.json" if figure_grounding_report else None,
