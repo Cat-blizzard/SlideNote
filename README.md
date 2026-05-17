@@ -33,6 +33,40 @@
 
 ---
 
+## Quick Start
+
+```powershell
+git clone https://github.com/Cat-blizzard/SlideNote.git
+cd SlideNote
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev,llm]"
+python -m slidenote doctor
+```
+
+Run a local draft first, no API key required:
+
+```powershell
+python -m slidenote build path\to\lecture.pdf --out outputs\lecture --vision off
+```
+
+For text-only AI notes with one LLM key:
+
+```powershell
+$env:DEEPSEEK_API_KEY="..."
+python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --provider deepseek --vision off --figure-crop off
+```
+
+For image-aware notes, add a Qwen/DashScope key. Qwen is the default vision provider:
+
+```powershell
+$env:DASHSCOPE_API_KEY="..."
+$env:DEEPSEEK_API_KEY="..."
+python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --provider deepseek
+```
+
+Open `outputs\lecture\notes.md`. Images are bundled under `outputs\lecture\notes.assets\`.
+
 ## Features
 
 - Supports `.pptx` and `.pdf`; `.ppt` is handled by attempting a LibreOffice conversion to PDF.
@@ -46,6 +80,7 @@
 - Optional vision extraction writes OCR text and visual summaries back into the structured content.
 - Optional LLM generation supports OpenAI/ChatGPT, DeepSeek, Qwen, Doubao/Volcengine Ark, GLM, Gemini, and Claude.
 - Optional `lecture-weave` note strategy first generates detailed per-page explanations, then weaves them into coherent sections.
+- Configurable note language and term policy: English slides can produce Chinese or English notes, and Chinese notes can preserve key academic English terms.
 - Local caching and usage reports make token cost visible and reusable by a future GUI.
 
 ## Origin
@@ -316,9 +351,13 @@ The default output favors readable article-style notes. Source element IDs are h
 --note-context section     # Default: weave notes by section
 --note-strategy lecture-weave  # Default: explain each page, then weave sections
 --note-depth detailed      # Default: favor detailed page explanations
+--note-language zh         # Default: write Simplified Chinese notes
+--term-policy bilingual    # Default: preserve key English academic terms in Chinese notes
 ```
 
 `lecture-weave` is the default LLM note strategy. This mode is more expensive, but it better matches the "explain this slide" workflow: first each page is explained in detail, then those page notes are woven into coherent sections.
+
+Language controls are independent of the slide language. For English courseware and Chinese notes, use the default `--note-language zh --term-policy bilingual`; key terms are prompted as `中文译名（English term/acronym）` on first mention. For English notes, use `--note-language en`. Use `--term-policy preserve` when you want the source terminology kept as much as possible, or `--term-policy translate` when you prefer translated terms where safe.
 
 ```powershell
 python -m slidenote build lecture.pdf `
@@ -555,13 +594,13 @@ visuals.json
 vision_usage.json
 ```
 
-Vision extraction is `auto` by default because SlideNote now favors note quality over token savings. It requires a vision-capable provider API key. Disable it when you only want local parsing or text-only LLM rewriting:
+Vision extraction is `auto` by default because SlideNote now favors note quality over token savings. The default vision provider is Qwen, so image-aware runs need `DASHSCOPE_API_KEY` or `QWEN_API_KEY` unless you choose another `--vision-provider`. Disable vision when you only want local parsing or text-only LLM rewriting:
 
 ```powershell
 --vision off
 ```
 
-Recommended China-friendly setup: use Qwen-VL for vision and DeepSeek for text rewriting.
+Recommended China-friendly setup: use the default Qwen-VL vision path and DeepSeek for text rewriting.
 
 ```powershell
 $env:DASHSCOPE_API_KEY="..."

@@ -61,6 +61,8 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert image_importance["summary"]["images_total"] == 0
     assert run_summary["artifacts"]["note_assets"] == "notes.assets"
     assert source_map["default_display_mode"] == "hidden"
+    assert run_summary["run"]["note_language"] == "zh"
+    assert run_summary["run"]["term_policy"] == "bilingual"
 
 
 def test_auto_figure_crop_with_vision_off_does_not_call_api(tmp_path):
@@ -87,9 +89,12 @@ def test_quality_first_defaults_are_exposed_by_parser():
 
     assert args.speed_mode == "quality"
     assert args.vision == "auto"
+    assert args.vision_provider == "qwen"
     assert args.note_strategy == "lecture-weave"
     assert args.note_context == "section"
     assert args.note_depth == "detailed"
+    assert args.note_language == "zh"
+    assert args.term_policy == "bilingual"
     assert args.section_detection == "auto"
     assert args.image_ranking == "local"
 

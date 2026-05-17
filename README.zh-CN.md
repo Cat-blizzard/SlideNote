@@ -33,6 +33,34 @@
 
 ---
 
+## 快速开始
+
+```powershell
+git clone https://github.com/Cat-blizzard/SlideNote.git
+cd SlideNote
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev,llm]"
+python -m slidenote doctor
+```
+
+如果只想用一个 LLM API key 生成纯文本 AI 笔记：
+
+```powershell
+$env:DEEPSEEK_API_KEY="..."
+python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --provider deepseek --vision off --figure-crop off
+```
+
+如果想生成带图片理解的高质量笔记，再配置 Qwen/DashScope key。现在默认视觉 provider 是 Qwen：
+
+```powershell
+$env:DASHSCOPE_API_KEY="..."
+$env:DEEPSEEK_API_KEY="..."
+python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --provider deepseek
+```
+
+生成后打开 `outputs\lecture\notes.md`。图片会默认打包在 `outputs\lecture\notes.assets\` 里。
+
 ## 功能
 
 - 支持 `.pptx` 和 `.pdf`，`.ppt` 会尝试通过 LibreOffice 转成 PDF 后解析。
@@ -46,6 +74,7 @@
 - 生成 `coverage.json` / `coverage.md`，检查哪些元素没有出现在笔记中。
 - 支持多家 LLM：ChatGPT/OpenAI、DeepSeek、通义千问、豆包、GLM、Gemini、Claude。
 - 支持 `lecture-weave` 高质量笔记策略：先逐页深讲，再按章节编织成连贯笔记。
+- 支持控制笔记输出语言和术语策略：英文课件可以生成中文或英文笔记，中文笔记可保留英文专业术语。
 
 ## 起源
 
@@ -317,9 +346,13 @@ python -m slidenote build lecture.pdf `
 --note-context section     # 默认：按章节/分组编织最终笔记
 --note-strategy lecture-weave  # 默认：先逐页深讲，再章节编织
 --note-depth detailed      # 默认：尽量保留逐页讲解细节
+--note-language zh         # 默认：输出简体中文笔记
+--term-policy bilingual    # 默认：中文笔记中保留关键英文专业术语
 ```
 
 `lecture-weave` 现在是默认 LLM 笔记策略。这个模式会更耗时、更耗 token，但更接近“逐页问 AI：请你讲讲这一页”的效果：先为每页生成详细讲解，再把这些逐页讲解编织成连贯章节。
+
+输出语言和课件语言是分开的。英文课件想生成中文笔记时，默认的 `--note-language zh --term-policy bilingual` 会要求模型在关键术语首次出现时尽量写成“中文译名（English term/acronym）”；想要英文笔记可以用 `--note-language en`。如果希望尽量保留原始术语，用 `--term-policy preserve`；如果希望尽量翻译术语，用 `--term-policy translate`。
 
 ```powershell
 python -m slidenote build lecture.pdf `
@@ -566,13 +599,13 @@ visuals.json
 vision_usage.json
 ```
 
-视觉解析现在默认是 `auto`，因为当前默认策略更重视笔记质量而不是节省 token。它需要配置视觉模型 API key；如果只想本地解析或纯文本改写，可以关闭：
+视觉解析现在默认是 `auto`，因为当前默认策略更重视笔记质量而不是节省 token。默认视觉 provider 是 Qwen，所以带图片理解的运行需要配置 `DASHSCOPE_API_KEY` 或 `QWEN_API_KEY`；如果只想本地解析或纯文本改写，可以关闭：
 
 ```powershell
 --vision off
 ```
 
-推荐先用自动选择模式。中国区优先推荐 Qwen-VL 做视觉解析，再用 DeepSeek 做正文改写：
+推荐先用自动选择模式。中国区默认推荐 Qwen-VL 做视觉解析，再用 DeepSeek 做正文改写：
 
 ```powershell
 $env:DASHSCOPE_API_KEY="..."

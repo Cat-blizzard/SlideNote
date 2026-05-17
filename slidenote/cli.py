@@ -89,6 +89,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Article mode favors fluent notes; faithful mode keeps closer slide order.",
     )
     build.add_argument(
+        "--note-language",
+        choices=["auto", "zh", "en"],
+        default="zh",
+        help="Output language for generated notes. zh writes Chinese notes, en writes English notes, auto follows the source material.",
+    )
+    build.add_argument(
+        "--term-policy",
+        choices=["preserve", "translate", "bilingual"],
+        default="bilingual",
+        help="How academic terms are handled. bilingual keeps Chinese notes readable while preserving key English terms.",
+    )
+    build.add_argument(
         "--note-strategy",
         choices=["direct", "lecture-weave"],
         default="lecture-weave",
@@ -201,8 +213,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     build.add_argument(
         "--vision-provider",
-        default="openai",
-        help="Vision provider. Supported image providers currently include openai, qwen, doubao, gemini, and claude.",
+        default="qwen",
+        help="Vision provider. Defaults to qwen for China-friendly visual parsing. Supported image providers currently include openai, qwen, doubao, gemini, and claude.",
     )
     build.add_argument("--vision-model", default=None, help="Vision model override.")
     build.add_argument("--vision-api-key", default=None, help="Vision API key override. Prefer environment variables.")
@@ -397,6 +409,8 @@ def _build(args: argparse.Namespace) -> int:
             source_display=args.source_display,
             note_context=args.note_context,
             note_style=args.note_style,
+            note_language=args.note_language,
+            term_policy=args.term_policy,
             note_strategy=args.note_strategy,
             note_depth=args.note_depth,
             weave_dedup=args.weave_dedup,
@@ -632,6 +646,8 @@ def _build_run_summary(
             "source_display": args.source_display,
             "note_context": args.note_context,
             "note_style": args.note_style,
+            "note_language": args.note_language,
+            "term_policy": args.term_policy,
             "note_strategy": args.note_strategy,
             "note_depth": args.note_depth,
             "weave_dedup": args.weave_dedup,

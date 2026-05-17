@@ -19,9 +19,12 @@ python -m slidenote build lecture.pdf `
 ```text
 --speed-mode quality
 --vision auto
+--vision-provider qwen
 --note-strategy lecture-weave
 --note-context section
 --note-depth detailed
+--note-language zh
+--term-policy bilingual
 --weave-dedup soft
 --page-neighborhood 1
 --figure-crop auto
@@ -83,6 +86,8 @@ python -m slidenote build lecture.pdf `
 | `--note-context` | `section` | `auto` / `document` / `section` / `page` | 直接生成或编织阶段的一次上下文粒度。 |
 | `--note-style` | `article` | `article` / `faithful` | 文章式改写或更贴近原顺序。 |
 | `--note-depth` | `detailed` | `concise` / `balanced` / `detailed` | 笔记详细程度。 |
+| `--note-language` | `zh` | `auto` / `zh` / `en` | 笔记输出语言；可让英文课件生成中文笔记。 |
+| `--term-policy` | `bilingual` | `preserve` / `translate` / `bilingual` | 专业术语处理方式；中文笔记默认保留关键英文术语。 |
 | `--weave-dedup` | `soft` | `soft` / `normal` / `aggressive` | `lecture-weave` 编织阶段的去重强度。 |
 | `--page-neighborhood` | `1` | `0` / `1` / `2` | 逐页深讲时可看到前后几页标题/摘要。 |
 | `--section-detection` | `auto` | `auto` / `local` / `llm` | 章节边界识别方式。 |
@@ -102,6 +107,24 @@ lecture-weave
 ```
 
 先对每页做详细讲解，再把逐页讲解编织成章节笔记。质量更好，但调用次数和 token 成本更高。
+
+### `note-language` 与 `term-policy`
+
+`--note-language` 控制最终笔记语言，和课件原文语言不强绑定：
+
+| 值 | 含义 |
+| --- | --- |
+| `zh` | 输出简体中文笔记。默认值，适合“英文课件、中文学习材料”的常见场景。 |
+| `en` | 输出英文笔记。适合英语授课、英文复习资料或后续英文论文/报告引用。 |
+| `auto` | 根据材料主体语言自动选择，并尽量保持全文一致。 |
+
+`--term-policy` 控制术语怎么处理：
+
+| 值 | 含义 |
+| --- | --- |
+| `bilingual` | 默认。关键术语首次出现时尽量写成“中文译名（English term/acronym）”，之后可用中文名或缩写。 |
+| `preserve` | 尽量保留原始术语、英文缩写、协议名、算法名、API 名称和代码符号。 |
+| `translate` | 在不破坏专业准确性的前提下尽量翻译术语；代码、公式、变量和公认英文名仍保持原样。 |
 
 ### `note-context`
 
@@ -182,7 +205,7 @@ lecture-weave
 | 参数 | 默认值 | 可选值 / 格式 | 说明 |
 | --- | --- | --- | --- |
 | `--vision` | `auto` | `off` / `auto` / `all` | 视觉解析模式。当前默认质量优先。 |
-| `--vision-provider` | `openai` | `openai` / `qwen` / `doubao` / `gemini` / `claude` | 视觉模型服务商。 |
+| `--vision-provider` | `qwen` | `openai` / `qwen` / `doubao` / `gemini` / `claude` | 视觉模型服务商。默认用 Qwen，适合国内用户配合 `DASHSCOPE_API_KEY` 使用。 |
 | `--vision-model` | provider 默认 | 模型名或 endpoint id | 手动指定视觉模型。 |
 | `--vision-api-key` | 环境变量 | 字符串 | 视觉模型 API key。 |
 | `--vision-base-url` | provider 默认 | URL | 自定义视觉 API base URL。 |

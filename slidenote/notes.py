@@ -28,6 +28,8 @@ NOTE_STRATEGIES = {"direct", "lecture-weave"}
 NOTE_DEPTHS = {"concise", "balanced", "detailed"}
 WEAVE_DEDUP_MODES = {"soft", "normal", "aggressive"}
 SCREENSHOT_POLICIES = {"fallback", "always", "never"}
+NOTE_LANGUAGES = {"auto", "zh", "en"}
+TERM_POLICIES = {"preserve", "translate", "bilingual"}
 
 SOURCE_COMMENT_PREFIX = "slidenote-source:"
 
@@ -82,6 +84,8 @@ def generate_notes(
     note_style: str = "article",
     note_strategy: str = "lecture-weave",
     note_depth: str = "detailed",
+    note_language: str = "zh",
+    term_policy: str = "bilingual",
     weave_dedup: str = "soft",
     page_neighborhood: int = 1,
     screenshot_policy: str = "fallback",
@@ -108,6 +112,8 @@ def generate_notes(
         note_style=note_style,
         note_strategy=note_strategy,
         note_depth=note_depth,
+        note_language=note_language,
+        term_policy=term_policy,
         weave_dedup=weave_dedup,
         page_neighborhood=page_neighborhood,
         screenshot_policy=screenshot_policy,
@@ -136,6 +142,8 @@ def generate_notes_result(
     note_style: str = "article",
     note_strategy: str = "lecture-weave",
     note_depth: str = "detailed",
+    note_language: str = "zh",
+    term_policy: str = "bilingual",
     weave_dedup: str = "soft",
     page_neighborhood: int = 1,
     screenshot_policy: str = "fallback",
@@ -148,6 +156,8 @@ def generate_notes_result(
         note_style,
         note_strategy,
         note_depth,
+        note_language,
+        term_policy,
         weave_dedup,
         page_neighborhood,
         screenshot_policy,
@@ -175,6 +185,8 @@ def generate_notes_result(
             note_style=note_style,
             note_strategy=note_strategy,
             note_depth=note_depth,
+            note_language=note_language,
+            term_policy=term_policy,
             weave_dedup=weave_dedup,
             page_neighborhood=page_neighborhood,
             screenshot_policy=screenshot_policy,
@@ -202,6 +214,8 @@ def _validate_generation_options(
     note_style: str,
     note_strategy: str,
     note_depth: str,
+    note_language: str,
+    term_policy: str,
     weave_dedup: str,
     page_neighborhood: int,
     screenshot_policy: str,
@@ -218,6 +232,10 @@ def _validate_generation_options(
         raise ValueError(f"note_strategy must be one of: {', '.join(sorted(NOTE_STRATEGIES))}")
     if note_depth not in NOTE_DEPTHS:
         raise ValueError(f"note_depth must be one of: {', '.join(sorted(NOTE_DEPTHS))}")
+    if note_language not in NOTE_LANGUAGES:
+        raise ValueError(f"note_language must be one of: {', '.join(sorted(NOTE_LANGUAGES))}")
+    if term_policy not in TERM_POLICIES:
+        raise ValueError(f"term_policy must be one of: {', '.join(sorted(TERM_POLICIES))}")
     if weave_dedup not in WEAVE_DEDUP_MODES:
         raise ValueError(f"weave_dedup must be one of: {', '.join(sorted(WEAVE_DEDUP_MODES))}")
     if page_neighborhood not in {0, 1, 2}:
@@ -418,6 +436,8 @@ def _generate_notes_with_llm(
     note_style: str,
     note_strategy: str,
     note_depth: str,
+    note_language: str,
+    term_policy: str,
     weave_dedup: str,
     page_neighborhood: int,
     screenshot_policy: str,
@@ -452,6 +472,8 @@ def _generate_notes_with_llm(
             note_context=note_context,
             note_style=note_style,
             note_depth=note_depth,
+            note_language=note_language,
+            term_policy=term_policy,
             weave_dedup=weave_dedup,
             page_neighborhood=page_neighborhood,
             screenshot_policy=screenshot_policy,
@@ -485,6 +507,8 @@ def _generate_notes_with_llm(
             source_display=source_display,
             note_context=resolved_note_context,
             note_style=note_style,
+            note_language=note_language,
+            term_policy=term_policy,
             screenshot_policy=screenshot_policy,
         )
         content = _postprocess_llm_markdown(content, source_display=source_display)
@@ -533,6 +557,8 @@ def _generate_notes_with_llm(
         note_style=note_style,
         note_strategy=note_strategy,
         note_depth=note_depth,
+        note_language=note_language,
+        term_policy=term_policy,
         weave_dedup=weave_dedup,
         page_neighborhood=page_neighborhood,
         asset_mode=asset_mode,
@@ -563,6 +589,8 @@ def _generate_notes_with_lecture_weave(
     note_context: str,
     note_style: str,
     note_depth: str,
+    note_language: str,
+    term_policy: str,
     weave_dedup: str,
     page_neighborhood: int,
     screenshot_policy: str,
@@ -599,6 +627,8 @@ def _generate_notes_with_lecture_weave(
             source_display=source_display,
             note_style=note_style,
             note_depth=note_depth,
+            note_language=note_language,
+            term_policy=term_policy,
             page_neighborhood=page_neighborhood,
             section_title=section_titles.get(page.slide_id),
             screenshot_policy=screenshot_policy,
@@ -648,6 +678,8 @@ def _generate_notes_with_lecture_weave(
             source_display=source_display,
             note_context=resolved_note_context,
             note_depth=note_depth,
+            note_language=note_language,
+            term_policy=term_policy,
             weave_dedup=weave_dedup,
         )
         return context.id, _postprocess_llm_markdown(content, source_display=source_display), record
@@ -699,6 +731,8 @@ def _generate_notes_with_lecture_weave(
         note_style=note_style,
         note_strategy="lecture-weave",
         note_depth=note_depth,
+        note_language=note_language,
+        term_policy=term_policy,
         weave_dedup=weave_dedup,
         page_neighborhood=page_neighborhood,
         asset_mode=asset_mode,
@@ -715,6 +749,8 @@ def _generate_notes_with_lecture_weave(
         base_url=base_url,
         output_root=output_root,
         note_depth=note_depth,
+        note_language=note_language,
+        term_policy=term_policy,
         page_neighborhood=page_neighborhood,
         pages=page_contexts,
         page_markdown_by_slide=page_markdown_by_slide,
@@ -725,6 +761,8 @@ def _generate_notes_with_lecture_weave(
         output_root=output_root,
         note_context=resolved_note_context,
         note_depth=note_depth,
+        note_language=note_language,
+        term_policy=term_policy,
         weave_dedup=weave_dedup,
         contexts=weave_contexts,
         final_chunks=final_chunks,
@@ -757,6 +795,8 @@ def _generate_llm_context(
     source_display: str,
     note_context: str,
     note_style: str,
+    note_language: str,
+    term_policy: str,
     screenshot_policy: str,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
@@ -767,6 +807,8 @@ def _generate_llm_context(
         source_display=source_display,
         note_context=note_context,
         note_style=note_style,
+        note_language=note_language,
+        term_policy=term_policy,
         screenshot_policy=screenshot_policy,
     )
     cache_key_payload = {
@@ -781,6 +823,8 @@ def _generate_llm_context(
         "source_display": source_display,
         "note_context": note_context,
         "note_style": note_style,
+        "note_language": note_language,
+        "term_policy": term_policy,
         "screenshot_policy": screenshot_policy,
         "system_prompt_hash": sha256_text(SYSTEM_PROMPT),
         "user_prompt_hash": sha256_text(user_prompt),
@@ -839,6 +883,8 @@ def _generate_llm_context(
                 "request": {
                     "temperature": temperature,
                     "max_output_tokens": max_output_tokens,
+                    "note_language": note_language,
+                    "term_policy": term_policy,
                 },
                 "prompt_hash": prompt_hash,
                 "output_text": content,
@@ -882,6 +928,8 @@ def _generate_page_lecture_context(
     source_display: str,
     note_style: str,
     note_depth: str,
+    note_language: str,
+    term_policy: str,
     page_neighborhood: int,
     section_title: str | None,
     screenshot_policy: str,
@@ -895,6 +943,8 @@ def _generate_page_lecture_context(
         source_display=source_display,
         note_style=note_style,
         note_depth=note_depth,
+        note_language=note_language,
+        term_policy=term_policy,
         page_neighborhood=page_neighborhood,
         section_title=section_title,
         screenshot_policy=screenshot_policy,
@@ -919,6 +969,8 @@ def _generate_page_lecture_context(
             "source_display": source_display,
             "note_style": note_style,
             "note_depth": note_depth,
+            "note_language": note_language,
+            "term_policy": term_policy,
             "page_neighborhood": page_neighborhood,
             "screenshot_policy": screenshot_policy,
         },
@@ -940,6 +992,8 @@ def _generate_weave_context(
     source_display: str,
     note_context: str,
     note_depth: str,
+    note_language: str,
+    term_policy: str,
     weave_dedup: str,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
@@ -949,6 +1003,8 @@ def _generate_weave_context(
         source_display=source_display,
         note_context=note_context,
         note_depth=note_depth,
+        note_language=note_language,
+        term_policy=term_policy,
         weave_dedup=weave_dedup,
     )
     return _generate_cached_llm_text(
@@ -970,6 +1026,8 @@ def _generate_weave_context(
             "source_display": source_display,
             "note_context": note_context,
             "note_depth": note_depth,
+            "note_language": note_language,
+            "term_policy": term_policy,
             "weave_dedup": weave_dedup,
         },
     )
@@ -1096,6 +1154,8 @@ def _llm_page_prompt(page: SlidePage, supports_image_input: bool = False) -> str
         source_display="hidden",
         note_context="page",
         note_style="article",
+        note_language="zh",
+        term_policy="bilingual",
         screenshot_policy="fallback",
     )
 
@@ -1107,6 +1167,8 @@ def _llm_context_prompt(
     source_display: str,
     note_context: str,
     note_style: str,
+    note_language: str,
+    term_policy: str,
     screenshot_policy: str,
 ) -> str:
     payload = {
@@ -1137,6 +1199,8 @@ def _llm_context_prompt(
         if note_style == "article"
         else "采用保真风格：尽量保持原始条目顺序，但不要输出元叙述。"
     )
+    language_rule = _language_prompt_rule(note_language)
+    term_rule = _term_policy_prompt_rule(note_language, term_policy)
     image_rule = (
         "图片必须用真正的 Markdown 图片语法插入，不能放进反引号。"
         "如果 JSON 里有 ocr_text、visual_summary、page_ocr_text 或 page_visual_summary，要把它们和相关概念合并讲解。"
@@ -1150,6 +1214,8 @@ def _llm_context_prompt(
         "请把下面的课程材料 JSON 改写成可以直接阅读的 Markdown 笔记。\n"
         f"{context_rule}\n"
         f"{style_rule}\n"
+        f"{language_rule}\n"
+        f"{term_rule}\n"
         "硬性要求：\n"
         "1. 覆盖重要 text block、table、image；不要遗漏定义、条件、例子、公式、图中 OCR/视觉摘要。\n"
         "2. 允许删去纯页码、重复表格壳、装饰性元素和无意义说明。\n"
@@ -1168,6 +1234,8 @@ def _llm_page_lecture_prompt(
     source_display: str,
     note_style: str,
     note_depth: str,
+    note_language: str,
+    term_policy: str,
     page_neighborhood: int,
     section_title: str | None,
     screenshot_policy: str,
@@ -1183,6 +1251,8 @@ def _llm_page_lecture_prompt(
     }
     depth_rule = _note_depth_rule(note_depth)
     source_rule = _source_prompt_rule(source_display)
+    language_rule = _language_prompt_rule(note_language)
+    term_rule = _term_policy_prompt_rule(note_language, term_policy)
     style_rule = (
         "请像给学生讲解这一页 PPT 一样写：先说明本页在讲什么，再把 bullet、图表、公式和例子改写成连续解释。"
         if note_style == "article"
@@ -1192,6 +1262,8 @@ def _llm_page_lecture_prompt(
         "请只讲解 JSON 中的 current_page，不要替其他页面写正文。\n"
         "nearby_pages 只用于理解前后逻辑和减少重复，不能把邻近页内容当成本页内容展开。\n"
         f"{style_rule}\n"
+        f"{language_rule}\n"
+        f"{term_rule}\n"
         f"{depth_rule}\n"
         "硬性要求：\n"
         "1. 本页的重要定义、条件、例子、公式、表格、图片、OCR 和视觉摘要都要进入讲解。\n"
@@ -1209,6 +1281,8 @@ def _llm_weave_prompt(
     source_display: str,
     note_context: str,
     note_depth: str,
+    note_language: str,
+    term_policy: str,
     weave_dedup: str,
 ) -> str:
     page_notes = [
@@ -1229,6 +1303,8 @@ def _llm_weave_prompt(
     }
     source_rule = _source_prompt_rule(source_display)
     depth_rule = _note_depth_rule(note_depth)
+    language_rule = _language_prompt_rule(note_language)
+    term_rule = _term_policy_prompt_rule(note_language, term_policy)
     dedup_rule = {
         "soft": "只合并明显重复的句子和完全相同的定义；宁可略长，也不要删掉 page_notes 中的关键解释。",
         "normal": "合并重复定义和相近例子，但保留每页的关键知识点、图表解释和推理步骤。",
@@ -1237,6 +1313,8 @@ def _llm_weave_prompt(
     return (
         "请把下面这些逐页讲解编织成一个连贯的 Markdown 小节。\n"
         "注意：你的任务是编顺、去重、补过渡，不是重新概括 PPT；不要把逐页讲解压缩成摘要。\n"
+        f"{language_rule}\n"
+        f"{term_rule}\n"
         f"{depth_rule}\n"
         f"去重策略：{dedup_rule}\n"
         "硬性要求：\n"
@@ -1261,6 +1339,30 @@ def _source_prompt_rule(source_display: str) -> str:
         ),
         "inline": "可以在正文中显示详细来源页码和元素 ID，同时也要保留隐藏来源注释。",
     }[source_display]
+
+
+def _language_prompt_rule(note_language: str) -> str:
+    return {
+        "zh": "输出语言：正文、标题和解释必须使用简体中文；公式、代码、变量名、缩写和原文专有名词不要硬翻译。",
+        "en": "Output language: write headings, prose, and explanations in English; preserve formulas, code, variable names, acronyms, and proper nouns.",
+        "auto": "输出语言：根据课程材料的主体语言自动选择，并保持全文一致；若材料明显混合，优先选择更适合学习者连续阅读的一种语言。",
+    }[note_language]
+
+
+def _term_policy_prompt_rule(note_language: str, term_policy: str) -> str:
+    if term_policy == "preserve":
+        if note_language == "en":
+            return "Term policy: preserve source academic terms, acronyms, protocol names, algorithm names, API names, and code symbols; explain them when useful instead of replacing them."
+        return "术语策略：保留原始学术术语、英文缩写、协议名、算法名、API 名称和代码符号；可以解释含义，但不要为了翻译而替换它们。"
+    if term_policy == "translate":
+        if note_language == "en":
+            return "Term policy: translate terms into natural English when it is safe; keep code, formulas, variables, APIs, protocol acronyms, and established names unchanged."
+        return "术语策略：在不破坏专业准确性的前提下尽量翻译术语；代码、公式、变量、API、协议缩写和公认英文名保持原样。"
+    if note_language == "zh":
+        return "术语策略：关键学术术语首次出现时尽量写成“中文译名（English term/acronym）”，后文可用中文名或常用缩写；不要翻译代码、API、变量、公式和协议缩写。"
+    if note_language == "en":
+        return "Term policy: preserve English academic terms and acronyms; when a source term is Chinese and useful for traceability, first mention it as English term (中文原文)."
+    return "术语策略：关键术语首次出现时尽量保留原文术语并给出学习者目标语言解释；代码、API、变量、公式和通用缩写保持原样。"
 
 
 def _note_depth_rule(note_depth: str) -> str:
@@ -1337,6 +1439,8 @@ def _build_usage_report(
     note_style: str,
     note_strategy: str,
     note_depth: str,
+    note_language: str,
+    term_policy: str,
     weave_dedup: str,
     page_neighborhood: int,
     asset_mode: str,
@@ -1380,6 +1484,8 @@ def _build_usage_report(
             "note_context": note_context,
             "note_strategy": note_strategy,
             "note_depth": note_depth,
+            "note_language": note_language,
+            "term_policy": term_policy,
             "weave_dedup": weave_dedup,
             "page_neighborhood": page_neighborhood,
             "source_display": source_display,
@@ -1405,6 +1511,8 @@ def _render_generation_info(usage_report: dict[str, Any]) -> list[str]:
         f"- 模型：{usage_report['model']}",
         f"- 缓存模式：{cache_mode}",
         f"- 笔记策略：{usage_report['request'].get('note_strategy', 'direct')}",
+        f"- 输出语言：{usage_report['request'].get('note_language', 'zh')}",
+        f"- 术语策略：{usage_report['request'].get('term_policy', 'bilingual')}",
         f"- 生成上下文：{summary.get('contexts_total', summary['pages_total'])} 个",
         f"- 本地缓存命中：{summary['local_cache_hits']} / {summary.get('contexts_total', summary['pages_total'])} 个上下文",
         f"- 实际 LLM 调用：{summary['llm_calls']} 个上下文",
@@ -1412,8 +1520,8 @@ def _render_generation_info(usage_report: dict[str, Any]) -> list[str]:
         "",
     ]
     if usage_report["request"].get("note_strategy") == "lecture-weave":
-        lines.insert(7, f"- 逐页深讲调用：{summary.get('page_note_calls', 0)} 个")
-        lines.insert(8, f"- 章节编织调用：{summary.get('weave_calls', 0)} 个")
+        lines.insert(8, f"- 逐页深讲调用：{summary.get('page_note_calls', 0)} 个")
+        lines.insert(9, f"- 章节编织调用：{summary.get('weave_calls', 0)} 个")
     return lines
 
 
@@ -1589,6 +1697,8 @@ def _build_page_notes_report(
     base_url: str | None,
     output_root: Path,
     note_depth: str,
+    note_language: str,
+    term_policy: str,
     page_neighborhood: int,
     pages: list[NoteContext],
     page_markdown_by_slide: dict[int, str],
@@ -1625,6 +1735,8 @@ def _build_page_notes_report(
         "prompt_version": PAGE_LECTURE_PROMPT_VERSION,
         "request": {
             "note_depth": note_depth,
+            "note_language": note_language,
+            "term_policy": term_policy,
             "page_neighborhood": page_neighborhood,
         },
         "summary": {
@@ -1657,6 +1769,8 @@ def _build_weave_report(
     output_root: Path,
     note_context: str,
     note_depth: str,
+    note_language: str,
+    term_policy: str,
     weave_dedup: str,
     contexts: list[NoteContext],
     final_chunks: dict[str, str],
@@ -1706,6 +1820,8 @@ def _build_weave_report(
         "request": {
             "note_context": note_context,
             "note_depth": note_depth,
+            "note_language": note_language,
+            "term_policy": term_policy,
             "weave_dedup": weave_dedup,
         },
         "summary": {

@@ -391,11 +391,19 @@ def test_lecture_weave_generates_page_notes_then_weaves_sections(tmp_path, monke
     assert '"task": "page_lecture"' in prompts[0]
     assert '"task": "page_lecture"' in prompts[1]
     assert '"task": "weave_page_lectures"' in prompts[2]
+    assert all("输出语言" in prompt for prompt in prompts)
+    assert all("术语策略" in prompt for prompt in prompts)
     assert result.page_notes is not None
     assert result.weave_report is not None
     assert result.page_notes_markdown is not None
     assert result.llm_usage["summary"]["page_note_calls"] == 2
     assert result.llm_usage["summary"]["weave_calls"] == 1
+    assert result.llm_usage["request"]["note_language"] == "zh"
+    assert result.llm_usage["request"]["term_policy"] == "bilingual"
+    assert result.page_notes["request"]["note_language"] == "zh"
+    assert result.page_notes["request"]["term_policy"] == "bilingual"
+    assert result.weave_report["request"]["note_language"] == "zh"
+    assert result.weave_report["request"]["term_policy"] == "bilingual"
     assert "好的，这是" not in result.markdown
     assert "# 课程笔记" not in result.markdown
     assert sum(1 for line in result.markdown.splitlines() if line.startswith("# ")) == 1

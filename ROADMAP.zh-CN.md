@@ -32,6 +32,7 @@ SlideNote 当前的核心定位仍然是：
 - 支持 `--screenshot-policy fallback|always|never`，默认有局部图/嵌入图时不在笔记里重复插入整页截图。
 - 支持基础图片学习价值排序 `--image-ranking local|off`，输出 `image_importance.json`，供视觉目标选择、笔记插图和未来 GUI 使用。
 - 支持章节计划输出 `sections.json`，并提供 `--section-detection auto|local|llm`；开启章节式 LLM 笔记时可用模型辅助识别章节边界。
+- 支持 `--note-language auto|zh|en` 和 `--term-policy preserve|translate|bilingual`，可让英文课件输出中文/英文笔记，并控制专业术语保留方式。
 
 ## 1. 上下文策略增强
 
@@ -1545,6 +1546,7 @@ CLI 对新手不够友好，尤其是多个服务商都要 key。
 - 更好的 GUI 前置准备：结构化 usage / cache / coverage 输出保持稳定。
 - 小节级上下文增强：基础 `--note-context auto|document|section|page` 与 `--section-detection auto|local|llm` 已实现；后续补章节置信度、人机修正、overflow fallback。
 - 分层生成策略：基础 `--note-strategy lecture-weave` 已实现，可先逐页深讲再章节编织；后续补质量评分、自动补回遗漏细节和 GUI 对比页。
+- 输出语言与术语策略：基础 `--note-language` 和 `--term-policy` 已实现；后续补术语表抽取、用户自定义词表和按学科 profile 的术语规则。
 - PPT 章节切分与分批输出：`split`、`--split-by section`、`section_index.json`。
 - 来源显示与内容融合策略：基础 `source_map.json` 和 `--source-display hidden|footnote|inline` 已实现；后续补 `fusion_mode`、多来源 metadata 和 GUI 切换。
 - 更智能的视觉目标选择。基础装饰图过滤、figure crop 优先级、图片学习价值排序已实现；后续补内容图分类、用户选择和更强版面分析。
