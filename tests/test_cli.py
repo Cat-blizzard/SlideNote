@@ -203,7 +203,7 @@ def test_deck_brief_auto_runs_before_lecture_weave(tmp_path, monkeypatch):
             return result
 
     monkeypatch.setattr("slidenote.deck_brief.LLMClient", FakeDeckBriefClient)
-    monkeypatch.setattr("slidenote.notes.LLMClient", FakeNotesClient)
+    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeNotesClient)
 
     exit_code = main(
         [
