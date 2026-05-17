@@ -380,6 +380,8 @@ def test_article_prompt_prefers_study_notes_over_slide_translation():
     assert "封面" in prompt
     assert "目录" in prompt
     assert "只保留该页所有元素的来源标记" in prompt
+    assert "独立知识增量" in prompt
+    assert "只允许结构性、重复性、装饰性和联系方式类元素" in prompt
     assert "都要进入讲解" not in prompt
 
 
