@@ -167,6 +167,7 @@ Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主
 | `--source-display` | `hidden` | `hidden` / `footnote` / `inline` | 来源页码和元素 ID 的显示方式。 |
 | `--screenshot-policy` | `fallback` | `fallback` / `always` / `never` | 整页截图是否进入 `notes.md`。 |
 | `--image-ranking` | `local` | `off` / `local` | 是否给图片做学习价值排序。 |
+| `--composite-figures` | `auto` | `off` / `auto` | 是否把多个嵌入小图片拼成的流程图/结构图裁成一个整体组合图。 |
 | `--figure-grounding` | `auto` | `off` / `auto` / `vision` | 是否把有学习价值的图片锚定到附近文本/表格，并生成图文对齐报告。 |
 | `--figure-placement` | `inline` | `inline` / `page-end` | 图片在笔记中的插入位置；`inline` 尽量靠近相关知识点。 |
 | `--figure-audit` | `local` | `off` / `local` / `llm` | 图片是否缺失、缺解释或锚点置信度低的复查策略；当前稳定实现为本地审查。 |
@@ -174,6 +175,8 @@ Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主
 `hidden` 会把来源写成 HTML 注释，正文干净，但 `coverage.md` 和 `source_map.json` 仍可追溯。
 
 `image-ranking` 会写入 `image_importance.json`，记录每张图的分数、排名和原因。当前实现是本地启发式：优先局部裁剪图、面积合适的内容图、有 OCR/视觉摘要的图，惩罚装饰图、整页背景图、极细长图片和过小图片。
+
+`composite-figures` 会写入 `composite_figures.json`。当老师用多个嵌入小图片拼出流程图、架构图或结构图时，系统会从整页截图裁出整体图，并把零散子图片标为 `composite_child`，避免笔记和视觉解析把它们拆成无意义碎片。
 
 `figure-grounding` 会写入 `figure_grounding.json`，记录每张重要图的 `layout_order`、`anchor_element_ids`、`anchor_reason`、`grounding_confidence`、解释状态和复查状态。`auto` 总是运行本地 bbox/版面对齐；如果已经启用 vision/OCR，它会复用已有视觉摘要或 OCR 作为图片解释。`vision` 会在 `--vision off` 时也触发一次视觉解析，用于给重要图片补充解释。
 

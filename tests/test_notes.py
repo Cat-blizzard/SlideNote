@@ -33,6 +33,43 @@ def test_local_notes_include_all_element_ids():
     assert report["missing"] == 0
 
 
+def test_composite_figure_source_marker_covers_child_images(tmp_path):
+    figures = tmp_path / "figures"
+    images = tmp_path / "images"
+    figures.mkdir()
+    images.mkdir()
+    (figures / "composite.png").write_bytes(b"fake")
+    (images / "child1.png").write_bytes(b"fake")
+    (images / "child2.png").write_bytes(b"fake")
+    deck = Deck(
+        source_path="lecture.pptx",
+        source_type="pptx",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                title="Flow",
+                images=[
+                    ImageAsset(
+                        id="s1_fig1",
+                        path="figures/composite.png",
+                        role="composite_figure",
+                        source_element_ids=["s1_img1", "s1_img2"],
+                    ),
+                    ImageAsset(id="s1_img1", path="images/child1.png", role="composite_child", ignored=True),
+                    ImageAsset(id="s1_img2", path="images/child2.png", role="composite_child", ignored=True),
+                ],
+            )
+        ],
+    )
+
+    notes = generate_notes(deck, tmp_path)
+    source_map_report = analyze_coverage(deck, notes)
+
+    assert "<!-- slidenote-source: p1:s1_fig1,s1_img1,s1_img2 -->" in notes
+    assert "child1.png" not in notes
+    assert source_map_report["missing"] == 0
+
+
 def test_local_notes_include_ocr_and_visual_fields():
     deck = Deck(
         source_path="lecture.pptx",

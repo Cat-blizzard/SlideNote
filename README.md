@@ -67,6 +67,7 @@ Open `outputs\lecture\notes.md`. Images are bundled under `outputs\lecture\notes
 - Extracts titles, text blocks, tables, embedded images, and slide/page screenshots.
 - Classifies each page as native text, mixed, image-only, shape-diagram-like, or decorative to route OCR, vision, and figure cropping.
 - Ranks images by study value so vision calls and notes prefer diagrams, charts, figure crops, and high-signal visuals.
+- Detects composite figures made from many embedded picture pieces, crops the whole region from the page screenshot, and keeps the pieces as hidden source refs.
 - Writes `sections.json`; with LLM enabled, `--section-detection auto` can ask the model to refine section boundaries before Lecture-Weave.
 - Writes `deck_brief.json` / `deck_brief.md` in high-quality Lecture-Weave mode: a global course map used only as navigation, not as a replacement for page-level coverage.
 - Produces `content.json` as the source inventory.
@@ -221,6 +222,7 @@ outputs/lecture/
   page_notes.json
   weave_report.json
   llm_usage.json
+  composite_figures.json
   figures.json
   figure_usage.json
   figure_grounding.json
@@ -250,6 +252,8 @@ By default, `notes.md` references bundled image copies under `notes.assets/`. If
 - `decorative`: low priority unless the user explicitly refreshes it.
 
 `image_importance.json` records per-image study-value scores and reasons. Vision `auto` uses that ranking to choose the best local figure crop or embedded image before falling back to a full-page screenshot.
+
+`composite_figures.json` records local detections where a diagram was assembled from multiple embedded picture pieces. SlideNote crops the whole visual region as one `composite_figure`, marks the small pieces as `composite_child`, and keeps their IDs in hidden source refs instead of inserting them separately.
 
 `figure_grounding.json` records where each study-value figure belongs in the note: layout order, nearby text/table anchors, grounding confidence, explanation status, and whether the figure needs manual review. `notes.md` uses this metadata to place figures near the relevant paragraph instead of dumping all images at the end.
 
@@ -406,9 +410,11 @@ Ignored images are skipped by default in notes, coverage checks, OCR fallback, a
 
 ## Local Figure Cropping
 
-Some lecture materials do not store diagrams as independent image objects. A page may be a scanned image, or a diagram may be made from PowerPoint shapes, arrows, and text boxes. SlideNote can ask a vision model to locate meaningful local figure regions on the full-page screenshot, then crop those regions locally:
+Some lecture materials do not store diagrams as independent image objects. A page may be a scanned image, or a diagram may be made from PowerPoint shapes, arrows, text boxes, or many small picture objects. SlideNote first runs a local composite-figure detector for picture-piece diagrams, then can ask a vision model to locate other meaningful local figure regions on the full-page screenshot:
 
 ```powershell
+--composite-figures auto # Default: crop clustered embedded picture pieces as one figure
+--composite-figures off  # Disable local composite-figure detection
 --figure-crop auto     # Default: only calls the vision model when --vision is enabled
 --figure-crop vision   # Force bbox detection even if --vision is off
 --figure-crop off      # Disable local figure cropping
@@ -418,6 +424,7 @@ Outputs:
 
 ```text
 figures/
+composite_figures.json
 figures.json
 figure_usage.json
 ```

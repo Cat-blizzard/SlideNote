@@ -2,6 +2,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from slidenote.composite_figures import enrich_deck_with_composite_figures
 from slidenote.figures import _crop_figures, enrich_deck_with_figures, select_figure_targets
 from slidenote.modality import enrich_deck_with_modalities
 from slidenote.models import Deck, ImageAsset, SlidePage, TextBlock
@@ -139,3 +140,35 @@ def test_select_figure_targets_uses_modality_hints_for_shape_diagram():
 
     assert len(targets) == 1
     assert targets[0].reason == "shape_diagram_modality"
+
+
+def test_composite_figures_crop_cluster_and_absorb_children(tmp_path):
+    screenshot = tmp_path / "screenshots" / "slide3.png"
+    screenshot.parent.mkdir()
+    Image.new("RGB", (1000, 600), "white").save(screenshot)
+    page = SlidePage(
+        slide_id=3,
+        page_screenshot="screenshots/slide3.png",
+        text_blocks=[TextBlock(id="s3_t1", type="paragraph", content="request flow", bbox=[0.18, 0.25, 0.55, 0.31])],
+        images=[
+            ImageAsset(id="s3_img1", path="images/client.png", bbox=[0.18, 0.36, 0.24, 0.46], width=60, height=60),
+            ImageAsset(id="s3_img2", path="images/arrow.png", bbox=[0.27, 0.39, 0.38, 0.42], width=110, height=20),
+            ImageAsset(id="s3_img3", path="images/cache.png", bbox=[0.41, 0.36, 0.47, 0.46], width=60, height=60),
+            ImageAsset(id="s3_img4", path="images/db.png", bbox=[0.52, 0.36, 0.58, 0.46], width=60, height=60),
+        ],
+    )
+    deck = Deck(source_path="lecture.pdf", source_type="pdf", pages=[page])
+    enrich_deck_with_modalities(deck)
+
+    report = enrich_deck_with_composite_figures(deck, tmp_path)
+
+    assert report["summary"]["composites_created"] == 1
+    composite = next(image for image in page.images if image.role == "composite_figure")
+    assert composite.id == "s3_fig1"
+    assert composite.crop_method == "composite_layout"
+    assert (tmp_path / composite.path).exists()
+    assert composite.source_element_ids[:4] == ["s3_img1", "s3_img2", "s3_img3", "s3_img4"]
+    assert "s3_t1" in composite.source_element_ids
+    children = [image for image in page.images if image.role == "composite_child"]
+    assert len(children) == 4
+    assert all(image.ignored for image in children)

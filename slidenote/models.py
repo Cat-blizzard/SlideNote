@@ -45,6 +45,7 @@ class ImageAsset:
     importance_rank: int | None = None
     importance_reason: str | None = None
     layout_order: float | None = None
+    source_element_ids: list[str] = field(default_factory=list)
     anchor_element_ids: list[str] = field(default_factory=list)
     anchor_reason: str | None = None
     grounding_confidence: float | None = None

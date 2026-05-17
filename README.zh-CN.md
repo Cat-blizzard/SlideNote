@@ -67,6 +67,7 @@ python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --
 - 逐页抽取标题、正文文本块、表格、嵌入图片。
 - 自动识别页面类型：原生文字页、图文混合页、整页图片页、形状图页、装饰页，并据此路由 OCR、视觉解析和局部图裁剪。
 - 自动给图片做学习价值排序，让视觉调用和笔记优先使用图表、流程图、局部裁剪图和高信息量图片。
+- 自动识别由多个嵌入小图片拼成的组合图，从整页截图裁出整体区域，并把小图保留为隐藏来源。
 - 生成 `sections.json`；开启 LLM 时，`--section-detection auto` 可以用模型辅助修正章节边界，再交给 Lecture-Weave 编织。
 - 在高质量 Lecture-Weave 模式下生成 `deck_brief.json` / `deck_brief.md`：先形成全局课程脉络，但只作为导航，不替代逐页覆盖。
 - 每页尽量保存页面截图：PDF 原生支持；PPTX 需要本机安装 LibreOffice 或 PowerPoint COM 可用。
@@ -222,6 +223,7 @@ outputs/lecture/
   page_notes.json
   weave_report.json
   llm_usage.json
+  composite_figures.json
   figures.json
   figure_usage.json
   figure_grounding.json
@@ -251,6 +253,8 @@ outputs/lecture/
 - `decorative`：低优先级页面，除非用户显式刷新或需要保留。
 
 `image_importance.json` 会记录每张图片的学习价值分数、排序和原因。`--vision auto` 会优先选择排序靠前的局部裁剪图或嵌入图，再回退到整页截图。
+
+`composite_figures.json` 会记录本地识别出的组合图：当流程图、结构图由多个嵌入小图片拼成时，SlideNote 会从整页截图裁出整体 `composite_figure`，把零散小图标成 `composite_child`，并把它们的 ID 写入隐藏来源标记，而不是作为独立图片插入笔记。
 
 `figure_grounding.json` 会记录每张重要图片应该靠近哪段文字或表格：包括版面顺序、锚点元素、锚定原因、置信度、图片解释状态和是否需要人工复查。`notes.md` 会用这份信息把图片尽量插到相关知识点附近，而不是全部堆在页尾。
 
@@ -407,9 +411,11 @@ PDF/PPT 里经常包含 logo、小图标、背景碎片等装饰性图片。Slid
 
 ## 局部图裁剪
 
-有些课件不是把图作为独立图片存储，而是把整页做成扫描图，或用 PPT 形状、箭头、文本框拼出一张“看起来像图”的区域。SlideNote 支持在笔记生成前尝试把这类局部图从整页截图中裁出来：
+有些课件不是把图作为独立图片存储，而是把整页做成扫描图，或用 PPT 形状、箭头、文本框、多个嵌入小图片拼出一张“看起来像图”的区域。SlideNote 会先用本地规则识别嵌入小图拼成的组合图，再按需用视觉模型从整页截图中定位其他局部图：
 
 ```powershell
+--composite-figures auto # 默认：把聚集的嵌入小图片裁成一张组合图
+--composite-figures off  # 关闭组合图识别
 --figure-crop auto     # 默认：只有开启 --vision 时才会额外调用视觉模型定位局部图
 --figure-crop vision   # 即使 --vision off，也强制用视觉模型做 bbox 定位
 --figure-crop off      # 关闭局部图裁剪
@@ -419,6 +425,7 @@ PDF/PPT 里经常包含 logo、小图标、背景碎片等装饰性图片。Slid
 
 ```text
 figures/
+composite_figures.json
 figures.json
 figure_usage.json
 ```

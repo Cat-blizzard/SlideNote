@@ -265,6 +265,7 @@ def _process_figure_target(
             max_crops_per_page=max_crops_per_page,
             min_confidence=min_confidence,
             min_area=min_area,
+            start_index=_next_figure_index(page),
         )
         record["result"] = parsed
         record["crops"] = crop_records
@@ -285,6 +286,7 @@ def _crop_figures(
     max_crops_per_page: int,
     min_confidence: float,
     min_area: int,
+    start_index: int = 1,
 ) -> tuple[list[ImageAsset], list[dict[str, Any]], list[dict[str, Any]]]:
     crops: list[ImageAsset] = []
     crop_records: list[dict[str, Any]] = []
@@ -304,7 +306,7 @@ def _crop_figures(
                 if reason:
                     skipped.append({"reason": reason, "candidate": candidate, "bbox": normalized.bbox})
                     continue
-                crop_index = len(crops) + 1
+                crop_index = max(1, start_index) + len(crops)
                 pixel_box = _pixel_box(normalized.bbox, width, height)
                 crop = image.crop(pixel_box)
                 crop_path = figures_dir / f"slide{target.slide_id}_fig{crop_index}.png"
@@ -581,6 +583,20 @@ def _skipped_record(target: FigureTarget, status: str, output_root: Path) -> dic
 
 def _page_by_id(deck: Deck, slide_id: int) -> SlidePage | None:
     return next((page for page in deck.pages if page.slide_id == slide_id), None)
+
+
+def _next_figure_index(page: SlidePage | None) -> int:
+    if page is None:
+        return 1
+    next_index = 1
+    prefix = f"s{page.slide_id}_fig"
+    for image in page.images:
+        if not image.id.startswith(prefix):
+            continue
+        suffix = image.id[len(prefix) :]
+        if suffix.isdigit():
+            next_index = max(next_index, int(suffix) + 1)
+    return next_index
 
 
 def _file_sha256(path: Path) -> str:

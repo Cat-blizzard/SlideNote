@@ -99,8 +99,7 @@ def _element_index(deck: Deck) -> dict[str, dict[str, Any]]:
         for table in page.tables:
             index[table.id] = _table_ref(deck, page, table)
         for image in page.images:
-            if not image.ignored:
-                index[image.id] = _image_ref(deck, page, image)
+            index[image.id] = _image_ref(deck, page, image)
     return index
 
 
@@ -130,6 +129,7 @@ def _page_sources(page: SlidePage) -> dict[str, Any]:
                 "importance_rank": image.importance_rank,
                 "importance_reason": image.importance_reason,
                 "layout_order": image.layout_order,
+                "source_element_ids": list(image.source_element_ids),
                 "anchor_element_ids": image.anchor_element_ids,
                 "anchor_reason": image.anchor_reason,
                 "grounding_confidence": image.grounding_confidence,
@@ -182,6 +182,7 @@ def _image_ref(deck: Deck, page: SlidePage, image: ImageAsset) -> dict[str, Any]
         "importance_rank": image.importance_rank,
         "importance_reason": image.importance_reason,
         "layout_order": image.layout_order,
+        "source_element_ids": list(image.source_element_ids),
         "anchor_element_ids": image.anchor_element_ids,
         "anchor_reason": image.anchor_reason,
         "grounding_confidence": image.grounding_confidence,

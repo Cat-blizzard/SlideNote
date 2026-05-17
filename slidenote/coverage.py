@@ -400,6 +400,7 @@ def _figure_record(page: SlidePage, image: ImageAsset, covered: bool) -> dict[st
         "path": image.path,
         "role": image.role,
         "covered": covered,
+        "source_element_ids": list(image.source_element_ids),
         "anchor_element_ids": list(image.anchor_element_ids),
         "anchor_reason": image.anchor_reason,
         "grounding_confidence": image.grounding_confidence,

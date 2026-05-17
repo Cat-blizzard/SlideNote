@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from slidenote.composite_figures import enrich_deck_with_composite_figures
 from slidenote.coverage import analyze_coverage, render_coverage_markdown
 from slidenote.deck_brief import build_deck_brief, render_deck_brief_markdown
 from slidenote.doctor import render_doctor_report, run_doctor
@@ -205,6 +206,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Crop meaningful local figures from page screenshots. auto only runs when vision is enabled; vision forces bbox detection.",
     )
+    build.add_argument(
+        "--composite-figures",
+        choices=["off", "auto"],
+        default="auto",
+        help="Detect diagrams assembled from many embedded images and crop them as one local figure.",
+    )
     build.add_argument("--figure-max-targets", type=int, default=None, help="Maximum pages to send for figure bbox detection.")
     build.add_argument("--figure-max-crops-per-page", type=int, default=3, help="Maximum local figure crops per page.")
     build.add_argument("--figure-min-confidence", type=float, default=0.45, help="Minimum model confidence for accepting a figure crop.")
@@ -303,6 +310,17 @@ def _build(args: argparse.Namespace) -> int:
         modality_report = enrich_deck_with_modalities(deck)
         write_json(output_root / "page_modalities.json", modality_report)
         progress.finish_stage("Page modality classification complete")
+
+        composite_figure_report = None
+        if args.composite_figures != "off":
+            progress.start_stage("composite_figures", message="Detecting composite figures")
+            composite_figure_report = enrich_deck_with_composite_figures(
+                deck,
+                output_root=output_root,
+                mode=args.composite_figures,
+            )
+            write_json(output_root / "composite_figures.json", composite_figure_report)
+            progress.finish_stage("Composite figure detection complete")
 
         figure_report = None
         should_run_figure_crop = args.figure_crop == "vision" or (args.figure_crop == "auto" and args.vision != "off")
@@ -522,6 +540,7 @@ def _build(args: argparse.Namespace) -> int:
             image_importance_report=image_importance_report,
             section_report=section_report,
             deck_brief_report=deck_brief_report,
+            composite_figure_report=composite_figure_report,
             figure_report=figure_report,
             figure_grounding_report=figure_grounding_report,
             ocr_report=ocr_report,
@@ -557,6 +576,8 @@ def _build(args: argparse.Namespace) -> int:
         print(f"- summary:  {output_root / 'run_summary.json'}")
         if image_importance_report is not None:
             print(f"- image rank: {output_root / 'image_importance.json'}")
+        if composite_figure_report is not None:
+            print(f"- composite figs: {output_root / 'composite_figures.json'}")
         if notes_result.llm_usage is not None:
             print(f"- llm use:  {output_root / 'llm_usage.json'}")
         if notes_result.page_notes is not None:
@@ -779,6 +800,7 @@ def _build_run_summary(
     image_importance_report: dict[str, Any] | None,
     section_report: dict[str, Any],
     deck_brief_report: dict[str, Any] | None,
+    composite_figure_report: dict[str, Any] | None,
     figure_report: dict[str, Any] | None,
     figure_grounding_report: dict[str, Any] | None,
     ocr_report: dict[str, Any] | None,
@@ -816,6 +838,7 @@ def _build_run_summary(
             "page_neighborhood": args.page_neighborhood,
             "section_detection": args.section_detection,
             "image_ranking": args.image_ranking,
+            "composite_figures": args.composite_figures,
             "figure_crop": args.figure_crop,
             "figure_grounding": args.figure_grounding,
             "figure_placement": args.figure_placement,
@@ -828,8 +851,10 @@ def _build_run_summary(
             "tables": sum(len(page.tables) for page in pages),
             "images": images_count,
             "figure_crops": sum(1 for page in pages for image in page.images if image.role == "figure_crop"),
+            "composite_figures": sum(1 for page in pages for image in page.images if image.role == "composite_figure"),
             "page_screenshots": sum(1 for page in pages if page.page_screenshot),
         },
+        "composite_figures": composite_figure_report.get("summary") if composite_figure_report else None,
         "figure_crop": figure_report.get("summary") if figure_report else None,
         "figure_grounding": figure_grounding_report.get("summary") if figure_grounding_report else None,
         "page_modalities": modality_report.get("summary") if modality_report else None,
@@ -867,6 +892,7 @@ def _build_run_summary(
             "run_summary": "run_summary.json",
             "page_modalities": "page_modalities.json",
             "image_importance": "image_importance.json" if image_importance_report else None,
+            "composite_figures": "composite_figures.json" if composite_figure_report else None,
             "sections": "sections.json",
             "deck_brief": "deck_brief.json" if deck_brief_report else None,
             "deck_brief_markdown": "deck_brief.md" if deck_brief_report else None,
@@ -944,13 +970,14 @@ def _build_figures_export(deck, figure_report):
                         "importance_score": image.importance_score,
                         "importance_rank": image.importance_rank,
                         "importance_reason": image.importance_reason,
+                        "source_element_ids": list(image.source_element_ids),
                     }
                     for image in page.images
-                    if image.role == "figure_crop"
+                    if image.role in {"figure_crop", "composite_figure"}
                 ],
             }
             for page in deck.pages
-            if any(image.role == "figure_crop" for image in page.images)
+            if any(image.role in {"figure_crop", "composite_figure"} for image in page.images)
         ],
     }
 

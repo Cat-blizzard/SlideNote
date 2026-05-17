@@ -66,7 +66,7 @@ def _ensure_image_source_marker(
     image_path: str,
     source_display: str,
 ) -> str:
-    marker = _source_marker(page.slide_id, [image.id], source_display)
+    marker = _source_marker(page.slide_id, _image_source_ids(image), source_display)
     if not marker:
         return markdown
     lines = markdown.splitlines()
@@ -143,7 +143,7 @@ def _render_image(page: SlidePage, image: ImageAsset, asset_map: dict[str, str],
     caption = image.caption or f"\u7b2c {page.slide_id} \u9875\u56fe\u7247"
     lines = [
         f"{caption}\u3002",
-        _source_marker(page.slide_id, [image.id], source_display),
+        _source_marker(page.slide_id, _image_source_ids(image), source_display),
         "",
     ]
     explanation = image.figure_explanation or image.visual_summary
@@ -560,6 +560,16 @@ def _source_marker(slide_id: int, element_ids: list[str], source_display: str) -
     return f"\u3010\u5bf9\u5e94 PPT\uff1a\u7b2c {slide_id} \u9875\uff0c\u5143\u7d20 {detail}\u3011 {comment}".rstrip()
 
 
+def _image_source_ids(image: ImageAsset) -> list[str]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    for element_id in [image.id, *image.source_element_ids]:
+        if element_id and element_id not in seen:
+            ids.append(element_id)
+            seen.add(element_id)
+    return ids
+
+
 def _page_element_ids(page: SlidePage) -> list[str]:
     ids = [block.id for block in page.text_blocks]
     ids.extend(table.id for table in page.tables)
@@ -611,7 +621,7 @@ def _iter_note_asset_paths(deck: Deck, screenshot_policy: str) -> list[tuple[str
             paths.append((page.page_screenshot, "screenshots"))
         for image in sorted_images_by_importance(page.images):
             if not image.ignored:
-                kind = "figures" if image.role == "figure_crop" else "images"
+                kind = "figures" if image.role in {"figure_crop", "composite_figure"} else "images"
                 paths.append((image.path, kind))
     return paths
 

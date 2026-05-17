@@ -29,6 +29,7 @@ SlideNote 当前的核心定位仍然是：
 - 支持 `--source-display hidden|footnote|inline`，默认隐藏正文来源但保留覆盖率和溯源。
 - 支持 `--note-style article|faithful` 和 `--note-depth detailed`，默认生成详细讲义式学习笔记。
 - 支持基础局部图裁剪 `--figure-crop auto|vision|off`，可用视觉模型定位整页截图中的局部图并裁剪到 `figures/`。
+- 支持组合图识别 `--composite-figures auto|off`，可把多个嵌入小图片拼成的流程图/结构图裁成整体图，并把子图片保留为隐藏来源。
 - 支持 `--screenshot-policy fallback|always|never`，默认有局部图/嵌入图时不在笔记里重复插入整页截图。
 - 支持基础图片学习价值排序 `--image-ranking local|off`，输出 `image_importance.json`，供视觉目标选择、笔记插图和未来 GUI 使用。
 - 支持章节计划输出 `sections.json`，并提供 `--section-detection auto|local|llm`；开启章节式 LLM 笔记时可用模型辅助识别章节边界。

@@ -49,6 +49,7 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     page_modalities = json.loads((out / "page_modalities.json").read_text(encoding="utf-8"))
     sections = json.loads((out / "sections.json").read_text(encoding="utf-8"))
     image_importance = json.loads((out / "image_importance.json").read_text(encoding="utf-8"))
+    composite_figures = json.loads((out / "composite_figures.json").read_text(encoding="utf-8"))
     figure_grounding = json.loads((out / "figure_grounding.json").read_text(encoding="utf-8"))
     assert progress["status"] == "complete"
     assert run_summary["counts"]["pages"] == 1
@@ -58,10 +59,12 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["artifacts"]["sections"] == "sections.json"
     assert run_summary["artifacts"]["deck_brief"] is None
     assert run_summary["artifacts"]["image_importance"] == "image_importance.json"
+    assert run_summary["artifacts"]["composite_figures"] == "composite_figures.json"
     assert run_summary["artifacts"]["figure_grounding"] == "figure_grounding.json"
     assert page_modalities["summary"]["pages_total"] == 1
     assert sections["summary"]["sections_total"] == 1
     assert image_importance["summary"]["images_total"] == 0
+    assert composite_figures["summary"]["composites_created"] == 0
     assert figure_grounding["summary"]["candidate_images"] == 0
     assert run_summary["artifacts"]["note_assets"] == "notes.assets"
     assert source_map["default_display_mode"] == "hidden"
@@ -137,6 +140,7 @@ def test_quality_first_defaults_are_exposed_by_parser():
     assert args.term_policy == "bilingual"
     assert args.section_detection == "auto"
     assert args.image_ranking == "local"
+    assert args.composite_figures == "auto"
     assert args.figure_grounding == "auto"
     assert args.figure_placement == "inline"
     assert args.figure_audit == "local"

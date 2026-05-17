@@ -87,6 +87,9 @@ def _score_image(page: SlidePage, image: ImageAsset, output_root: Path) -> dict[
     if role == "figure_crop":
         score += 0.35
         reasons.append("figure_crop")
+    elif role == "composite_figure":
+        score += 0.38
+        reasons.append("composite_figure")
     elif role == "page_image":
         score -= 0.22
         reasons.append("page_image_penalty")
