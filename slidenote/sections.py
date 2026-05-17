@@ -9,7 +9,7 @@ from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.models import Deck, SlidePage
 
-SECTION_PROMPT_VERSION = "section-detection-v1"
+SECTION_PROMPT_VERSION = "section-detection-v2"
 
 SECTION_SYSTEM_PROMPT = (
     "你是课程幻灯片章节识别助手。你只负责判断哪些页应该作为章节或小节起点。"
@@ -130,12 +130,14 @@ def build_section_plan(
 
 
 def build_local_section_plan(deck: Deck) -> dict[str, Any]:
+    outline_items = _extract_outline_items(deck)
     boundaries, reasons = _section_boundaries(deck)
     if len(boundaries) <= 1 and deck.pages:
         boundaries = [deck.pages[index].slide_id for index in range(0, len(deck.pages), 8)]
         reasons = {slide_id: "fixed_size_fallback" for slide_id in boundaries}
         reasons[deck.pages[0].slide_id] = "first_page"
-    sections = _sections_from_boundaries(deck, boundaries, reasons)
+    titles_by_start = _section_titles_by_boundary(deck, boundaries, outline_items)
+    sections = _sections_from_boundaries(deck, boundaries, reasons, titles_by_start=titles_by_start)
     return {
         "schema_version": 1,
         "generated_at": utc_now_iso(),
@@ -150,6 +152,7 @@ def build_local_section_plan(deck: Deck) -> dict[str, Any]:
             "local_cache_hits": 0,
         },
         "sections": sections,
+        "outline_items": outline_items,
         "warnings": [],
     }
 
@@ -168,6 +171,7 @@ def _section_prompt(deck: Deck, local_plan: dict[str, Any]) -> str:
             }
             for section in local_plan.get("sections", [])
         ],
+        "detected_outline_items": local_plan.get("outline_items", []),
     }
     return (
         "请根据页面标题、页内文字摘要、页面类型和本地基线，判断课程材料的章节/小节边界。\n"
@@ -276,6 +280,7 @@ def _normalize_model_plan(deck: Deck, parsed: dict[str, Any] | None, local_plan:
         "warnings": [],
         "model_raw_section_count": len(raw_sections),
         "local_baseline_sections_total": len(local_plan.get("sections", [])),
+        "outline_items": local_plan.get("outline_items", []),
     }
 
 
@@ -315,39 +320,138 @@ def _sections_from_boundaries(
 def _section_boundaries(deck: Deck) -> tuple[list[int], dict[int, str]]:
     if not deck.pages:
         return [], {}
-    outline_titles = _outline_titles(deck)
+    outline_items = _extract_outline_items(deck)
+    outline_titles = {item["normalized_title"] for item in outline_items}
     boundaries = [deck.pages[0].slide_id]
     reasons = {deck.pages[0].slide_id: "first_page"}
     for page in deck.pages[1:]:
         title = _normalize_heading_text(page.title or "")
         if not title or "目录" in title or title.lower() == "contents":
             continue
-        if any(title == outline or title in outline or outline in title for outline in outline_titles):
+        if any(_title_matches_outline(title, outline) for outline in outline_titles):
             boundaries.append(page.slide_id)
             reasons[page.slide_id] = "matched_outline_title"
-        elif _looks_like_section_title_page(page):
+        elif not outline_titles and _looks_like_section_title_page(page):
             boundaries.append(page.slide_id)
             reasons[page.slide_id] = "section_title_page"
+    if outline_items:
+        existing = set(boundaries)
+        for slide_id in _agenda_followup_boundaries(deck, outline_items, existing):
+            boundaries.append(slide_id)
+            reasons[slide_id] = "outline_followup"
+            existing.add(slide_id)
     return sorted(set(boundaries)), reasons
 
 
 def _outline_titles(deck: Deck) -> set[str]:
-    titles: set[str] = set()
+    return {item["normalized_title"] for item in _extract_outline_items(deck)}
+
+
+def _extract_outline_items(deck: Deck) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for page in deck.pages:
         page_text = "\n".join(block.content for block in page.text_blocks)
         if "目录" not in page_text and "Contents" not in page_text:
             continue
+        pending_number: str | None = None
         for line in page_text.splitlines():
-            normalized = _normalize_heading_text(line)
-            if not normalized or normalized in {"目录", "contents"}:
+            raw = line.strip()
+            normalized = _normalize_heading_text(raw)
+            if not normalized or normalized.lower() in {"目录", "contents"}:
                 continue
-            if len(normalized) >= 4:
-                titles.add(normalized)
-    return titles
+            if _is_outline_number(raw):
+                pending_number = raw
+                continue
+            if len(normalized) < 4 or normalized in seen:
+                continue
+            seen.add(normalized)
+            items.append(
+                {
+                    "title": _strip_outline_prefix(raw),
+                    "normalized_title": normalized,
+                    "number": pending_number,
+                    "slide_id": page.slide_id,
+                }
+            )
+            pending_number = None
+    return items
+
+
+def _section_titles_by_boundary(deck: Deck, boundaries: list[int], outline_items: list[dict[str, Any]]) -> dict[int, str]:
+    if not boundaries or not outline_items:
+        return {}
+    pages_by_id = {page.slide_id: page for page in deck.pages}
+    outline_by_normalized = {item["normalized_title"]: item["title"] for item in outline_items}
+    titles_by_start: dict[int, str] = {}
+    for slide_id in boundaries:
+        page = pages_by_id.get(slide_id)
+        if page is None:
+            continue
+        normalized = _normalize_heading_text(page.title or "")
+        for outline_normalized, outline_title in outline_by_normalized.items():
+            if normalized and _title_matches_outline(normalized, outline_normalized):
+                titles_by_start[slide_id] = outline_title
+                break
+
+    first_outline = outline_items[0]["title"]
+    first_outline_normalized = outline_items[0]["normalized_title"]
+    matched_outline_titles = {_normalize_heading_text(title) for title in titles_by_start.values()}
+    if first_outline_normalized not in matched_outline_titles:
+        titles_by_start[boundaries[0]] = first_outline
+        matched_outline_titles.add(first_outline_normalized)
+    remaining = [item for item in outline_items if item["normalized_title"] not in matched_outline_titles]
+    for slide_id in boundaries:
+        if slide_id in titles_by_start or not remaining:
+            continue
+        item = remaining.pop(0)
+        titles_by_start[slide_id] = item["title"]
+        matched_outline_titles.add(item["normalized_title"])
+    return titles_by_start
+
+
+def _agenda_followup_boundaries(deck: Deck, outline_items: list[dict[str, Any]], existing_boundaries: set[int]) -> list[int]:
+    if len(outline_items) < 2:
+        return []
+    results: list[int] = []
+    min_slide_id = deck.pages[0].slide_id + 3 if deck.pages else 0
+    for index, page in enumerate(deck.pages[:-1]):
+        if page.slide_id <= min_slide_id:
+            continue
+        if _page_outline_match_count(page, outline_items) < min(3, len(outline_items)):
+            continue
+        next_slide_id = deck.pages[index + 1].slide_id
+        if next_slide_id not in existing_boundaries:
+            results.append(next_slide_id)
+    return results
+
+
+def _page_outline_match_count(page: SlidePage, outline_items: list[dict[str, Any]]) -> int:
+    page_text = _normalize_heading_text("\n".join([page.title or ""] + [block.content for block in page.text_blocks]))
+    return sum(1 for item in outline_items if item["normalized_title"] in page_text)
+
+
+def _title_matches_outline(title: str, outline: str) -> bool:
+    if not title or not outline:
+        return False
+    if title == outline:
+        return True
+    shorter, longer = sorted([title, outline], key=len)
+    if shorter in longer and len(shorter) / max(1, len(longer)) >= 0.72:
+        return True
+    return False
+
+
+def _is_outline_number(value: str) -> bool:
+    return bool(re.fullmatch(r"[（(]?\s*(?:\d+|[一二三四五六七八九十]+)\s*[)）.、]?", value.strip()))
+
+
+def _strip_outline_prefix(value: str) -> str:
+    return re.sub(r"^\s*[（(]?\s*(?:\d+|[一二三四五六七八九十]+)\s*(?:[)）.、]|\s+)\s*", "", value.strip()).strip()
 
 
 def _normalize_heading_text(value: str) -> str:
-    value = re.sub(r"^\s*[\d一二三四五六七八九十]+[.、\s-]*", "", value.strip())
+    value = re.sub(r"^\s*(?:\d+|[一二三四五六七八九十]+)(?:[.、\s-]+)", "", value.strip())
     return re.sub(r"\s+", "", value).strip("：:")
 
 

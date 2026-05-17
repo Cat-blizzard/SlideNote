@@ -82,6 +82,39 @@ def test_auto_figure_crop_with_vision_off_does_not_call_api(tmp_path):
     assert run_summary["figure_crop"] is None
 
 
+def test_missing_default_vision_key_prints_text_mode_hint(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("QWEN_API_KEY", raising=False)
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    source = tmp_path / "lecture.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "A short slide")
+    doc.save(source)
+    doc.close()
+    out = tmp_path / "out"
+
+    exit_code = main(
+        [
+            "build",
+            str(source),
+            "--out",
+            str(out),
+            "--quiet",
+            "--use-llm",
+            "--provider",
+            "deepseek",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "当前开启了 vision/figure-crop" in captured.err
+    assert "DASHSCOPE_API_KEY" in captured.err
+    assert "--vision off --figure-crop off" in captured.err
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+
+
 def test_quality_first_defaults_are_exposed_by_parser():
     from slidenote.cli import _build_parser
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
-from slidenote.image_assets import image_metadata
+from slidenote.image_assets import image_metadata, refine_image_role_for_placement
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock, normalize_rel_path
 from slidenote.rendering import render_pptx_screenshots
 from slidenote.utils import unique_path
@@ -153,6 +153,13 @@ def _extract_picture(
     role = "page_image" if page_like else meta["role"]
     ignored = True if page_like else meta["ignored"]
     ignore_reason = "full_page_image" if page_like else meta["ignore_reason"]
+    role, ignored, ignore_reason = refine_image_role_for_placement(
+        role,
+        ignored,
+        ignore_reason,
+        _shape_area_ratio(bbox, slide_width, slide_height),
+        _shape_near_slide_edge(bbox, slide_width, slide_height),
+    )
     return ImageAsset(
         id=f"s{slide_index}_img{image_index}",
         path=normalize_rel_path(image_path, output_root),
@@ -180,6 +187,22 @@ def _is_page_like_shape(bbox: list[float] | None, slide_width: float, slide_heig
         return False
     _, _, width, height = bbox
     return max(0.0, width) * max(0.0, height) / (slide_width * slide_height) >= 0.85
+
+
+def _shape_area_ratio(bbox: list[float] | None, slide_width: float, slide_height: float) -> float | None:
+    if not bbox or slide_width <= 0 or slide_height <= 0:
+        return None
+    _, _, width, height = bbox
+    return max(0.0, width) * max(0.0, height) / (slide_width * slide_height)
+
+
+def _shape_near_slide_edge(bbox: list[float] | None, slide_width: float, slide_height: float) -> bool:
+    if not bbox or slide_width <= 0 or slide_height <= 0:
+        return False
+    left, top, width, height = bbox
+    margin_x = slide_width * 0.08
+    margin_y = slide_height * 0.08
+    return left <= margin_x or top <= margin_y or left + width >= slide_width - margin_x or top + height >= slide_height - margin_y
 
 
 def _fallback_title(blocks: list[TextBlock]) -> str | None:

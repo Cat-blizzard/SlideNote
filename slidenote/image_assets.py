@@ -43,3 +43,21 @@ def classify_image_asset(meta: dict[str, Any]) -> tuple[str, bool, str | None]:
     if aspect_ratio >= 8 and area < 150_000:
         return "decorative", True, "thin_decoration"
     return "content", False, None
+
+
+def refine_image_role_for_placement(
+    role: str,
+    ignored: bool,
+    reason: str | None,
+    placement_area_ratio: float | None,
+    near_page_edge: bool,
+) -> tuple[str, bool, str | None]:
+    if ignored:
+        return role, ignored, reason
+    if placement_area_ratio is None:
+        return role, ignored, reason
+    if placement_area_ratio < 0.01:
+        return "decorative", True, "tiny_placement"
+    if near_page_edge and placement_area_ratio < 0.04:
+        return "decorative", True, "edge_decoration"
+    return role, ignored, reason

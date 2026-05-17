@@ -20,11 +20,13 @@ def analyze_coverage(deck: Deck, notes_markdown: str) -> dict[str, object]:
     total = len(items)
     covered = sum(1 for item in items if item.covered)
     missing = [item for item in items if not item.covered]
+    page_coverage = _page_coverage(deck, items)
     return {
         "total": total,
         "covered": covered,
         "missing": len(missing),
         "coverage_ratio": covered / total if total else 1.0,
+        "page_coverage": page_coverage,
         "items": [
             {
                 "id": item.id,
@@ -50,10 +52,24 @@ def render_coverage_markdown(report: dict[str, object]) -> str:
         f"- 已覆盖：{covered}",
         f"- 可能遗漏：{missing}",
         f"- 覆盖率：{ratio:.1%}",
-        "",
-        "| 状态 | 页码 | 类型 | 元素 ID | 内容预览 |",
-        "| --- | --- | --- | --- | --- |",
     ]
+    page_coverage = report.get("page_coverage")
+    if isinstance(page_coverage, dict):
+        missing_slide_ids = page_coverage.get("missing_slide_ids") or []
+        missing_slide_text = ", ".join(str(slide_id) for slide_id in missing_slide_ids) if missing_slide_ids else "无"
+        lines.extend(
+            [
+                f"- 有内容页覆盖：{page_coverage.get('covered_pages', 0)} / {page_coverage.get('pages_with_expected_content', 0)}",
+                f"- 完全未引用页：{missing_slide_text}",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "| 状态 | 页码 | 类型 | 元素 ID | 内容预览 |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+    )
     for item in report["items"]:
         status = "已覆盖" if item["covered"] else "可能遗漏"
         lines.append(
@@ -68,6 +84,44 @@ def _collect_items(deck: Deck, notes_markdown: str) -> list[CoverageItem]:
     for page in deck.pages:
         items.extend(_page_items(page, tokens))
     return items
+
+
+def _page_coverage(deck: Deck, items: list[CoverageItem]) -> dict[str, object]:
+    items_by_slide: dict[int, list[CoverageItem]] = {}
+    for item in items:
+        items_by_slide.setdefault(item.slide_id, []).append(item)
+    pages: list[dict[str, object]] = []
+    missing_slide_ids: list[int] = []
+    covered_pages = 0
+    pages_with_expected_content = 0
+    for page in deck.pages:
+        page_items = items_by_slide.get(page.slide_id, [])
+        expected = bool(page_items)
+        covered_count = sum(1 for item in page_items if item.covered)
+        if expected:
+            pages_with_expected_content += 1
+            if covered_count > 0:
+                covered_pages += 1
+            else:
+                missing_slide_ids.append(page.slide_id)
+        pages.append(
+            {
+                "slide_id": page.slide_id,
+                "title": page.title,
+                "expected_items": len(page_items),
+                "covered_items": covered_count,
+                "missing_items": len(page_items) - covered_count,
+                "covered": covered_count > 0 if expected else True,
+            }
+        )
+    return {
+        "pages_total": len(deck.pages),
+        "pages_with_expected_content": pages_with_expected_content,
+        "covered_pages": covered_pages,
+        "missing_pages": len(missing_slide_ids),
+        "missing_slide_ids": missing_slide_ids,
+        "pages": pages,
+    }
 
 
 def _page_items(page: SlidePage, tokens: set[str]) -> list[CoverageItem]:

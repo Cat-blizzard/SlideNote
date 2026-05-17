@@ -4,7 +4,7 @@ import contextlib
 import io
 from pathlib import Path
 
-from slidenote.image_assets import image_metadata
+from slidenote.image_assets import image_metadata, refine_image_role_for_placement
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock, normalize_rel_path
 from slidenote.utils import unique_path
 
@@ -103,10 +103,18 @@ def _extract_images(doc: object, page: object, page_index: int, images_dir: Path
         image_path.write_bytes(extracted["image"])
         meta = image_metadata(image_path)
         bbox = _image_bbox(page, xref)
-        page_like = _is_page_like_bbox(bbox, _page_size(page))
+        page_size = _page_size(page)
+        page_like = _is_page_like_bbox(bbox, page_size)
         role = "page_image" if page_like else meta["role"]
         ignored = True if page_like else meta["ignored"]
         ignore_reason = "full_page_image" if page_like else meta["ignore_reason"]
+        role, ignored, ignore_reason = refine_image_role_for_placement(
+            role,
+            ignored,
+            ignore_reason,
+            _bbox_area_ratio_xyxy(bbox, page_size),
+            _bbox_near_page_edge_xyxy(bbox, page_size),
+        )
         images.append(
             ImageAsset(
                 id=f"s{page_index}_img{image_index}",
@@ -152,6 +160,28 @@ def _is_page_like_bbox(bbox: list[float] | None, page_size: tuple[float, float] 
     x1, y1, x2, y2 = bbox
     area_ratio = max(0.0, x2 - x1) * max(0.0, y2 - y1) / (width * height)
     return area_ratio >= 0.85
+
+
+def _bbox_area_ratio_xyxy(bbox: list[float] | None, page_size: tuple[float, float] | None) -> float | None:
+    if not bbox or not page_size:
+        return None
+    width, height = page_size
+    if width <= 0 or height <= 0:
+        return None
+    x1, y1, x2, y2 = bbox
+    return max(0.0, x2 - x1) * max(0.0, y2 - y1) / (width * height)
+
+
+def _bbox_near_page_edge_xyxy(bbox: list[float] | None, page_size: tuple[float, float] | None) -> bool:
+    if not bbox or not page_size:
+        return False
+    width, height = page_size
+    if width <= 0 or height <= 0:
+        return False
+    x1, y1, x2, y2 = bbox
+    margin_x = width * 0.08
+    margin_y = height * 0.08
+    return x1 <= margin_x or y1 <= margin_y or x2 >= width - margin_x or y2 >= height - margin_y
 
 
 def _render_page(page: object, page_index: int, screenshots_dir: Path, output_root: Path) -> str:

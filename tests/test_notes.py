@@ -369,8 +369,13 @@ def test_lecture_weave_generates_page_notes_then_weaves_sections(tmp_path, monke
                 result.text = (
                     "好的，这是根据 JSON 生成的课程笔记。\n\n"
                     "# 课程笔记：副本与 Quorum\n\n"
+                    "## 副本与 Quorum\n\n"
                     "副本先解决可用性问题。<!-- slidenote-source: p1:s1_t1 -->\n\n"
-                    "Quorum 进一步说明读写交集。<!-- slidenote-source: p2:s2_t1 -->"
+                    "### 读写交集\n\n"
+                    "Quorum 进一步说明读写交集。<!-- slidenote-source: p2:s2_t1 -->\n\n"
+                    "![](notes.assets/images/quorum.png)\n\n"
+                    "## 生成信息\n\n"
+                    "- LLM provider：fake"
                 )
             return result
 
@@ -406,9 +411,64 @@ def test_lecture_weave_generates_page_notes_then_weaves_sections(tmp_path, monke
     assert result.weave_report["request"]["term_policy"] == "bilingual"
     assert "好的，这是" not in result.markdown
     assert "# 课程笔记" not in result.markdown
+    assert "## 生成信息" not in result.markdown
+    assert "### 读写交集" in result.markdown
+    assert "![](notes.assets" not in result.markdown
+    assert "![图示](notes.assets/images/quorum.png)" in result.markdown
     assert sum(1 for line in result.markdown.splitlines() if line.startswith("# ")) == 1
     assert "<!-- slidenote-source: p1:s1_t1 -->" in result.markdown
     assert "<!-- slidenote-source: p2:s2_t1 -->" in result.markdown
+    assert analyze_coverage(deck, result.markdown)["missing"] == 0
+
+
+def test_section_context_notes_use_numbered_outline_headings(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="ch06.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(slide_id=1, title="复制与一致性基础", text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Replica")]),
+            SlidePage(slide_id=2, title="数据为中心的一致性模型", text_blocks=[TextBlock(id="s2_t1", type="paragraph", content="Consistency")]),
+        ],
+    )
+    section_plan = {
+        "sections": [
+            {"section_id": "sec1", "title": "复制与一致性基础", "slide_ids": [1]},
+            {"section_id": "sec2", "title": "数据为中心的一致性模型", "slide_ids": [2]},
+        ]
+    }
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            class Result:
+                usage = {}
+
+            result = Result()
+            if '"context_id": "sec1"' in prompt:
+                result.text = "## 复制与一致性基础\n\n### 为什么复制\n\n复制提高可靠性。<!-- slidenote-source: p1:s1_t1 -->"
+            else:
+                result.text = "## 数据为中心的一致性模型\n\n一致性模型描述读写可见性。<!-- slidenote-source: p2:s2_t1 -->"
+            return result
+
+    monkeypatch.setattr("slidenote.notes.LLMClient", FakeClient)
+
+    result = generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="openai",
+        api_key="test",
+        note_strategy="direct",
+        note_context="section",
+        section_plan=section_plan,
+    )
+
+    assert "## 一、复制与一致性基础" in result.markdown
+    assert "## 二、数据为中心的一致性模型" in result.markdown
+    assert "### 为什么复制" in result.markdown
+    assert result.markdown.count("## 复制与一致性基础") == 0
     assert analyze_coverage(deck, result.markdown)["missing"] == 0
 
 

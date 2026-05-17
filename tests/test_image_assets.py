@@ -1,4 +1,4 @@
-from slidenote.image_assets import classify_image_asset
+from slidenote.image_assets import classify_image_asset, refine_image_role_for_placement
 from slidenote.image_ranking import rank_deck_images, sorted_images_by_importance
 from slidenote.extractors.pdf import _is_page_like_bbox
 from slidenote.extractors.pptx import _is_page_like_shape
@@ -19,6 +19,14 @@ def test_classify_normal_image_as_content():
     assert role == "content"
     assert ignored is False
     assert reason is None
+
+
+def test_refine_edge_logo_as_decorative():
+    role, ignored, reason = refine_image_role_for_placement("content", False, None, placement_area_ratio=0.025, near_page_edge=True)
+
+    assert role == "decorative"
+    assert ignored is True
+    assert reason == "edge_decoration"
 
 
 def test_pdf_page_like_bbox_detection():

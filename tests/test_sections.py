@@ -27,6 +27,39 @@ def test_local_section_plan_uses_outline_titles(tmp_path):
 
     assert [section["start_slide_id"] for section in plan["sections"]] == [1, 2, 4]
     assert plan["sections"][1]["slide_ids"] == [2, 3]
+    assert [item["title"] for item in plan["outline_items"]] == ["Replication", "Quorum"]
+
+
+def test_local_section_plan_names_first_section_from_outline_when_title_missing(tmp_path):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                title="Distributed Systems",
+                text_blocks=[
+                    TextBlock(
+                        id="s1_t1",
+                        type="paragraph",
+                        content="目录\nContents\n1\n复制与一致性基础\n2\n数据为中心的一致性模型",
+                    )
+                ],
+            ),
+            SlidePage(slide_id=2, title="为什么要复制数据？", text_blocks=[TextBlock(id="s2_t1", type="paragraph", content="Replica")]),
+            SlidePage(
+                slide_id=3,
+                title="数据为中心的一致性模型",
+                text_blocks=[TextBlock(id="s3_t1", type="paragraph", content="Consistency")],
+            ),
+        ],
+    )
+
+    plan = build_local_section_plan(deck)
+
+    assert [section["start_slide_id"] for section in plan["sections"]] == [1, 3]
+    assert plan["sections"][0]["title"] == "复制与一致性基础"
+    assert plan["sections"][1]["title"] == "数据为中心的一致性模型"
 
 
 def test_llm_section_plan_is_cached_and_normalized(tmp_path, monkeypatch):

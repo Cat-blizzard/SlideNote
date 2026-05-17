@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,7 @@ from slidenote.doctor import render_doctor_report, run_doctor
 from slidenote.extractors import extract_deck
 from slidenote.figures import enrich_deck_with_figures
 from slidenote.image_ranking import rank_deck_images
-from slidenote.llm import supported_provider_names
+from slidenote.llm import get_provider_spec, supported_provider_names
 from slidenote.modality import enrich_deck_with_modalities
 from slidenote.notes import estimate_note_generation_steps, generate_notes_result
 from slidenote.ocr import enrich_deck_with_ocr
@@ -20,13 +21,21 @@ from slidenote.utils import ensure_clean_dir, write_json, write_text
 from slidenote.vision import enrich_deck_with_vision
 
 
+class UserFacingConfigError(RuntimeError):
+    """Configuration error that should be shown without a Python traceback."""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    if args.command == "build":
-        return _build(args)
-    if args.command == "doctor":
-        return _doctor(args)
+    try:
+        if args.command == "build":
+            return _build(args)
+        if args.command == "doctor":
+            return _doctor(args)
+    except UserFacingConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
     parser.print_help()
     return 1
 
@@ -462,6 +471,10 @@ def _build(args: argparse.Namespace) -> int:
         )
         write_json(output_root / "run_summary.json", run_summary)
     except Exception as exc:
+        friendly_message = _friendly_build_error(exc, args)
+        if friendly_message:
+            progress.fail(friendly_message)
+            raise UserFacingConfigError(friendly_message) from exc
         progress.fail(str(exc))
         raise
 
@@ -494,6 +507,68 @@ def _build(args: argparse.Namespace) -> int:
             print(f"- visuals:  {output_root / 'visuals.json'}")
             print(f"- vision:   {output_root / 'vision_usage.json'}")
     return 0
+
+
+def _friendly_build_error(exc: Exception, args: argparse.Namespace) -> str | None:
+    message = str(exc)
+    if "Missing API key for provider `" not in message:
+        return None
+    provider = _provider_from_missing_key_error(message)
+    if not provider:
+        return None
+    try:
+        missing_spec = get_provider_spec(provider)
+    except ValueError:
+        return None
+
+    if _vision_features_enabled(args):
+        try:
+            vision_spec = get_provider_spec(args.vision_provider)
+        except ValueError:
+            vision_spec = None
+        if vision_spec and missing_spec.canonical_name == vision_spec.canonical_name:
+            envs = ", ".join(vision_spec.api_key_envs)
+            features = []
+            if args.vision != "off":
+                features.append("vision")
+            if args.figure_crop == "vision" or (args.figure_crop == "auto" and args.vision != "off"):
+                features.append("figure-crop")
+            feature_text = "/".join(features) or "vision"
+            return (
+                f"当前开启了 {feature_text}，但视觉模型 provider `{vision_spec.canonical_name}` 没有可用 API key。\n"
+                f"请设置 {envs}，或传 `--vision-api-key ...`。\n"
+                "如果只想用文本模型生成笔记，请加：`--vision off --figure-crop off`。"
+            )
+
+    if args.use_llm:
+        try:
+            text_spec = get_provider_spec(args.provider)
+        except ValueError:
+            text_spec = None
+        if text_spec and missing_spec.canonical_name == text_spec.canonical_name:
+            envs = ", ".join(text_spec.api_key_envs)
+            return (
+                f"当前开启了 `--use-llm`，但文本模型 provider `{text_spec.canonical_name}` 没有可用 API key。\n"
+                f"请设置 {envs}，或传 `--api-key ...`。\n"
+                "如果只想先生成本地规则草稿，请去掉 `--use-llm`。"
+            )
+    return None
+
+
+def _provider_from_missing_key_error(message: str) -> str | None:
+    marker = "Missing API key for provider `"
+    start = message.find(marker)
+    if start == -1:
+        return None
+    start += len(marker)
+    end = message.find("`", start)
+    if end == -1:
+        return None
+    return message[start:end]
+
+
+def _vision_features_enabled(args: argparse.Namespace) -> bool:
+    return args.vision != "off" or args.figure_crop == "vision" or (args.figure_crop == "auto" and args.vision != "off")
 
 
 def _apply_speed_mode_defaults(args: argparse.Namespace) -> None:
@@ -677,6 +752,7 @@ def _build_run_summary(
             "covered": coverage_report.get("covered"),
             "missing": coverage_report.get("missing"),
             "coverage_ratio": coverage_report.get("coverage_ratio"),
+            "page_coverage": coverage_report.get("page_coverage"),
         },
         "source_map": {
             "note_blocks": len(source_map.get("note_blocks", [])),

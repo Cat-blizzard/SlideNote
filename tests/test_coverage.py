@@ -58,3 +58,20 @@ def test_coverage_tracks_figure_crop_ids():
 
     assert report["covered"] == 1
     assert report["missing"] == 0
+
+
+def test_coverage_reports_pages_with_no_referenced_elements():
+    deck = Deck(
+        source_path="demo.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(slide_id=1, text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="covered")]),
+            SlidePage(slide_id=2, text_blocks=[TextBlock(id="s2_t1", type="paragraph", content="missing")]),
+        ],
+    )
+
+    report = analyze_coverage(deck, "<!-- slidenote-source: p1:s1_t1 -->")
+
+    assert report["page_coverage"]["pages_with_expected_content"] == 2
+    assert report["page_coverage"]["covered_pages"] == 1
+    assert report["page_coverage"]["missing_slide_ids"] == [2]

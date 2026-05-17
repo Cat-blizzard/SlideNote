@@ -16,9 +16,9 @@ from slidenote.llm import LLMClient, SYSTEM_PROMPT, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 
-NOTE_PROMPT_VERSION = "note-context-v1"
-PAGE_LECTURE_PROMPT_VERSION = "page-lecture-v1"
-WEAVE_PROMPT_VERSION = "weave-v1"
+NOTE_PROMPT_VERSION = "note-context-v2"
+PAGE_LECTURE_PROMPT_VERSION = "page-lecture-v2"
+WEAVE_PROMPT_VERSION = "weave-v2"
 
 ASSET_MODES = {"bundle", "absolute", "embed"}
 SOURCE_DISPLAY_MODES = {"hidden", "footnote", "inline"}
@@ -202,6 +202,7 @@ def generate_notes_result(
         source_display=source_display,
         note_style=note_style,
         screenshot_policy=screenshot_policy,
+        section_plan=section_plan,
     )
     asset_warnings = asset_warnings + _validate_markdown_image_links(markdown, output_root)
     return NoteGenerationResult(markdown=markdown, asset_warnings=asset_warnings)
@@ -250,60 +251,40 @@ def _generate_notes_locally(
     source_display: str = "hidden",
     note_style: str = "article",
     screenshot_policy: str = "fallback",
+    section_plan: dict[str, Any] | None = None,
 ) -> str:
     asset_map = asset_map or {}
     lines: list[str] = []
-    title = Path(deck.source_path).stem
-    lines.append(f"# {title}")
+    lines.append(f"# {_document_title(deck)}")
     lines.append("")
     if note_style == "faithful":
         lines.append("> 本地规则草稿，用于调试解析和覆盖率链路；正式改写请使用 `--use-llm`。")
         lines.append("")
 
-    for page in deck.pages:
-        heading = page.title or f"第 {page.slide_id} 页"
-        lines.append(f"## 第 {page.slide_id} 页：{heading}")
-        lines.append(_source_marker(page.slide_id, _page_element_ids(page), source_display))
-        lines.append("")
-
-        if _should_render_screenshot(page, screenshot_policy):
-            screenshot_path = _asset_display_path(page.page_screenshot, asset_map)
-            lines.append(f"![第 {page.slide_id} 页截图]({screenshot_path})")
-            lines.append(_source_marker(page.slide_id, [f"p{page.slide_id}_screenshot"], source_display))
-            lines.append("")
-
-        page_visual_lines = _render_page_visual_context(page, source_display=source_display)
-        if page_visual_lines:
-            lines.extend(page_visual_lines)
-            lines.append("")
-
-        if page.text_blocks:
-            lines.extend(_render_text_blocks(page, source_display=source_display, note_style=note_style))
-            lines.append("")
-
-        for table in page.tables:
-            lines.extend(_render_table(page, table, source_display=source_display))
-            lines.append("")
-
-        for image in sorted_images_by_importance(page.images):
-            if image.ignored:
-                continue
-            lines.extend(_render_image(page, image, asset_map=asset_map, source_display=source_display))
-            lines.append("")
-
-        visible_images = [image for image in page.images if not image.ignored]
-        if not page.text_blocks and not page.tables and not visible_images and not page_visual_lines:
-            lines.append(f"PPT 第 {page.slide_id} 页没有解析到可写入的文本、表格或嵌入图片。")
-            lines.append("")
-
-        if page.notes:
-            lines.append(f"讲者备注：{page.notes}")
-            lines.append(_source_marker(page.slide_id, [f"p{page.slide_id}_notes"], source_display))
-            lines.append("")
-
-        for warning in page.warnings:
-            lines.append(f"> 提醒：{warning}")
-            lines.append("")
+    contexts = _section_contexts(deck, section_plan=section_plan)
+    if not contexts:
+        contexts = [NoteContext(id="doc", kind="document", title=Path(deck.source_path).stem, pages=list(deck.pages))]
+    add_context_headings = _should_add_context_headings(contexts)
+    section_number = 1
+    for context in contexts:
+        if add_context_headings:
+            heading_title = _context_heading_title(context, section_plan)
+            if not _is_frontmatter_heading(heading_title, context):
+                lines.append(_context_heading(context, heading_title, section_number))
+                lines.append("")
+                section_number += 1
+        page_heading_level = "###" if add_context_headings else "##"
+        for page in context.pages:
+            lines.extend(
+                _render_local_page(
+                    page,
+                    asset_map=asset_map,
+                    source_display=source_display,
+                    note_style=note_style,
+                    screenshot_policy=screenshot_policy,
+                    heading_level=page_heading_level,
+                )
+            )
 
     if deck.warnings:
         lines.append("## 解析提醒")
@@ -313,6 +294,61 @@ def _generate_notes_locally(
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_local_page(
+    page: SlidePage,
+    asset_map: dict[str, str],
+    source_display: str,
+    note_style: str,
+    screenshot_policy: str,
+    heading_level: str,
+) -> list[str]:
+    lines: list[str] = []
+    heading = page.title or f"第 {page.slide_id} 页"
+    lines.append(f"{heading_level} 第 {page.slide_id} 页：{heading}")
+    lines.append(_source_marker(page.slide_id, _page_element_ids(page), source_display))
+    lines.append("")
+
+    if _should_render_screenshot(page, screenshot_policy):
+        screenshot_path = _asset_display_path(page.page_screenshot, asset_map)
+        lines.append(f"![第 {page.slide_id} 页截图]({screenshot_path})")
+        lines.append(_source_marker(page.slide_id, [f"p{page.slide_id}_screenshot"], source_display))
+        lines.append("")
+
+    page_visual_lines = _render_page_visual_context(page, source_display=source_display)
+    if page_visual_lines:
+        lines.extend(page_visual_lines)
+        lines.append("")
+
+    if page.text_blocks:
+        lines.extend(_render_text_blocks(page, source_display=source_display, note_style=note_style))
+        lines.append("")
+
+    for table in page.tables:
+        lines.extend(_render_table(page, table, source_display=source_display))
+        lines.append("")
+
+    for image in sorted_images_by_importance(page.images):
+        if image.ignored:
+            continue
+        lines.extend(_render_image(page, image, asset_map=asset_map, source_display=source_display))
+        lines.append("")
+
+    visible_images = [image for image in page.images if not image.ignored]
+    if not page.text_blocks and not page.tables and not visible_images and not page_visual_lines:
+        lines.append(f"PPT 第 {page.slide_id} 页没有解析到可写入的文本、表格或嵌入图片。")
+        lines.append("")
+
+    if page.notes:
+        lines.append(f"讲者备注：{page.notes}")
+        lines.append(_source_marker(page.slide_id, [f"p{page.slide_id}_notes"], source_display))
+        lines.append("")
+
+    for warning in page.warnings:
+        lines.append(f"> 提醒：{warning}")
+        lines.append("")
+    return lines
 
 
 def _render_text_blocks(page: SlidePage, source_display: str, note_style: str) -> list[str]:
@@ -483,7 +519,6 @@ def _generate_notes_with_llm(
 
     contexts = _select_note_contexts(deck, note_context, section_plan=section_plan)
     resolved_note_context = _resolved_context_mode(deck, note_context)
-    lines = [f"# {Path(deck.source_path).stem}", ""]
     refresh_ids = refresh_slide_ids or set()
     workers = max(1, int(concurrency or 1))
     context_results: dict[str, tuple[str, dict[str, Any]]] = {}
@@ -530,16 +565,11 @@ def _generate_notes_with_llm(
                     progress_callback(context_record)
 
     usage_contexts: list[dict[str, Any]] = []
+    final_chunks: dict[str, str] = {}
     for context in contexts:
         content, context_record = context_results[context.id]
         usage_contexts.append(context_record)
-        lines.append(content)
-        lines.append("")
-
-    if deck.warnings:
-        lines.append("## 解析提醒")
-        lines.extend(f"- {warning}" for warning in deck.warnings)
-        lines.append("")
+        final_chunks[context.id] = content
 
     usage_report = _build_usage_report(
         deck=deck,
@@ -564,8 +594,14 @@ def _generate_notes_with_llm(
         asset_mode=asset_mode,
         screenshot_policy=screenshot_policy,
     )
-    lines.extend(_render_generation_info(usage_report))
-    return NoteGenerationResult(markdown="\n".join(lines).rstrip() + "\n", llm_usage=usage_report)
+    markdown = _compose_final_markdown(
+        deck=deck,
+        contexts=contexts,
+        final_chunks=final_chunks,
+        section_plan=section_plan,
+        source_display=source_display,
+    )
+    return NoteGenerationResult(markdown=markdown, llm_usage=usage_report)
 
 
 def _generate_notes_with_lecture_weave(
@@ -699,20 +735,12 @@ def _generate_notes_with_lecture_weave(
                 if progress_callback:
                     progress_callback(record)
 
-    lines = [f"# {Path(deck.source_path).stem}", ""]
     weave_records: list[dict[str, Any]] = []
     final_chunks: dict[str, str] = {}
     for context in weave_contexts:
         content, record = weave_results[context.id]
         final_chunks[context.id] = content
         weave_records.append(record)
-        lines.append(content)
-        lines.append("")
-
-    if deck.warnings:
-        lines.append("## 解析提醒")
-        lines.extend(f"- {warning}" for warning in deck.warnings)
-        lines.append("")
 
     all_context_records = page_records + weave_records
     usage_report = _build_usage_report(
@@ -740,8 +768,13 @@ def _generate_notes_with_lecture_weave(
         page_contexts=page_records,
         weave_contexts=weave_records,
     )
-    lines.extend(_render_generation_info(usage_report))
-    markdown = "\n".join(lines).rstrip() + "\n"
+    markdown = _compose_final_markdown(
+        deck=deck,
+        contexts=weave_contexts,
+        final_chunks=final_chunks,
+        section_plan=section_plan,
+        source_display=source_display,
+    )
     page_notes = _build_page_notes_report(
         deck=deck,
         provider=provider,
@@ -776,6 +809,219 @@ def _generate_notes_with_lecture_weave(
         page_notes_markdown=_render_page_notes_markdown(deck, page_notes),
         weave_report=weave_report,
     )
+
+
+def _compose_final_markdown(
+    deck: Deck,
+    contexts: list[NoteContext],
+    final_chunks: dict[str, str],
+    section_plan: dict[str, Any] | None,
+    source_display: str,
+) -> str:
+    del source_display
+    lines = [f"# {_document_title(deck)}", ""]
+    add_context_headings = _should_add_context_headings(contexts)
+    section_number = 1
+    for context in contexts:
+        content = final_chunks.get(context.id, "").strip()
+        if not content:
+            continue
+        if add_context_headings:
+            heading_title = _context_heading_title(context, section_plan)
+            if _is_frontmatter_heading(heading_title, context) and len(contexts) > 1:
+                content = _prepare_context_chunk(content, heading_title, add_outer_heading=False)
+            else:
+                lines.append(_context_heading(context, heading_title, section_number))
+                lines.append("")
+                section_number += 1
+                content = _prepare_context_chunk(content, heading_title, add_outer_heading=True)
+        else:
+            content = _prepare_context_chunk(content, context.title, add_outer_heading=False)
+        if content:
+            lines.append(content)
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _document_title(deck: Deck) -> str:
+    stem = Path(deck.source_path).stem
+    for page in deck.pages[:3]:
+        title = (page.title or "").strip()
+        if title and not _is_generic_heading_text(title):
+            return f"{stem}：{title}" if title != stem else stem
+    return stem
+
+
+def _should_add_context_headings(contexts: list[NoteContext]) -> bool:
+    if not contexts:
+        return False
+    if len(contexts) > 1:
+        return True
+    return contexts[0].kind == "section"
+
+
+def _context_heading(context: NoteContext, title: str, section_number: int) -> str:
+    if context.kind == "page":
+        slide_id = context.pages[0].slide_id if context.pages else section_number
+        return f"## 第 {slide_id} 页：{title}"
+    return f"## {_chinese_ordinal(section_number)}、{title}"
+
+
+def _context_heading_title(context: NoteContext, section_plan: dict[str, Any] | None) -> str:
+    planned_title = _planned_context_title(context, section_plan)
+    title = planned_title or context.title or ""
+    title = _clean_heading_text(title)
+    if title:
+        return title
+    if context.kind == "page" and context.pages:
+        return context.pages[0].title or f"第 {context.pages[0].slide_id} 页"
+    return "本节内容"
+
+
+def _planned_context_title(context: NoteContext, section_plan: dict[str, Any] | None) -> str | None:
+    if not section_plan:
+        return None
+    sections = section_plan.get("sections")
+    if not isinstance(sections, list):
+        return None
+    slide_ids = [page.slide_id for page in context.pages]
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        if section.get("section_id") == context.id or section.get("slide_ids") == slide_ids:
+            title = str(section.get("title") or "").strip()
+            return title or None
+    return None
+
+
+def _prepare_context_chunk(markdown: str, context_title: str, add_outer_heading: bool) -> str:
+    text = _remove_generation_info_sections(markdown)
+    text = _drop_redundant_leading_headings(text, context_title) if add_outer_heading else text
+    text = _demote_chunk_headings(text, minimum_level=3 if add_outer_heading else 2)
+    text = _remove_empty_sections(text)
+    return text.strip()
+
+
+def _drop_redundant_leading_headings(markdown: str, context_title: str) -> str:
+    lines = markdown.splitlines()
+    while True:
+        first_index = next((index for index, line in enumerate(lines) if line.strip()), None)
+        if first_index is None:
+            return ""
+        match = re.match(r"^(#{1,6})\s+(.*)$", lines[first_index].strip())
+        if not match:
+            return "\n".join(lines).strip()
+        heading_text = _clean_heading_text(match.group(2))
+        if not _is_redundant_context_heading(heading_text, context_title):
+            return "\n".join(lines).strip()
+        del lines[first_index]
+        while first_index < len(lines) and not lines[first_index].strip():
+            del lines[first_index]
+
+
+def _is_redundant_context_heading(heading_text: str, context_title: str) -> bool:
+    heading_norm = _normalize_title_key(heading_text)
+    context_norm = _normalize_title_key(context_title)
+    if not heading_norm:
+        return True
+    if _is_generic_heading_text(heading_text):
+        return True
+    return bool(context_norm and (heading_norm == context_norm or heading_norm in context_norm or context_norm in heading_norm))
+
+
+def _demote_chunk_headings(markdown: str, minimum_level: int) -> str:
+    lines: list[str] = []
+    for line in markdown.splitlines():
+        match = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if not match:
+            lines.append(line)
+            continue
+        text = _clean_heading_text(match.group(2))
+        if not text or _is_generic_heading_text(text):
+            continue
+        level = max(minimum_level, len(match.group(1)))
+        lines.append("#" * min(level, 6) + " " + text)
+    return "\n".join(lines)
+
+
+def _remove_generation_info_sections(markdown: str) -> str:
+    lines = markdown.splitlines()
+    kept: list[str] = []
+    skipping = False
+    skip_level = 0
+    for line in lines:
+        match = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if match:
+            level = len(match.group(1))
+            heading = _normalize_title_key(match.group(2))
+            if heading in {"生成信息", "generationinfo", "generationmetadata"}:
+                skipping = True
+                skip_level = level
+                continue
+            if skipping and level <= skip_level:
+                skipping = False
+        if not skipping:
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def _remove_empty_sections(markdown: str) -> str:
+    lines = markdown.splitlines()
+    cleaned: list[str] = []
+    previous_blank = False
+    for line in lines:
+        blank = not line.strip()
+        if blank and previous_blank:
+            continue
+        cleaned.append(line)
+        previous_blank = blank
+    return "\n".join(cleaned).strip()
+
+
+def _clean_heading_text(value: str) -> str:
+    text = re.sub(r"<!--.*?-->", "", value).strip()
+    text = re.sub(r"^课程笔记[：:\s-]*", "", text).strip()
+    text = re.sub(r"^\s*[（(]?\s*(?:\d+|[一二三四五六七八九十]+)\s*[)）.、]\s*", "", text).strip()
+    return text.strip("：: -")
+
+
+def _normalize_title_key(value: str) -> str:
+    return re.sub(r"[\s:：,，.。;；、\-—_（）()《》<>]+", "", _clean_heading_text(value)).lower()
+
+
+def _is_generic_heading_text(value: str) -> bool:
+    normalized = _normalize_title_key(value)
+    return normalized in {
+        "",
+        "课程笔记",
+        "笔记",
+        "讲义",
+        "生成信息",
+        "解析提醒",
+        "目录",
+        "contents",
+        "overview",
+    }
+
+
+def _is_frontmatter_heading(title: str, context: NoteContext) -> bool:
+    normalized = _normalize_title_key(title)
+    if normalized in {"目录", "contents", "课程概览", "overview"}:
+        return True
+    if len(context.pages) <= 2 and all(_normalize_title_key(page.title or "") in {"目录", "contents"} for page in context.pages):
+        return True
+    return False
+
+
+def _chinese_ordinal(index: int) -> str:
+    numerals = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"]
+    if 1 <= index <= 10:
+        return numerals[index - 1]
+    if 11 <= index <= 19:
+        return "十" + numerals[index - 11]
+    if index == 20:
+        return "二十"
+    return str(index)
 
 
 def _generate_llm_context(
@@ -1203,6 +1449,7 @@ def _llm_context_prompt(
     term_rule = _term_policy_prompt_rule(note_language, term_policy)
     image_rule = (
         "图片必须用真正的 Markdown 图片语法插入，不能放进反引号。"
+        "图片 alt 文本不能为空，应用简短文字说明图片主题。"
         "如果 JSON 里有 ocr_text、visual_summary、page_ocr_text 或 page_visual_summary，要把它们和相关概念合并讲解。"
         "如果没有视觉摘要，不要写“未提供图片像素”“无法视觉解析”“建议查看原 PPT”等说明；只插入图片，不猜测图片内容。"
     )
@@ -1221,7 +1468,8 @@ def _llm_context_prompt(
         "2. 允许删去纯页码、重复表格壳、装饰性元素和无意义说明。\n"
         f"3. {source_rule}\n"
         f"4. {image_rule}\n"
-        f"5. {banned_rule}\n\n"
+        f"5. {banned_rule}\n"
+        "6. 外层章节标题由系统统一添加；如果需要小标题，只使用 ### 或更低级标题。\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
@@ -1270,7 +1518,8 @@ def _llm_page_lecture_prompt(
         "2. 不要写“这一页展示了若干 bullet”这种空话，要直接解释这些 bullet 在课程中的含义。\n"
         "3. 对没有视觉摘要的图片，只插入图片，不猜测、不道歉、不说无法解析。\n"
         f"4. {source_rule}\n"
-        "5. 只能使用 ## 或更低级标题，严禁输出“好的，这是”“根据 JSON”“课程笔记已严格遵循”等元叙述。\n\n"
+        "5. 图片 alt 文本不能为空，应用简短文字说明图片主题。\n"
+        "6. 只能使用 ### 或更低级标题，严禁输出“好的，这是”“根据 JSON”“课程笔记已严格遵循”等元叙述。\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
@@ -1320,9 +1569,9 @@ def _llm_weave_prompt(
         "硬性要求：\n"
         "1. 保留 page_notes 中已经写出的图片 Markdown 和隐藏来源标记。\n"
         "2. 可以调整顺序、合并段落、补连接句，但必须保留每页独有的知识点。\n"
-        "3. 章节标题只能使用 ## 或 ###，不要输出全文 H1，也不要用“课程笔记”当标题。\n"
+        "3. 外层章节标题由系统统一添加；正文小标题只能使用 ### 或更低级标题，不要输出全文 H1，也不要用“课程笔记”当标题。\n"
         f"4. {source_rule}\n"
-        "5. 严禁输出“好的，这是”“根据 JSON”“笔记已严格遵循”“无法视觉解析”等元叙述。\n\n"
+        "5. 图片 alt 文本不能为空；严禁输出“好的，这是”“根据 JSON”“笔记已严格遵循”“无法视觉解析”等元叙述。\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
@@ -1925,7 +2174,7 @@ def _section_boundaries(deck: Deck) -> list[int]:
             continue
         if any(title == outline or title in outline or outline in title for outline in outline_titles):
             boundaries.append(page.slide_id)
-        elif _looks_like_section_title_page(page):
+        elif not outline_titles and _looks_like_section_title_page(page):
             boundaries.append(page.slide_id)
     return sorted(set(boundaries))
 
@@ -1938,7 +2187,7 @@ def _outline_titles(deck: Deck) -> set[str]:
             continue
         for line in page_text.splitlines():
             normalized = _normalize_heading_text(line)
-            if not normalized or normalized in {"目录", "contents"}:
+            if not normalized or normalized.lower() in {"目录", "contents"}:
                 continue
             if len(normalized) >= 4:
                 titles.add(normalized)
@@ -1946,7 +2195,7 @@ def _outline_titles(deck: Deck) -> set[str]:
 
 
 def _normalize_heading_text(value: str) -> str:
-    value = re.sub(r"^\s*[\d一二三四五六七八九十]+[.、\s-]*", "", value.strip())
+    value = re.sub(r"^\s*(?:\d+|[一二三四五六七八九十]+)(?:[.、\s-]+)", "", value.strip())
     return re.sub(r"\s+", "", value).strip("：:")
 
 
@@ -1971,6 +2220,7 @@ def _context_title(pages: list[SlidePage], index: int) -> str:
 
 def _postprocess_llm_markdown(markdown: str, source_display: str) -> str:
     text = _unwrap_code_images(markdown)
+    text = _fill_empty_image_alts(text)
     text = _remove_meta_paragraphs(text)
     text = _normalize_chunk_headings(text)
     text = _convert_visible_sources(text, source_display)
@@ -1979,6 +2229,10 @@ def _postprocess_llm_markdown(markdown: str, source_display: str) -> str:
 
 def _unwrap_code_images(markdown: str) -> str:
     return re.sub(r"`(!\[[^\]]*]\([^)]+\))`", r"\1", markdown)
+
+
+def _fill_empty_image_alts(markdown: str) -> str:
+    return re.sub(r"!\[\s*]\(", "![图示](", markdown)
 
 
 def _remove_meta_paragraphs(markdown: str) -> str:
