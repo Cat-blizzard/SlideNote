@@ -344,15 +344,15 @@ Note: `--refresh-pages` currently means "bypass local cache for these slides", n
 
 ## Note Rendering Options
 
-The default output favors readable article-style notes. Source element IDs are hidden from the visible body, and images without OCR/vision summaries are inserted without noisy "image not parsed" explanations:
+The default output is a detailed lecture-style study note: it is organized by concepts instead of slide-by-slide translation, while keeping depth for definitions, formulas, examples, conditions, and figure/table conclusions. Source element IDs are hidden from the visible body, and images without OCR/vision summaries are inserted without noisy "image not parsed" explanations:
 
 ```powershell
---note-style article       # Default: rewrite bullets into readable prose
+--note-style article       # Default: organize as study notes, not a summary
 --source-display hidden    # Default: store source refs in HTML comments and source_map.json
 --asset-mode bundle        # Default: copy images into notes.assets/
 --note-context section     # Default: weave notes by section
 --note-strategy lecture-weave  # Default: explain each page, then weave sections
---note-depth detailed      # Default: favor detailed page explanations
+--note-depth detailed      # Default: detailed lecture-note depth
 --deck-brief auto          # Default: build a global map before Lecture-Weave only
 --note-language zh         # Default: write Simplified Chinese notes
 --term-policy bilingual    # Default: preserve key English academic terms in Chinese notes

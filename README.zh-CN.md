@@ -345,15 +345,15 @@ python -m slidenote build lecture.pdf `
 
 ## 笔记呈现选项
 
-默认输出更偏“可直接阅读的文章式笔记”，不会在正文里反复显示元素 ID，也不会为没有视觉解析的图片写大段说明：
+默认输出是“详细讲义式学习笔记”：按知识点组织，而不是逐页翻译 PPT；同时保留定义、公式、例子、条件和图表结论的讲解深度。正文不会反复显示元素 ID，也不会为没有视觉解析的图片写大段说明：
 
 ```powershell
---note-style article       # 默认：把 bullet 改写成较连贯的笔记
+--note-style article       # 默认：按知识点组织学习笔记，不等于摘要
 --source-display hidden    # 默认：来源写入 HTML 隐藏注释和 source_map.json
 --asset-mode bundle        # 默认：图片复制到 notes.assets/
 --note-context section     # 默认：按章节/分组编织最终笔记
 --note-strategy lecture-weave  # 默认：先逐页深讲，再章节编织
---note-depth detailed      # 默认：尽量保留逐页讲解细节
+--note-depth detailed      # 默认：详细讲义式讲解深度
 --deck-brief auto          # 默认：只在 Lecture-Weave 高质量模式下生成全局脉络
 --note-language zh         # 默认：输出简体中文笔记
 --term-policy bilingual    # 默认：中文笔记中保留关键英文专业术语

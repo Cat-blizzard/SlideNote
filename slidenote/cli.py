@@ -97,7 +97,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--note-style",
         choices=["article", "faithful"],
         default="article",
-        help="Article mode favors fluent notes; faithful mode keeps closer slide order.",
+        help="Article mode is the default study-note organization; faithful mode keeps closer slide order.",
     )
     build.add_argument(
         "--note-language",
@@ -121,7 +121,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--note-depth",
         choices=["concise", "balanced", "detailed"],
         default="detailed",
-        help="Detail level for LLM note writing. detailed is best for lecture-weave quality mode.",
+        help="Detail level for LLM note writing. detailed is the default lecture-note depth.",
     )
     build.add_argument(
         "--weave-dedup",

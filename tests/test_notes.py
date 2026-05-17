@@ -275,6 +275,7 @@ def test_llm_generation_uses_local_cache(tmp_path, monkeypatch):
             )
         ],
     )
+    prompts = []
 
     class FakeClient:
         supports_image_input = False
@@ -283,6 +284,8 @@ def test_llm_generation_uses_local_cache(tmp_path, monkeypatch):
             pass
 
         def generate_with_usage(self, prompt):
+            prompts.append(prompt)
+
             class Result:
                 text = "好的，这是根据您提供的 JSON 生成的课程笔记。\n\n# 课程笔记：Transport\n\nTCP 是传输层协议。\n【对应 PPT：第 1 页，文本块 s1_t1】\n\n`![图](notes.assets/images/a.png)`"
                 usage = {"input_tokens": 10, "output_tokens": 8, "total_tokens": 18}
@@ -302,6 +305,7 @@ def test_llm_generation_uses_local_cache(tmp_path, monkeypatch):
     )
     assert first.llm_usage["pages"][0]["cache_status"] == "miss"
     assert first.llm_usage["summary"]["llm_calls"] == 1
+    assert "详细讲义式学习笔记" in prompts[0]
     assert "好的，这是" not in first.markdown
     assert "# 课程笔记" not in first.markdown
     assert "【对应 PPT" not in first.markdown
@@ -365,7 +369,7 @@ def test_article_prompt_prefers_study_notes_over_slide_translation():
         asset_map={},
         source_display="hidden",
         note_style="article",
-        note_depth="balanced",
+        note_depth="detailed",
         note_language="zh",
         term_policy="bilingual",
         page_neighborhood=1,
@@ -377,6 +381,9 @@ def test_article_prompt_prefers_study_notes_over_slide_translation():
 
     assert "像学生课后笔记一样" in prompt
     assert "不要逐字段翻译 PPT" in prompt
+    assert "article 不是摘要模式" in prompt
+    assert "详细讲义式学习笔记" in prompt
+    assert "不降低讲解深度" in prompt
     assert "封面" in prompt
     assert "目录" in prompt
     assert "只保留该页所有元素的来源标记" in prompt

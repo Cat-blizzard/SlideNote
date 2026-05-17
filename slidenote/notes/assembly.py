@@ -987,7 +987,7 @@ def _build_page_notes_report(
         "provider": provider,
         "model": model,
         "base_url": base_url,
-        "prompt_version": "page-lecture-v3",
+        "prompt_version": "page-lecture-v4",
         "request": {
             "note_depth": note_depth,
             "note_language": note_language,
@@ -1077,7 +1077,7 @@ def _build_weave_report(
         "generated_at": utc_now_iso(),
         "source_path": deck.source_path,
         "source_type": deck.source_type,
-        "prompt_version": "weave-v3",
+        "prompt_version": "weave-v4",
         "request": {
             "note_context": note_context,
             "note_depth": note_depth,

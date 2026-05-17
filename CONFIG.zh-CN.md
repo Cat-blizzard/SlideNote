@@ -85,8 +85,8 @@ python -m slidenote build lecture.pdf `
 | `--temperature` | 不传 | 数值 | 不传时由服务商默认处理。 |
 | `--note-strategy` | `lecture-weave` | `direct` / `lecture-weave` | `lecture-weave` 会先逐页深讲，再章节编织。 |
 | `--note-context` | `section` | `auto` / `document` / `section` / `page` | 直接生成或编织阶段的一次上下文粒度。 |
-| `--note-style` | `article` | `article` / `faithful` | 文章式改写或更贴近原顺序。 |
-| `--note-depth` | `detailed` | `concise` / `balanced` / `detailed` | 笔记详细程度。 |
+| `--note-style` | `article` | `article` / `faithful` | 默认按知识点组织学习笔记；`faithful` 更贴近原顺序。 |
+| `--note-depth` | `detailed` | `concise` / `balanced` / `detailed` | 默认详细讲义式讲解深度。 |
 | `--deck-brief` | `auto` | `auto` / `off` / `force` | 是否在笔记生成前先生成全局课程脉络。`auto` 只在 `--use-llm --note-strategy lecture-weave` 时运行。 |
 | `--note-language` | `zh` | `auto` / `zh` / `en` | 笔记输出语言；可让英文课件生成中文笔记。 |
 | `--term-policy` | `bilingual` | `preserve` / `translate` / `bilingual` | 专业术语处理方式；中文笔记默认保留关键英文术语。 |

@@ -27,9 +27,9 @@ from .prompts import (
 )
 
 
-NOTE_PROMPT_VERSION = "note-context-v3"
-PAGE_LECTURE_PROMPT_VERSION = "page-lecture-v3"
-WEAVE_PROMPT_VERSION = "weave-v3"
+NOTE_PROMPT_VERSION = "note-context-v4"
+PAGE_LECTURE_PROMPT_VERSION = "page-lecture-v4"
+WEAVE_PROMPT_VERSION = "weave-v4"
 
 
 def _generate_notes_with_llm(
@@ -130,6 +130,7 @@ def _generate_notes_with_llm(
             source_display=source_display,
             note_context=resolved_note_context,
             note_style=note_style,
+            note_depth=note_depth,
             note_language=note_language,
             term_policy=term_policy,
             screenshot_policy=screenshot_policy,
@@ -443,6 +444,7 @@ def _generate_llm_context(
     source_display: str,
     note_context: str,
     note_style: str,
+    note_depth: str,
     note_language: str,
     term_policy: str,
     screenshot_policy: str,
@@ -458,6 +460,7 @@ def _generate_llm_context(
         source_display=source_display,
         note_context=note_context,
         note_style=note_style,
+        note_depth=note_depth,
         note_language=note_language,
         term_policy=term_policy,
         screenshot_policy=screenshot_policy,
@@ -478,6 +481,7 @@ def _generate_llm_context(
         "source_display": source_display,
         "note_context": note_context,
         "note_style": note_style,
+        "note_depth": note_depth,
         "note_language": note_language,
         "term_policy": term_policy,
         "screenshot_policy": screenshot_policy,

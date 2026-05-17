@@ -24,6 +24,7 @@ def _llm_page_prompt(page: SlidePage, supports_image_input: bool = False) -> str
         source_display="hidden",
         note_context="page",
         note_style="article",
+        note_depth="detailed",
         note_language="zh",
         term_policy="bilingual",
         screenshot_policy="fallback",
@@ -39,6 +40,7 @@ def _llm_context_prompt(
     source_display: str,
     note_context: str,
     note_style: str,
+    note_depth: str,
     note_language: str,
     term_policy: str,
     screenshot_policy: str,
@@ -81,6 +83,11 @@ def _llm_context_prompt(
         if note_style == "article"
         else "\u91c7\u7528\u4fdd\u771f\u98ce\u683c\uff1a\u5c3d\u91cf\u4fdd\u6301\u539f\u59cb\u6761\u76ee\u987a\u5e8f\u548c\u5173\u952e\u7ec6\u8282\uff0c\u4f46\u4ecd\u8981\u5199\u6210\u53ef\u8bfb\u7684\u8bb2\u89e3\uff0c\u4e0d\u8981\u8f93\u51fa\u5143\u53d9\u8ff0\u6216 PPT \u9875\u9762\u6784\u6210\u8bf4\u660e\u3002"
     )
+    style_depth_rule = (
+        "\u91cd\u8981\uff1aarticle \u4e0d\u662f\u6458\u8981\u6a21\u5f0f\uff0c\u53ea\u6539\u53d8\u7ec4\u7ec7\u65b9\u5f0f\uff0c\u4e0d\u964d\u4f4e\u8bb2\u89e3\u6df1\u5ea6\uff1b\u5f53 note_depth=detailed \u65f6\uff0c\u9ed8\u8ba4\u5199\u6210\u8be6\u7ec6\u8bb2\u4e49\u5f0f\u5b66\u4e60\u7b14\u8bb0\uff0c\u4e0d\u8981\u628a\u6982\u5ff5\u3001\u516c\u5f0f\u3001\u4f8b\u5b50\u3001\u6761\u4ef6\u6216\u56fe\u8868\u7ed3\u8bba\u538b\u6210\u4e00\u53e5\u8bdd\u3002"
+        if note_style == "article"
+        else "\u91cd\u8981\uff1afaithful \u4f18\u5148\u4fdd\u7559 PPT \u987a\u5e8f\uff1b\u8bb2\u89e3\u8be6\u7ec6\u7a0b\u5ea6\u4ecd\u7531 note_depth \u63a7\u5236\u3002"
+    )
     structural_rule = (
         "\u5c01\u9762\u3001\u76ee\u5f55\u3001\u7ae0\u8282\u5bfc\u822a\u3001\u8bb2\u5e08\u4fe1\u606f\u3001\u8054\u7cfb\u65b9\u5f0f\u548c\u7eaf\u7248\u5f0f\u5143\u7d20\u4e0d\u8981\u5c55\u5f00\u6210\u6b63\u6587\uff1b"
         "\u8fd9\u4e9b\u5143\u7d20\u9700\u8986\u76d6\u65f6\uff0c\u53ea\u4fdd\u7559\u9690\u85cf\u6765\u6e90\u6807\u8bb0\uff0c\u6216\u628a\u5fc5\u8981\u80cc\u666f\u81ea\u7136\u5e76\u5165\u540e\u7eed\u77e5\u8bc6\u6bb5\u843d\u3002"
@@ -89,6 +96,7 @@ def _llm_context_prompt(
     )
     language_rule = _language_prompt_rule(note_language)
     term_rule = _term_policy_prompt_rule(note_language, term_policy)
+    depth_rule = _note_depth_rule(note_depth)
     image_rule = (
         "\u56fe\u7247\u5fc5\u987b\u7528\u771f\u6b63\u7684 Markdown \u56fe\u7247\u8bed\u6cd5\u63d2\u5165\uff0c\u4e0d\u80fd\u653e\u8fdb\u53cd\u5f15\u53f7\u3002"
         "\u56fe\u7247 alt \u6587\u672c\u4e0d\u80fd\u4e3a\u7a7a\uff0c\u5e94\u7528\u7b80\u77ed\u6587\u5b57\u8bf4\u660e\u56fe\u7247\u4e3b\u9898\u3002"
@@ -106,9 +114,11 @@ def _llm_context_prompt(
         "If deck_brief is present, use it only as a global navigation map; it must not replace page evidence.\n"
         f"{context_rule}\n"
         f"{style_rule}\n"
+        f"{style_depth_rule}\n"
         f"{structural_rule}\n"
         f"{language_rule}\n"
         f"{term_rule}\n"
+        f"{depth_rule}\n"
         "\u786c\u6027\u8981\u6c42\uff1a\n"
         "1. \u5148\u5224\u65ad\u54ea\u4e9b\u662f\u5b66\u751f\u771f\u6b63\u9700\u8981\u7406\u89e3\u7684\u77e5\u8bc6\u70b9\uff0c\u518d\u8bb2\u6e05\u5b83\u4eec\u7684\u542b\u4e49\u3001\u56e0\u679c\u3001\u4f8b\u5b50\u3001\u516c\u5f0f\u548c\u56fe\u8868\u7ed3\u8bba\u3002\n"
         "2. \u5408\u5e76\u91cd\u590d bullet\u3001\u8868\u683c\u58f3\u3001OCR \u91cd\u590d\u6587\u672c\u548c\u9875\u9762\u5b57\u6bb5\uff1b\u4e0d\u8981\u628a PPT \u5b57\u6bb5\u987a\u5e8f\u6539\u5199\u6210\u4e00\u4e32\u7ffb\u8bd1\u3002\n"
@@ -159,6 +169,11 @@ def _llm_page_lecture_prompt(
         if note_style == "article"
         else "\u8bf7\u5c3d\u91cf\u4fdd\u7559 current_page \u539f\u59cb\u6761\u76ee\u987a\u5e8f\uff0c\u4f46\u4ecd\u8981\u5199\u6210\u53ef\u4ee5\u76f4\u63a5\u9605\u8bfb\u7684\u77e5\u8bc6\u70b9\u8bb2\u89e3\uff0c\u800c\u4e0d\u662f\u590d\u5236\u6e05\u5355\u6216\u63cf\u8ff0\u9875\u9762\u6784\u6210\u3002"
     )
+    style_depth_rule = (
+        "\u91cd\u8981\uff1aarticle \u4e0d\u662f\u6458\u8981\u6a21\u5f0f\uff0c\u53ea\u6539\u53d8\u7ec4\u7ec7\u65b9\u5f0f\uff0c\u4e0d\u964d\u4f4e\u8bb2\u89e3\u6df1\u5ea6\uff1b\u5f53 note_depth=detailed \u65f6\uff0c\u9ed8\u8ba4\u5199\u6210\u8be6\u7ec6\u8bb2\u4e49\u5f0f\u5b66\u4e60\u7b14\u8bb0\uff0c\u4e0d\u8981\u628a\u6982\u5ff5\u3001\u516c\u5f0f\u3001\u4f8b\u5b50\u3001\u6761\u4ef6\u6216\u56fe\u8868\u7ed3\u8bba\u538b\u6210\u4e00\u53e5\u8bdd\u3002"
+        if note_style == "article"
+        else "\u91cd\u8981\uff1afaithful \u4f18\u5148\u4fdd\u7559 PPT \u987a\u5e8f\uff1b\u8bb2\u89e3\u8be6\u7ec6\u7a0b\u5ea6\u4ecd\u7531 note_depth \u63a7\u5236\u3002"
+    )
     structural_rule = (
         "\u5982\u679c current_page \u4e3b\u8981\u662f\u5c01\u9762\u3001\u76ee\u5f55\u3001\u7ae0\u8282\u5bfc\u822a\u3001\u8bb2\u5e08/\u8054\u7cfb\u65b9\u5f0f\u6216\u5176\u4ed6\u975e\u5b66\u4e60\u5185\u5bb9\uff0c"
         "\u4e0d\u8981\u5199\u6210\u6b63\u6587\u89e3\u8bf4\uff1b\u53ea\u4fdd\u7559\u8be5\u9875\u6240\u6709\u5143\u7d20\u7684\u6765\u6e90\u6807\u8bb0\uff0c\u4f9b\u6700\u7ec8\u7b14\u8bb0\u6eaf\u6e90\u4f7f\u7528\u3002"
@@ -170,6 +185,7 @@ def _llm_page_lecture_prompt(
         "nearby_pages \u53ea\u7528\u4e8e\u7406\u89e3\u524d\u540e\u903b\u8f91\u548c\u51cf\u5c11\u91cd\u590d\uff0c\u4e0d\u80fd\u628a\u90bb\u8fd1\u9875\u5185\u5bb9\u5f53\u4f5c current_page \u7684\u5185\u5bb9\u5c55\u5f00\u3002\n"
         "If deck_brief is present, it is only a navigation map: current_page is the only source for the body; do not omit current_page elements because of the brief; do not pull later-page content into this page.\n"
         f"{style_rule}\n"
+        f"{style_depth_rule}\n"
         f"{structural_rule}\n"
         f"{language_rule}\n"
         f"{term_rule}\n"

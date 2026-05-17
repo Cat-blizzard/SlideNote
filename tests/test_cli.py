@@ -130,6 +130,7 @@ def test_quality_first_defaults_are_exposed_by_parser():
     assert args.vision_provider == "qwen"
     assert args.note_strategy == "lecture-weave"
     assert args.note_context == "section"
+    assert args.note_style == "article"
     assert args.note_depth == "detailed"
     assert args.deck_brief == "auto"
     assert args.note_language == "zh"

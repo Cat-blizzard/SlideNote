@@ -27,7 +27,7 @@ SlideNote 当前的核心定位仍然是：
 - 支持 `notes.assets/` 图片资产目录，默认让 `notes.md` 使用便携相对图片路径。
 - 支持 `--note-context auto|document|section|page`，短材料整份生成，长材料按章节/分组生成，逐页模式保留为调试选项。
 - 支持 `--source-display hidden|footnote|inline`，默认隐藏正文来源但保留覆盖率和溯源。
-- 支持 `--note-style article|faithful`，默认更偏文章式课程笔记。
+- 支持 `--note-style article|faithful` 和 `--note-depth detailed`，默认生成详细讲义式学习笔记。
 - 支持基础局部图裁剪 `--figure-crop auto|vision|off`，可用视觉模型定位整页截图中的局部图并裁剪到 `figures/`。
 - 支持 `--screenshot-policy fallback|always|never`，默认有局部图/嵌入图时不在笔记里重复插入整页截图。
 - 支持基础图片学习价值排序 `--image-ranking local|off`，输出 `image_importance.json`，供视觉目标选择、笔记插图和未来 GUI 使用。
