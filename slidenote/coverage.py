@@ -12,34 +12,41 @@ class CoverageItem:
     id: str
     slide_id: int
     kind: str
-    covered: bool
+    trace_covered: bool
+    visible_covered: bool
     preview: str
+    structural: bool = False
+
+    @property
+    def covered(self) -> bool:
+        return self.trace_covered
+
+    @property
+    def marker_only(self) -> bool:
+        return self.trace_covered and not self.visible_covered
 
 
 def analyze_coverage(deck: Deck, notes_markdown: str) -> dict[str, object]:
     items = _collect_items(deck, notes_markdown)
-    total = len(items)
-    covered = sum(1 for item in items if item.covered)
-    missing = [item for item in items if not item.covered]
-    page_coverage = _page_coverage(deck, items)
+    trace_coverage = _coverage_totals(deck, items, coverage_attr="trace_covered")
+    visible_coverage = _coverage_totals(deck, items, coverage_attr="visible_covered", exclude_structural=True)
+    marker_only_items = [item for item in items if item.marker_only and not item.structural]
+    structural_marker_only_items = [item for item in items if item.marker_only and item.structural]
     figure_coverage = _figure_coverage(deck, notes_markdown)
     return {
-        "total": total,
-        "covered": covered,
-        "missing": len(missing),
-        "coverage_ratio": covered / total if total else 1.0,
-        "page_coverage": page_coverage,
+        "total": trace_coverage["total"],
+        "covered": trace_coverage["covered"],
+        "missing": trace_coverage["missing"],
+        "coverage_ratio": trace_coverage["coverage_ratio"],
+        "page_coverage": trace_coverage["page_coverage"],
+        "trace_coverage": trace_coverage,
+        "visible_coverage": visible_coverage,
+        "marker_only": len(marker_only_items),
+        "marker_only_items": [_item_record(item) for item in marker_only_items],
+        "structural_marker_only": len(structural_marker_only_items),
+        "structural_marker_only_items": [_item_record(item) for item in structural_marker_only_items],
         "figure_coverage": figure_coverage,
-        "items": [
-            {
-                "id": item.id,
-                "slide_id": item.slide_id,
-                "kind": item.kind,
-                "covered": item.covered,
-                "preview": item.preview,
-            }
-            for item in items
-        ],
+        "items": [_item_record(item) for item in items],
     }
 
 
@@ -48,13 +55,23 @@ def render_coverage_markdown(report: dict[str, object]) -> str:
     covered = int(report["covered"])
     missing = int(report["missing"])
     ratio = float(report["coverage_ratio"])
+    visible_coverage = report.get("visible_coverage") if isinstance(report.get("visible_coverage"), dict) else {}
+    visible_total = int(visible_coverage.get("total", 0)) if isinstance(visible_coverage, dict) else 0
+    visible_covered = int(visible_coverage.get("covered", 0)) if isinstance(visible_coverage, dict) else 0
+    visible_missing = int(visible_coverage.get("missing", 0)) if isinstance(visible_coverage, dict) else 0
+    visible_ratio = float(visible_coverage.get("coverage_ratio", 1.0)) if isinstance(visible_coverage, dict) else 1.0
+    marker_only = int(report.get("marker_only", 0))
+    structural_marker_only = int(report.get("structural_marker_only", 0))
     lines = [
         "# SlideNote 覆盖率报告",
         "",
         f"- 总元素数：{total}",
-        f"- 已覆盖：{covered}",
-        f"- 可能遗漏：{missing}",
-        f"- 覆盖率：{ratio:.1%}",
+        f"- 溯源覆盖：{covered} / {total}（{ratio:.1%}）",
+        f"- 溯源可能遗漏：{missing}",
+        f"- 正文解释覆盖：{visible_covered} / {visible_total}（{visible_ratio:.1%}）",
+        f"- 正文未显式解释：{visible_missing}",
+        f"- 仅溯源标记覆盖：{marker_only}",
+        f"- 结构页仅溯源标记覆盖：{structural_marker_only}",
     ]
     page_coverage = report.get("page_coverage")
     if isinstance(page_coverage, dict):
@@ -79,14 +96,21 @@ def render_coverage_markdown(report: dict[str, object]) -> str:
     lines.extend(
         [
             "",
-            "| 状态 | 页码 | 类型 | 元素 ID | 内容预览 |",
-            "| --- | --- | --- | --- | --- |",
+            "| 溯源 | 正文 | 范围 | 页码 | 类型 | 元素 ID | 内容预览 |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for item in report["items"]:
-        status = "已覆盖" if item["covered"] else "可能遗漏"
+        trace_status = "已覆盖" if item["trace_covered"] else "可能遗漏"
+        if item.get("structural"):
+            visible_status = "免查"
+            scope = "结构页"
+        else:
+            visible_status = "已解释" if item["visible_covered"] else "未显式"
+            scope = "内容页"
         lines.append(
-            f"| {status} | {item['slide_id']} | {item['kind']} | `{item['id']}` | {_escape_table(str(item['preview']))} |"
+            f"| {trace_status} | {visible_status} | {scope} | {item['slide_id']} | {item['kind']} | "
+            f"`{item['id']}` | {_escape_table(str(item['preview']))} |"
         )
     if isinstance(figure_coverage, dict) and figure_coverage.get("figures"):
         lines.extend(
@@ -111,13 +135,41 @@ def render_coverage_markdown(report: dict[str, object]) -> str:
 
 def _collect_items(deck: Deck, notes_markdown: str) -> list[CoverageItem]:
     items: list[CoverageItem] = []
-    tokens = set(re.findall(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", notes_markdown))
+    trace_tokens = _source_tokens(notes_markdown)
+    visible_tokens = _source_tokens(_strip_html_comments(notes_markdown))
+    structural_slide_ids = _structural_slide_ids(deck)
     for page in deck.pages:
-        items.extend(_page_items(page, tokens))
+        items.extend(
+            _page_items(
+                page,
+                trace_tokens=trace_tokens,
+                visible_tokens=visible_tokens,
+                structural=page.slide_id in structural_slide_ids,
+            )
+        )
     return items
 
 
-def _page_coverage(deck: Deck, items: list[CoverageItem]) -> dict[str, object]:
+def _coverage_totals(
+    deck: Deck,
+    items: list[CoverageItem],
+    coverage_attr: str,
+    exclude_structural: bool = False,
+) -> dict[str, object]:
+    scoped_items = [item for item in items if not (exclude_structural and item.structural)]
+    total = len(scoped_items)
+    covered = sum(1 for item in scoped_items if bool(getattr(item, coverage_attr)))
+    missing = [item for item in scoped_items if not bool(getattr(item, coverage_attr))]
+    return {
+        "total": total,
+        "covered": covered,
+        "missing": len(missing),
+        "coverage_ratio": covered / total if total else 1.0,
+        "page_coverage": _page_coverage(deck, scoped_items, coverage_attr=coverage_attr),
+    }
+
+
+def _page_coverage(deck: Deck, items: list[CoverageItem], coverage_attr: str = "trace_covered") -> dict[str, object]:
     items_by_slide: dict[int, list[CoverageItem]] = {}
     for item in items:
         items_by_slide.setdefault(item.slide_id, []).append(item)
@@ -128,7 +180,7 @@ def _page_coverage(deck: Deck, items: list[CoverageItem]) -> dict[str, object]:
     for page in deck.pages:
         page_items = items_by_slide.get(page.slide_id, [])
         expected = bool(page_items)
-        covered_count = sum(1 for item in page_items if item.covered)
+        covered_count = sum(1 for item in page_items if bool(getattr(item, coverage_attr)))
         if expected:
             pages_with_expected_content += 1
             if covered_count > 0:
@@ -155,7 +207,12 @@ def _page_coverage(deck: Deck, items: list[CoverageItem]) -> dict[str, object]:
     }
 
 
-def _page_items(page: SlidePage, tokens: set[str]) -> list[CoverageItem]:
+def _page_items(
+    page: SlidePage,
+    trace_tokens: set[str],
+    visible_tokens: set[str],
+    structural: bool = False,
+) -> list[CoverageItem]:
     items: list[CoverageItem] = []
     for block in page.text_blocks:
         items.append(
@@ -163,8 +220,10 @@ def _page_items(page: SlidePage, tokens: set[str]) -> list[CoverageItem]:
                 id=block.id,
                 slide_id=page.slide_id,
                 kind=f"text:{block.type}",
-                covered=block.id in tokens,
+                trace_covered=block.id in trace_tokens,
+                visible_covered=block.id in visible_tokens,
                 preview=_preview(block.content),
+                structural=structural,
             )
         )
     for table in page.tables:
@@ -174,8 +233,10 @@ def _page_items(page: SlidePage, tokens: set[str]) -> list[CoverageItem]:
                 id=table.id,
                 slide_id=page.slide_id,
                 kind="table",
-                covered=table.id in tokens,
+                trace_covered=table.id in trace_tokens,
+                visible_covered=table.id in visible_tokens,
                 preview=_preview(preview),
+                structural=structural,
             )
         )
     for image in page.images:
@@ -186,11 +247,108 @@ def _page_items(page: SlidePage, tokens: set[str]) -> list[CoverageItem]:
                 id=image.id,
                 slide_id=page.slide_id,
                 kind="image",
-                covered=image.id in tokens,
+                trace_covered=image.id in trace_tokens,
+                visible_covered=image.id in visible_tokens,
                 preview=image.caption or image.path,
+                structural=structural,
             )
         )
     return items
+
+
+def _item_record(item: CoverageItem) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "slide_id": item.slide_id,
+        "kind": item.kind,
+        "covered": item.covered,
+        "trace_covered": item.trace_covered,
+        "visible_covered": item.visible_covered,
+        "marker_only": item.marker_only,
+        "structural": item.structural,
+        "preview": item.preview,
+    }
+
+
+def _source_tokens(markdown: str) -> set[str]:
+    return set(re.findall(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", markdown))
+
+
+def _strip_html_comments(markdown: str) -> str:
+    return re.sub(r"<!--.*?-->", "", markdown, flags=re.DOTALL)
+
+
+def _structural_slide_ids(deck: Deck) -> set[int]:
+    return {
+        page.slide_id
+        for index, page in enumerate(deck.pages)
+        if _looks_like_structural_page(page, index)
+    }
+
+
+def _looks_like_structural_page(page: SlidePage, index: int) -> bool:
+    title = page.title or ""
+    text = "\n".join([title, *(block.content for block in page.text_blocks)])
+    normalized_title = _normalize_text_key(title)
+    normalized_text = _normalize_text_key(text)
+    if _has_structural_title(normalized_title):
+        return True
+    if index == 0 and any(marker in normalized_text for marker in _cover_markers()):
+        return True
+    if _has_standalone_structural_label(text):
+        return True
+    return _looks_like_outline_page(text)
+
+
+def _has_structural_title(normalized_title: str) -> bool:
+    exact_titles = {
+        "\u76ee\u5f55",
+        "\u8bfe\u7a0b\u76ee\u5f55",
+        "\u672c\u7ae0\u76ee\u5f55",
+        "\u7ae0\u8282\u5bfc\u822a",
+        "contents",
+        "outline",
+        "agenda",
+    }
+    return normalized_title in exact_titles
+
+
+def _has_standalone_structural_label(text: str) -> bool:
+    labels = {"\u76ee\u5f55", "\u8bfe\u7a0b\u76ee\u5f55", "\u672c\u7ae0\u76ee\u5f55", "\u7ae0\u8282\u5bfc\u822a", "contents", "outline"}
+    for line in text.splitlines()[:4]:
+        normalized = _normalize_text_key(line)
+        if normalized in labels:
+            return True
+    return False
+
+
+def _looks_like_outline_page(text: str) -> bool:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    numbered = [
+        line
+        for line in lines
+        if re.match(r"^\s*(?:\d+|[\u4e00\u4e8c\u4e09\u56db\u4e94])\s*[.\u3001\uff0e]", line)
+    ]
+    return len(numbered) >= 3 and sum(len(line) for line in numbered) <= 260
+
+
+def _cover_markers() -> set[str]:
+    return {
+        "\u8bb2\u5e08",
+        "\u6559\u5e08",
+        "\u6559\u6388",
+        "\u8054\u7cfb\u90ae\u7bb1",
+        "\u90ae\u7bb1",
+        "\u4e3b\u9875",
+        "email",
+        "homepage",
+        "http",
+        "www",
+    }
+
+
+def _normalize_text_key(value: str) -> str:
+    return re.sub(r"[\s:\uff1a,\uff0c.\u3002;\uff1b\u3001\-_\uff08\uff09()<>]+", "", value).lower()
 
 
 def _figure_coverage(deck: Deck, notes_markdown: str) -> dict[str, object]:

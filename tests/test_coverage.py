@@ -42,6 +42,52 @@ def test_coverage_reads_hidden_source_markers():
     assert report["missing"] == 0
 
 
+def test_coverage_distinguishes_trace_and_visible_ids():
+    deck = Deck(
+        source_path="demo.pptx",
+        source_type="pptx",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="replication")],
+            )
+        ],
+    )
+
+    report = analyze_coverage(deck, "Replication improves availability.\n<!-- slidenote-source: p1:s1_t1 -->")
+
+    assert report["missing"] == 0
+    assert report["trace_coverage"]["covered"] == 1
+    assert report["visible_coverage"]["covered"] == 0
+    assert report["visible_coverage"]["missing"] == 1
+    assert report["marker_only"] == 1
+    assert report["marker_only_items"][0]["id"] == "s1_t1"
+
+
+def test_structural_pages_are_exempt_from_visible_coverage():
+    deck = Deck(
+        source_path="demo.pptx",
+        source_type="pptx",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                title="目录",
+                text_blocks=[
+                    TextBlock(id="s1_t1", type="paragraph", content="1. 复制与一致性基础"),
+                    TextBlock(id="s1_t2", type="paragraph", content="2. 数据为中心的一致性模型"),
+                    TextBlock(id="s1_t3", type="paragraph", content="3. 客户端为中心的一致性模型"),
+                ],
+            )
+        ],
+    )
+
+    report = analyze_coverage(deck, "<!-- slidenote-source: p1:s1_t1,s1_t2,s1_t3 -->")
+
+    assert report["missing"] == 0
+    assert report["visible_coverage"]["total"] == 0
+    assert report["structural_marker_only"] == 3
+
+
 def test_coverage_tracks_figure_crop_ids():
     deck = Deck(
         source_path="demo.pptx",

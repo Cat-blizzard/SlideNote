@@ -337,6 +337,52 @@ def test_llm_prompt_uses_page_visual_summary():
     assert "三次握手" in prompt
 
 
+def test_article_prompt_prefers_study_notes_over_slide_translation():
+    from slidenote.notes.assembly import NoteContext
+    from slidenote.notes.prompts import _llm_page_lecture_prompt
+
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                title="目录",
+                text_blocks=[
+                    TextBlock(id="s1_t1", type="paragraph", content="1. 复制与一致性基础"),
+                    TextBlock(id="s1_t2", type="paragraph", content="2. 一致性模型"),
+                    TextBlock(id="s1_t3", type="paragraph", content="3. 一致性协议"),
+                ],
+            )
+        ],
+    )
+    context = NoteContext(id="p1", kind="page_note", title="目录", pages=deck.pages)
+
+    prompt = _llm_page_lecture_prompt(
+        deck=deck,
+        context=context,
+        supports_image_input=False,
+        asset_map={},
+        source_display="hidden",
+        note_style="article",
+        note_depth="balanced",
+        note_language="zh",
+        term_policy="bilingual",
+        page_neighborhood=1,
+        section_title=None,
+        screenshot_policy="fallback",
+        figure_placement="inline",
+        source_type="pdf",
+    )
+
+    assert "像学生课后笔记一样" in prompt
+    assert "不要逐字段翻译 PPT" in prompt
+    assert "封面" in prompt
+    assert "目录" in prompt
+    assert "只保留该页所有元素的来源标记" in prompt
+    assert "都要进入讲解" not in prompt
+
+
 def test_llm_auto_context_uses_document_for_short_deck(tmp_path, monkeypatch):
     deck = Deck(
         source_path="short.pdf",
@@ -742,6 +788,101 @@ def test_section_notes_hide_leading_frontmatter_and_number_subsections(tmp_path,
     assert "### 2. 并发对象访问：解决方案" in result.markdown
     assert "#### 2.1 方案 a：自处理方案" in result.markdown
     assert analyze_coverage(deck, result.markdown)["missing"] == 0
+
+
+def test_lecture_weave_article_style_compresses_structural_pages(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="ch06.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                title="分布式存储与计算",
+                text_blocks=[
+                    TextBlock(id="s1_t1", type="title", content="分布式存储与计算"),
+                    TextBlock(id="s1_t2", type="paragraph", content="王宏志教授 email@example.com"),
+                ],
+            ),
+            SlidePage(
+                slide_id=2,
+                title="目录",
+                text_blocks=[
+                    TextBlock(id="s2_t1", type="paragraph", content="1. 复制与一致性基础"),
+                    TextBlock(id="s2_t2", type="paragraph", content="2. 数据为中心的一致性模型"),
+                    TextBlock(id="s2_t3", type="paragraph", content="3. 一致性协议与复制实现"),
+                ],
+            ),
+            SlidePage(
+                slide_id=3,
+                title="复制的动机",
+                text_blocks=[TextBlock(id="s3_t1", type="paragraph", content="复制提高可靠性和性能")],
+            ),
+            SlidePage(
+                slide_id=4,
+                title="一致性挑战",
+                text_blocks=[TextBlock(id="s4_t1", type="paragraph", content="副本之间可能出现读写不一致")],
+            ),
+        ],
+    )
+    section_plan = {
+        "sections": [
+            {"section_id": "sec1", "title": "复制与一致性基础", "slide_ids": [1, 2, 3, 4]},
+        ]
+    }
+    prompts = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            prompts.append(prompt)
+
+            class Result:
+                usage = {}
+
+            result = Result()
+            if '"task": "page_lecture"' in prompt and '"context_id": "p1"' in prompt:
+                result.text = "<!-- slidenote-source: p1:s1_t1,s1_t2 -->"
+            elif '"task": "page_lecture"' in prompt and '"context_id": "p2"' in prompt:
+                result.text = "<!-- slidenote-source: p2:s2_t1,s2_t2,s2_t3 -->"
+            elif '"task": "page_lecture"' in prompt and '"context_id": "p3"' in prompt:
+                result.text = "复制通过维护多个副本提高可靠性和读性能。<!-- slidenote-source: p3:s3_t1 -->"
+            elif '"task": "page_lecture"' in prompt and '"context_id": "p4"' in prompt:
+                result.text = "副本越多，系统越需要处理读写可见性和一致性问题。<!-- slidenote-source: p4:s4_t1 -->"
+            else:
+                result.text = (
+                    "<!-- slidenote-source: p1:s1_t1,s1_t2 -->\n"
+                    "<!-- slidenote-source: p2:s2_t1,s2_t2,s2_t3 -->\n\n"
+                    "### 复制的收益与代价\n\n"
+                    "复制的直接收益是提高可靠性和读性能，但代价是系统必须约束多个副本之间的读写可见性。"
+                    "<!-- slidenote-source: p3:s3_t1,s4_t1 -->"
+                )
+            return result
+
+    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+
+    result = generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="openai",
+        api_key="test",
+        note_strategy="lecture-weave",
+        note_context="section",
+        note_style="article",
+        section_plan=section_plan,
+    )
+    coverage = analyze_coverage(deck, result.markdown)
+
+    assert any("不要逐字段翻译 PPT" in prompt for prompt in prompts)
+    assert "## 一、复制与一致性基础" in result.markdown
+    assert "王宏志教授" not in result.markdown
+    assert "### 1. 复制的收益与代价" in result.markdown
+    assert coverage["missing"] == 0
+    assert coverage["trace_coverage"]["covered"] == 7
+    assert coverage["visible_coverage"]["total"] == 2
+    assert coverage["structural_marker_only"] == 5
 
 
 def test_postprocess_keeps_substantive_page_structure_sentence():

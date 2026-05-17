@@ -845,6 +845,10 @@ def _build_run_summary(
             "missing": coverage_report.get("missing"),
             "coverage_ratio": coverage_report.get("coverage_ratio"),
             "page_coverage": coverage_report.get("page_coverage"),
+            "trace_coverage": coverage_report.get("trace_coverage"),
+            "visible_coverage": coverage_report.get("visible_coverage"),
+            "marker_only": coverage_report.get("marker_only"),
+            "structural_marker_only": coverage_report.get("structural_marker_only"),
         },
         "source_map": {
             "note_blocks": len(source_map.get("note_blocks", [])),
