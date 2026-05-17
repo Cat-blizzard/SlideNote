@@ -44,12 +44,6 @@ python -m pip install -e ".[dev,llm]"
 python -m slidenote doctor
 ```
 
-Run a local draft first, no API key required:
-
-```powershell
-python -m slidenote build path\to\lecture.pdf --out outputs\lecture --vision off
-```
-
 For text-only AI notes with one LLM key:
 
 ```powershell
