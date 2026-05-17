@@ -35,7 +35,10 @@ def _ensure_grounded_figures(
     figure_placement: str,
 ) -> str:
     current = markdown.rstrip()
+    frontmatter_slide_ids = _leading_frontmatter_slide_ids(deck.pages)
     for page in deck.pages:
+        if page.slide_id in frontmatter_slide_ids:
+            continue
         for image in note_candidate_images(page):
             image_path = _asset_display_path(image.path, asset_map)
             if _image_markdown_present(current, image_path):
@@ -184,6 +187,7 @@ def _compose_final_markdown(
     del source_display
     lines = [f"# {_document_title(deck)}", ""]
     add_context_headings = _should_add_context_headings(contexts)
+    leading_frontmatter_slide_ids = _leading_frontmatter_slide_ids(deck.pages)
     section_number = 1
     for context in contexts:
         content = final_chunks.get(context.id, "").strip()
@@ -192,12 +196,14 @@ def _compose_final_markdown(
         if add_context_headings:
             heading_title = _context_heading_title(context, section_plan)
             if _is_frontmatter_heading(heading_title, context) and len(contexts) > 1:
-                content = _prepare_context_chunk(content, heading_title, add_outer_heading=False)
+                content = _frontmatter_source_markers(context.pages)
             else:
                 lines.append(_context_heading(context, heading_title, section_number))
                 lines.append("")
                 section_number += 1
                 content = _prepare_context_chunk(content, heading_title, add_outer_heading=True)
+                content = _strip_leading_frontmatter_content(content, context, leading_frontmatter_slide_ids)
+                content = _number_subsection_headings(content)
         else:
             content = _prepare_context_chunk(content, context.title, add_outer_heading=False)
         if content:
@@ -311,6 +317,82 @@ def _demote_chunk_headings(markdown: str, minimum_level: int) -> str:
     return "\n".join(lines)
 
 
+def _strip_leading_frontmatter_content(markdown: str, context: NoteContext, leading_frontmatter_slide_ids: set[int]) -> str:
+    frontmatter_slide_ids = {page.slide_id for page in context.pages if page.slide_id in leading_frontmatter_slide_ids}
+    if not frontmatter_slide_ids:
+        return markdown
+    blocks = re.split(r"\n\s*\n", markdown.strip())
+    kept: list[str] = []
+    dropping = True
+    for block in blocks:
+        stripped = block.strip()
+        if not stripped:
+            continue
+        if dropping and _is_horizontal_rule(stripped):
+            continue
+        if dropping and _is_droppable_frontmatter_block(stripped, frontmatter_slide_ids):
+            continue
+        dropping = False
+        kept.append(stripped)
+    marker = _frontmatter_source_markers([page for page in context.pages if page.slide_id in frontmatter_slide_ids])
+    if not marker:
+        return "\n\n".join(kept).strip()
+    body = "\n\n".join(kept).strip()
+    return f"{marker}\n\n{body}".strip() if body else marker
+
+
+def _is_droppable_frontmatter_block(block: str, frontmatter_slide_ids: set[int]) -> bool:
+    match = re.match(r"^(#{1,6})\s+(.*)$", block)
+    if match:
+        return _is_generic_heading_text(match.group(2)) or _looks_like_frontmatter_text(match.group(2))
+    slide_ids = _source_slide_ids(block)
+    if slide_ids and slide_ids.issubset(frontmatter_slide_ids):
+        return True
+    return _looks_like_frontmatter_text(block)
+
+
+def _is_horizontal_rule(block: str) -> bool:
+    return bool(re.fullmatch(r"[-*_]{3,}", block.strip()))
+
+
+def _number_subsection_headings(markdown: str) -> str:
+    counters: list[int] = []
+    base_level: int | None = None
+    lines: list[str] = []
+    for line in markdown.splitlines():
+        match = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if not match:
+            lines.append(line)
+            continue
+        level = len(match.group(1))
+        title = _strip_heading_number(match.group(2).strip())
+        if level < 3:
+            counters = []
+            base_level = None
+            lines.append(line)
+            continue
+        if base_level is None or level < base_level:
+            base_level = level
+            counters = []
+        depth = max(0, level - base_level)
+        while len(counters) <= depth:
+            counters.append(0)
+        counters = counters[: depth + 1]
+        counters[depth] += 1
+        prefix = ".".join(str(value) for value in counters)
+        separator = ". " if len(counters) == 1 else " "
+        lines.append(f"{match.group(1)} {prefix}{separator}{title}")
+    return "\n".join(lines)
+
+
+def _strip_heading_number(title: str) -> str:
+    return re.sub(
+        r"^\s*(?:\d+(?:\.\d+)*\.?|[\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341]+[\u3001.])\s*",
+        "",
+        title,
+    ).strip()
+
+
 def _remove_generation_info_sections(markdown: str) -> str:
     lines = markdown.splitlines()
     kept: list[str] = []
@@ -380,6 +462,78 @@ def _is_frontmatter_heading(title: str, context: NoteContext) -> bool:
     return False
 
 
+def _leading_frontmatter_slide_ids(pages: list[SlidePage]) -> set[int]:
+    slide_ids: set[int] = set()
+    for index, page in enumerate(pages):
+        if not _is_frontmatter_page(page, index):
+            break
+        slide_ids.add(page.slide_id)
+    return slide_ids
+
+
+def _is_frontmatter_page(page: SlidePage, index: int) -> bool:
+    title = page.title or ""
+    normalized_title = _normalize_title_key(title)
+    if normalized_title in {"\u76ee\u5f55", "contents", "outline", "agenda"}:
+        return True
+    text = "\n".join([title, *(block.content for block in page.text_blocks)])
+    if "\u76ee\u5f55" in text or "Contents" in text:
+        return True
+    if index == 0 and _looks_like_cover_page(text):
+        return True
+    return index <= 3 and _looks_like_outline_page(text)
+
+
+def _looks_like_cover_page(text: str) -> bool:
+    normalized = _normalize_title_key(text)
+    cover_markers = {
+        "\u8bb2\u5e08",
+        "\u6559\u5e08",
+        "\u6559\u6388",
+        "\u8054\u7cfb\u90ae\u7bb1",
+        "\u90ae\u7bb1",
+        "\u4e3b\u9875",
+        "email",
+        "homepage",
+        "http",
+        "www",
+    }
+    return any(marker in normalized for marker in cover_markers)
+
+
+def _looks_like_outline_page(text: str) -> bool:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    numbered = [
+        line
+        for line in lines
+        if re.match(r"^\s*(?:\d+|[\u4e00\u4e8c\u4e09\u56db\u4e94])\s*[.\u3001\uff0e]", line)
+    ]
+    return len(numbered) >= 3 and sum(len(line) for line in numbered) <= 260
+
+
+def _looks_like_frontmatter_text(text: str) -> bool:
+    normalized = _normalize_title_key(text)
+    markers = {
+        "\u76ee\u5f55",
+        "\u8bfe\u7a0b\u76ee\u5f55",
+        "\u672c\u7ae0\u76ee\u5f55",
+        "\u4e3b\u6807\u9898",
+        "\u526f\u6807\u9898",
+        "\u8bb2\u5e08",
+        "\u6559\u6388",
+        "\u8054\u7cfb\u90ae\u7bb1",
+        "\u4e3b\u9875",
+        "contents",
+        "overview",
+    }
+    return any(marker in normalized for marker in markers)
+
+
+def _frontmatter_source_markers(pages: list[SlidePage]) -> str:
+    markers = [_source_marker(page.slide_id, _page_source_ids(page), "hidden") for page in pages]
+    return "\n".join(marker for marker in markers if marker)
+
+
 def _chinese_ordinal(index: int) -> str:
     numerals = ["\u4e00", "\u4e8c", "\u4e09", "\u56db", "\u4e94", "\u516d", "\u4e03", "\u516b", "\u4e5d", "\u5341"]
     if 1 <= index <= 10:
@@ -409,6 +563,12 @@ def _source_marker(slide_id: int, element_ids: list[str], source_display: str) -
 def _page_element_ids(page: SlidePage) -> list[str]:
     ids = [block.id for block in page.text_blocks]
     ids.extend(table.id for table in page.tables)
+    return ids
+
+
+def _page_source_ids(page: SlidePage) -> list[str]:
+    ids = _page_element_ids(page)
+    ids.extend(image.id for image in page.images if not image.ignored)
     return ids
 
 
@@ -707,6 +867,10 @@ def _is_meta_paragraph(paragraph: str) -> bool:
         "\u82e5\u9700\u4e86\u89e3\u56fe\u7247\u5177\u4f53\u5185\u5bb9",
         "\u56fe\u7247\u7559\u4f5c\u539f\u59cb\u8bc1\u636e",
         "\u4ec5\u4f5c\u4e3a\u8bc1\u636e\u4fdd\u7559",
+    ]
+    if any(pattern in normalized for pattern in banned_patterns):
+        return True
+    structure_only_patterns = [
         "\u5e7b\u706f\u7247\u9996\u5148\u63d0\u51fa",
         "\u8fd9\u4e00\u9875\u5728\u4e0a\u4e00\u9875\u7684\u57fa\u7840\u4e0a",
         "\u4e0a\u4e00\u9875\u4ecb\u7ecd\u4e86",
@@ -721,7 +885,9 @@ def _is_meta_paragraph(paragraph: str) -> bool:
         "\u8be5\u5e7b\u706f\u7247",
         "\u5f53\u524d\u5e7b\u706f\u7247",
     ]
-    return any(pattern in normalized for pattern in banned_patterns)
+    if SOURCE_COMMENT_PREFIX in normalized or len(normalized) > 80:
+        return False
+    return any(normalized.startswith(pattern) for pattern in structure_only_patterns)
 
 
 def _normalize_chunk_headings(markdown: str) -> str:
@@ -935,6 +1101,10 @@ def _build_weave_report(
 
 def _source_tokens(markdown: str) -> set[str]:
     return set(re.findall(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", markdown))
+
+
+def _source_slide_ids(markdown: str) -> set[int]:
+    return {int(match) for match in re.findall(r"\bp(\d+):", markdown)}
 
 
 # ---------------------------------------------------------------------------

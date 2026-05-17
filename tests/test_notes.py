@@ -3,6 +3,7 @@ from pathlib import Path
 from slidenote.coverage import analyze_coverage
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.notes import generate_notes, generate_notes_result
+from slidenote.notes.assembly import _postprocess_llm_markdown
 
 
 def test_local_notes_include_all_element_ids():
@@ -644,9 +645,115 @@ def test_section_context_notes_use_numbered_outline_headings(tmp_path, monkeypat
 
     assert "## 一、复制与一致性基础" in result.markdown
     assert "## 二、数据为中心的一致性模型" in result.markdown
-    assert "### 为什么复制" in result.markdown
+    assert "### 1. 为什么复制" in result.markdown
     assert result.markdown.count("## 复制与一致性基础") == 0
     assert analyze_coverage(deck, result.markdown)["missing"] == 0
+
+
+def test_section_notes_hide_leading_frontmatter_and_number_subsections(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="ch06.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                title="分布式存储与计算",
+                text_blocks=[
+                    TextBlock(id="s1_t1", type="title", content="分布式存储与计算"),
+                    TextBlock(id="s1_t2", type="paragraph", content="王宏志教授 email@example.com"),
+                ],
+            ),
+            SlidePage(
+                slide_id=2,
+                title="目录",
+                text_blocks=[
+                    TextBlock(id="s2_t1", type="paragraph", content="1. 复制与一致性基础"),
+                    TextBlock(id="s2_t2", type="paragraph", content="2. 数据为中心的一致性模型"),
+                    TextBlock(id="s2_t3", type="paragraph", content="3. 客户端为中心的一致性模型"),
+                ],
+            ),
+            SlidePage(
+                slide_id=3,
+                title="复制与一致性基础",
+                text_blocks=[
+                    TextBlock(id="s3_t1", type="paragraph", content="1. 复制与一致性基础"),
+                    TextBlock(id="s3_t2", type="paragraph", content="2. 数据为中心的一致性模型"),
+                    TextBlock(id="s3_t3", type="paragraph", content="3. 一致性协议与复制实现"),
+                ],
+            ),
+            SlidePage(
+                slide_id=4,
+                title="为什么要复制数据？",
+                text_blocks=[
+                    TextBlock(id="s4_t1", type="paragraph", content="复制提高可靠性"),
+                    TextBlock(id="s4_t2", type="paragraph", content="复制提高性能"),
+                    TextBlock(id="s4_t3", type="paragraph", content="复制带来一致性挑战"),
+                ],
+            ),
+        ],
+    )
+    section_plan = {
+        "sections": [
+            {"section_id": "sec1", "title": "复制与一致性基础", "slide_ids": [1, 2, 3, 4]},
+        ]
+    }
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            class Result:
+                usage = {}
+                text = (
+                    "本部分进入第六章，讲师为王宏志教授。<!-- slidenote-source: p1:s1_t1,s1_t2 -->\n\n"
+                    "课程展示了整个模块的目录页。<!-- slidenote-source: p2:s2_t1,s2_t2,s2_t3 -->\n\n"
+                    "本章自己的目录页进一步细化了本节主题。<!-- slidenote-source: p3:s3_t1,s3_t2,s3_t3 -->\n\n"
+                    "### 为什么要复制数据？\n\n"
+                    "复制提高可靠性和性能，同时带来一致性挑战。<!-- slidenote-source: p4:s4_t1,s4_t2,s4_t3 -->\n\n"
+                    "### 并发对象访问：解决方案\n\n"
+                    "并发控制需要在灵活性与统一管理之间权衡。<!-- slidenote-source: p4:s4_t3 -->\n\n"
+                    "#### 方案 a：自处理方案\n\n"
+                    "对象自己处理并发时，开发者可以做更细粒度的控制。<!-- slidenote-source: p4:s4_t3 -->"
+                )
+
+            return Result()
+
+    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+
+    result = generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="openai",
+        api_key="test",
+        note_strategy="direct",
+        note_context="section",
+        section_plan=section_plan,
+    )
+
+    assert "## 一、复制与一致性基础" in result.markdown
+    assert "王宏志教授" not in result.markdown
+    assert "课程展示了整个模块的目录页" not in result.markdown
+    assert "<!-- slidenote-source: p1:s1_t1,s1_t2 -->" in result.markdown
+    assert "<!-- slidenote-source: p2:s2_t1,s2_t2,s2_t3 -->" in result.markdown
+    assert "<!-- slidenote-source: p3:s3_t1,s3_t2,s3_t3 -->" in result.markdown
+    assert "### 1. 为什么要复制数据？" in result.markdown
+    assert "### 2. 并发对象访问：解决方案" in result.markdown
+    assert "#### 2.1 方案 a：自处理方案" in result.markdown
+    assert analyze_coverage(deck, result.markdown)["missing"] == 0
+
+
+def test_postprocess_keeps_substantive_page_structure_sentence():
+    markdown = (
+        "本页主要讲解复制协议的两个阶段：准备阶段负责收集投票。<!-- slidenote-source: p1:s1_t1 -->\n\n"
+        "复制协议需要多数派确认。<!-- slidenote-source: p1:s1_t2 -->"
+    )
+
+    processed = _postprocess_llm_markdown(markdown, source_display="hidden")
+
+    assert "准备阶段负责收集投票" in processed
+    assert "<!-- slidenote-source: p1:s1_t1 -->" in processed
 
 
 def test_lecture_weave_cache_and_refresh_are_split_by_page_and_weave(tmp_path, monkeypatch):
