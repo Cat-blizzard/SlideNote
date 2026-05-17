@@ -221,6 +221,7 @@ outputs/lecture/
   llm_usage.json
   figures.json
   figure_usage.json
+  figure_grounding.json
   ocr.json
   ocr_usage.json
   visuals.json
@@ -247,6 +248,8 @@ outputs/lecture/
 - `decorative`：低优先级页面，除非用户显式刷新或需要保留。
 
 `image_importance.json` 会记录每张图片的学习价值分数、排序和原因。`--vision auto` 会优先选择排序靠前的局部裁剪图或嵌入图，再回退到整页截图。
+
+`figure_grounding.json` 会记录每张重要图片应该靠近哪段文字或表格：包括版面顺序、锚点元素、锚定原因、置信度、图片解释状态和是否需要人工复查。`notes.md` 会用这份信息把图片尽量插到相关知识点附近，而不是全部堆在页尾。
 
 `sections.json` 会记录最终采用的章节计划。不开 LLM 时使用本地规则；在 `--section-detection auto` 且启用章节式 LLM 笔记时，会先调用文本模型辅助识别章节边界。
 
@@ -425,6 +428,18 @@ figure_usage.json
 ```
 
 局部图裁剪使用视觉模型返回 bbox，然后由本地程序裁剪图片。它不是强保证：如果视觉模型没有找到可靠局部图，系统会回退到整页截图。
+
+## 图文对齐
+
+在 OCR/vision 之后、写笔记之前，SlideNote 会把非装饰图片锚定到同页附近的文字或表格。默认走本地版面判断：
+
+```powershell
+--figure-grounding auto   # 默认：本地版面对齐，复用已有 OCR/vision 摘要
+--figure-placement inline # 默认：图片尽量插入对应概念附近
+--figure-audit local      # 报告缺解释、低置信度或需复查的图片
+```
+
+如果希望即使 `--vision off` 也给重要图片补解释，可以用 `--figure-grounding vision`，这会触发正常的视觉解析流程。`coverage.md` 现在也会单独列出图片覆盖情况：哪些图进入了笔记、锚定到哪里、解释是否缺失、是否需要人工复查。
 
 `source_map.json` 会记录笔记块和原始元素之间的映射，方便未来 GUI、LaTeX/Word/HTML 导出和来源显示策略使用：
 

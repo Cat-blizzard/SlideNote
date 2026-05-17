@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from slidenote.figure_grounding import FIGURE_PLACEMENT_MODES, note_candidate_images, ordered_page_elements
 from slidenote.image_ranking import sorted_images_by_importance
 from slidenote.llm import LLMClient, SYSTEM_PROMPT, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
@@ -89,6 +90,7 @@ def generate_notes(
     weave_dedup: str = "soft",
     page_neighborhood: int = 1,
     screenshot_policy: str = "fallback",
+    figure_placement: str = "inline",
     section_plan: dict[str, Any] | None = None,
 ) -> str:
     return generate_notes_result(
@@ -117,6 +119,7 @@ def generate_notes(
         weave_dedup=weave_dedup,
         page_neighborhood=page_neighborhood,
         screenshot_policy=screenshot_policy,
+        figure_placement=figure_placement,
         section_plan=section_plan,
     ).markdown
 
@@ -147,6 +150,7 @@ def generate_notes_result(
     weave_dedup: str = "soft",
     page_neighborhood: int = 1,
     screenshot_policy: str = "fallback",
+    figure_placement: str = "inline",
     section_plan: dict[str, Any] | None = None,
 ) -> NoteGenerationResult:
     _validate_generation_options(
@@ -161,6 +165,7 @@ def generate_notes_result(
         weave_dedup,
         page_neighborhood,
         screenshot_policy,
+        figure_placement,
     )
     asset_map, asset_warnings = _prepare_note_assets(deck, output_root, asset_mode, screenshot_policy=screenshot_policy)
     if use_llm:
@@ -190,6 +195,7 @@ def generate_notes_result(
             weave_dedup=weave_dedup,
             page_neighborhood=page_neighborhood,
             screenshot_policy=screenshot_policy,
+            figure_placement=figure_placement,
             section_plan=section_plan,
         )
         result.asset_warnings = (result.asset_warnings or []) + asset_warnings + _validate_markdown_image_links(
@@ -202,6 +208,7 @@ def generate_notes_result(
         source_display=source_display,
         note_style=note_style,
         screenshot_policy=screenshot_policy,
+        figure_placement=figure_placement,
         section_plan=section_plan,
     )
     asset_warnings = asset_warnings + _validate_markdown_image_links(markdown, output_root)
@@ -220,6 +227,7 @@ def _validate_generation_options(
     weave_dedup: str,
     page_neighborhood: int,
     screenshot_policy: str,
+    figure_placement: str,
 ) -> None:
     if asset_mode not in ASSET_MODES:
         raise ValueError(f"asset_mode must be one of: {', '.join(sorted(ASSET_MODES))}")
@@ -243,6 +251,8 @@ def _validate_generation_options(
         raise ValueError("page_neighborhood must be one of: 0, 1, 2")
     if screenshot_policy not in SCREENSHOT_POLICIES:
         raise ValueError(f"screenshot_policy must be one of: {', '.join(sorted(SCREENSHOT_POLICIES))}")
+    if figure_placement not in FIGURE_PLACEMENT_MODES:
+        raise ValueError(f"figure_placement must be one of: {', '.join(sorted(FIGURE_PLACEMENT_MODES))}")
 
 
 def _generate_notes_locally(
@@ -251,6 +261,7 @@ def _generate_notes_locally(
     source_display: str = "hidden",
     note_style: str = "article",
     screenshot_policy: str = "fallback",
+    figure_placement: str = "inline",
     section_plan: dict[str, Any] | None = None,
 ) -> str:
     asset_map = asset_map or {}
@@ -282,6 +293,7 @@ def _generate_notes_locally(
                     source_display=source_display,
                     note_style=note_style,
                     screenshot_policy=screenshot_policy,
+                    figure_placement=figure_placement,
                     heading_level=page_heading_level,
                 )
             )
@@ -302,9 +314,11 @@ def _render_local_page(
     source_display: str,
     note_style: str,
     screenshot_policy: str,
+    figure_placement: str,
     heading_level: str,
 ) -> list[str]:
     lines: list[str] = []
+    rendered_image_ids: set[str] = set()
     heading = page.title or f"第 {page.slide_id} 页"
     lines.append(f"{heading_level} 第 {page.slide_id} 页：{heading}")
     lines.append(_source_marker(page.slide_id, _page_element_ids(page), source_display))
@@ -321,18 +335,45 @@ def _render_local_page(
         lines.extend(page_visual_lines)
         lines.append("")
 
-    if page.text_blocks:
+    if page.text_blocks and figure_placement == "page-end":
         lines.extend(_render_text_blocks(page, source_display=source_display, note_style=note_style))
         lines.append("")
+    elif page.text_blocks:
+        for block in page.text_blocks:
+            lines.extend(_render_text_block(page, block, source_display=source_display, note_style=note_style))
+            lines.extend(
+                _render_images_for_anchor(
+                    page,
+                    block.id,
+                    rendered_image_ids=rendered_image_ids,
+                    asset_map=asset_map,
+                    source_display=source_display,
+                )
+            )
+            lines.append("")
 
     for table in page.tables:
         lines.extend(_render_table(page, table, source_display=source_display))
+        if figure_placement == "inline":
+            lines.extend(
+                _render_images_for_anchor(
+                    page,
+                    table.id,
+                    rendered_image_ids=rendered_image_ids,
+                    asset_map=asset_map,
+                    source_display=source_display,
+                )
+            )
         lines.append("")
 
-    for image in sorted_images_by_importance(page.images):
-        if image.ignored:
+    images_to_render = sorted_images_by_importance(page.images) if figure_placement == "page-end" else note_candidate_images(page)
+    for image in images_to_render:
+        if image.ignored or image.id in rendered_image_ids:
+            continue
+        if figure_placement == "inline" and image.anchor_element_ids:
             continue
         lines.extend(_render_image(page, image, asset_map=asset_map, source_display=source_display))
+        rendered_image_ids.add(image.id)
         lines.append("")
 
     visible_images = [image for image in page.images if not image.ignored]
@@ -354,20 +395,46 @@ def _render_local_page(
 def _render_text_blocks(page: SlidePage, source_display: str, note_style: str) -> list[str]:
     lines: list[str] = []
     for block in page.text_blocks:
-        if block.type == "title":
-            content = _plain_block_text(block)
-            lines.append(f"本页主题是“{content}”。")
-        elif block.type == "bullet":
-            content = _rewrite_block(block)
-            if note_style == "article":
-                lines.append(content)
-            else:
-                lines.append(f"本页列出了以下要点：{content}")
-        else:
-            content = _rewrite_block(block)
+        lines.extend(_render_text_block(page, block, source_display=source_display, note_style=note_style))
+    return lines
+
+
+def _render_text_block(page: SlidePage, block: TextBlock, source_display: str, note_style: str) -> list[str]:
+    lines: list[str] = []
+    if block.type == "title":
+        content = _plain_block_text(block)
+        lines.append(f"本页主题是“{content}”。")
+    elif block.type == "bullet":
+        content = _rewrite_block(block)
+        if note_style == "article":
             lines.append(content)
-        lines.append(_source_marker(page.slide_id, [block.id], source_display))
+        else:
+            lines.append(f"本页列出了以下要点：{content}")
+    else:
+        content = _rewrite_block(block)
+        lines.append(content)
+    lines.append(_source_marker(page.slide_id, [block.id], source_display))
+    lines.append("")
+    return lines
+
+
+def _render_images_for_anchor(
+    page: SlidePage,
+    anchor_id: str,
+    rendered_image_ids: set[str],
+    asset_map: dict[str, str],
+    source_display: str,
+) -> list[str]:
+    lines: list[str] = []
+    anchored = [
+        image
+        for image in note_candidate_images(page)
+        if image.id not in rendered_image_ids and anchor_id in (image.anchor_element_ids or [])
+    ]
+    for image in sorted_images_by_importance(anchored):
+        lines.extend(_render_image(page, image, asset_map=asset_map, source_display=source_display))
         lines.append("")
+        rendered_image_ids.add(image.id)
     return lines
 
 
@@ -422,14 +489,16 @@ def _render_image(page: SlidePage, image: ImageAsset, asset_map: dict[str, str],
         _source_marker(page.slide_id, [image.id], source_display),
         "",
     ]
-    if image.visual_summary:
-        lines.append(f"图片视觉解析：{_ensure_sentence(image.visual_summary)}")
-    if image.ocr_text:
-        if image.visual_summary:
+    explanation = image.figure_explanation or image.visual_summary
+    if explanation:
+        label = "图示说明" if image.figure_explanation else "图片视觉解析"
+        lines.append(f"{label}：{_ensure_sentence(explanation)}")
+    if image.ocr_text and image.figure_explanation_status != "ocr_text":
+        if explanation:
             lines.append("")
         lines.append("图片 OCR 文字：")
         lines.extend(_quote_multiline(image.ocr_text))
-    if image.visual_summary or image.ocr_text:
+    if explanation or (image.ocr_text and image.figure_explanation_status != "ocr_text"):
         lines.append("")
     lines.append(f"![{caption}]({_asset_display_path(image.path, asset_map)})")
     return lines
@@ -477,6 +546,7 @@ def _generate_notes_with_llm(
     weave_dedup: str,
     page_neighborhood: int,
     screenshot_policy: str,
+    figure_placement: str,
     section_plan: dict[str, Any] | None,
 ) -> NoteGenerationResult:
     runtime = resolve_provider_runtime(provider, model=model, base_url=base_url)
@@ -513,6 +583,7 @@ def _generate_notes_with_llm(
             weave_dedup=weave_dedup,
             page_neighborhood=page_neighborhood,
             screenshot_policy=screenshot_policy,
+            figure_placement=figure_placement,
             supports_image_input=supports_image_input,
             section_plan=section_plan,
         )
@@ -545,6 +616,8 @@ def _generate_notes_with_llm(
             note_language=note_language,
             term_policy=term_policy,
             screenshot_policy=screenshot_policy,
+            figure_placement=figure_placement,
+            source_type=deck.source_type,
         )
         content = _postprocess_llm_markdown(content, source_display=source_display)
         return context.id, content, context_record
@@ -593,6 +666,7 @@ def _generate_notes_with_llm(
         page_neighborhood=page_neighborhood,
         asset_mode=asset_mode,
         screenshot_policy=screenshot_policy,
+        figure_placement=figure_placement,
     )
     markdown = _compose_final_markdown(
         deck=deck,
@@ -601,6 +675,7 @@ def _generate_notes_with_llm(
         section_plan=section_plan,
         source_display=source_display,
     )
+    markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
     return NoteGenerationResult(markdown=markdown, llm_usage=usage_report)
 
 
@@ -630,6 +705,7 @@ def _generate_notes_with_lecture_weave(
     weave_dedup: str,
     page_neighborhood: int,
     screenshot_policy: str,
+    figure_placement: str,
     supports_image_input: bool,
     section_plan: dict[str, Any] | None,
 ) -> NoteGenerationResult:
@@ -668,6 +744,7 @@ def _generate_notes_with_lecture_weave(
             page_neighborhood=page_neighborhood,
             section_title=section_titles.get(page.slide_id),
             screenshot_policy=screenshot_policy,
+            figure_placement=figure_placement,
         )
         return context.id, _postprocess_llm_markdown(content, source_display=source_display), record
 
@@ -765,6 +842,7 @@ def _generate_notes_with_lecture_weave(
         page_neighborhood=page_neighborhood,
         asset_mode=asset_mode,
         screenshot_policy=screenshot_policy,
+        figure_placement=figure_placement,
         page_contexts=page_records,
         weave_contexts=weave_records,
     )
@@ -775,6 +853,7 @@ def _generate_notes_with_lecture_weave(
         section_plan=section_plan,
         source_display=source_display,
     )
+    markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
     page_notes = _build_page_notes_report(
         deck=deck,
         provider=provider,
@@ -841,6 +920,111 @@ def _compose_final_markdown(
             lines.append(content)
             lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _ensure_grounded_figures(
+    markdown: str,
+    deck: Deck,
+    asset_map: dict[str, str],
+    source_display: str,
+    figure_placement: str,
+) -> str:
+    current = markdown.rstrip()
+    for page in deck.pages:
+        for image in note_candidate_images(page):
+            image_path = _asset_display_path(image.path, asset_map)
+            if _image_markdown_present(current, image_path):
+                if image.id not in _source_tokens(current):
+                    current = _ensure_image_source_marker(current, page, image, image_path, source_display)
+                continue
+            block = "\n".join(_render_image(page, image, asset_map=asset_map, source_display=source_display)).strip()
+            if not block:
+                continue
+            current = _insert_figure_block(current, page, image, block, figure_placement)
+    return current.rstrip() + "\n"
+
+
+def _image_markdown_present(markdown: str, image_path: str) -> bool:
+    if not image_path:
+        return False
+    escaped = re.escape(image_path.strip())
+    return bool(re.search(rf"!\[[^\]]*]\({escaped}\)", markdown)) or image_path in markdown
+
+
+def _ensure_image_source_marker(
+    markdown: str,
+    page: SlidePage,
+    image: ImageAsset,
+    image_path: str,
+    source_display: str,
+) -> str:
+    marker = _source_marker(page.slide_id, [image.id], source_display)
+    if not marker:
+        return markdown
+    lines = markdown.splitlines()
+    for index, line in enumerate(lines):
+        if image_path in line and line.lstrip().startswith("!["):
+            if marker in line or (index + 1 < len(lines) and marker in lines[index + 1]):
+                return markdown
+            new_lines = list(lines)
+            new_lines.insert(index + 1, marker)
+            return "\n".join(new_lines).rstrip() + "\n"
+    return markdown
+
+
+def _insert_figure_block(markdown: str, page: SlidePage, image: ImageAsset, block: str, figure_placement: str) -> str:
+    if figure_placement == "inline":
+        inserted = _insert_after_anchor_source(markdown, image.anchor_element_ids, block)
+        if inserted != markdown:
+            return inserted
+    inserted = _insert_after_page_source(markdown, page.slide_id, block)
+    if inserted != markdown:
+        return inserted
+    fallback_heading = f"### 第 {page.slide_id} 页图示"
+    return f"{markdown.rstrip()}\n\n{fallback_heading}\n\n{block}"
+
+
+def _insert_after_anchor_source(markdown: str, anchor_ids: list[str], block: str) -> str:
+    if not anchor_ids:
+        return markdown
+    lines = markdown.splitlines()
+    for index, line in enumerate(lines):
+        if SOURCE_COMMENT_PREFIX not in line:
+            continue
+        if not any(anchor_id in line for anchor_id in anchor_ids):
+            continue
+        insert_at = _paragraph_end_after(lines, index)
+        return _insert_lines(lines, insert_at, block)
+    return markdown
+
+
+def _insert_after_page_source(markdown: str, slide_id: int, block: str) -> str:
+    lines = markdown.splitlines()
+    marker = f"p{slide_id}:"
+    candidate_index: int | None = None
+    for index, line in enumerate(lines):
+        if SOURCE_COMMENT_PREFIX in line and marker in line:
+            candidate_index = index
+    if candidate_index is None:
+        return markdown
+    insert_at = _paragraph_end_after(lines, candidate_index)
+    return _insert_lines(lines, insert_at, block)
+
+
+def _paragraph_end_after(lines: list[str], index: int) -> int:
+    cursor = index + 1
+    while cursor < len(lines) and lines[cursor].strip():
+        cursor += 1
+    while cursor < len(lines) and not lines[cursor].strip():
+        cursor += 1
+    return cursor
+
+
+def _insert_lines(lines: list[str], index: int, block: str) -> str:
+    new_lines = list(lines)
+    insert = ["", *block.splitlines(), ""]
+    new_lines[index:index] = insert
+    return "\n".join(new_lines).rstrip() + "\n"
 
 
 def _document_title(deck: Deck) -> str:
@@ -1044,6 +1228,8 @@ def _generate_llm_context(
     note_language: str,
     term_policy: str,
     screenshot_policy: str,
+    figure_placement: str,
+    source_type: str,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     user_prompt = _llm_context_prompt(
@@ -1056,6 +1242,8 @@ def _generate_llm_context(
         note_language=note_language,
         term_policy=term_policy,
         screenshot_policy=screenshot_policy,
+        figure_placement=figure_placement,
+        source_type=source_type,
     )
     cache_key_payload = {
         "schema_version": LLM_CACHE_SCHEMA_VERSION,
@@ -1072,6 +1260,7 @@ def _generate_llm_context(
         "note_language": note_language,
         "term_policy": term_policy,
         "screenshot_policy": screenshot_policy,
+        "figure_placement": figure_placement,
         "system_prompt_hash": sha256_text(SYSTEM_PROMPT),
         "user_prompt_hash": sha256_text(user_prompt),
         "user_prompt": user_prompt,
@@ -1179,6 +1368,7 @@ def _generate_page_lecture_context(
     page_neighborhood: int,
     section_title: str | None,
     screenshot_policy: str,
+    figure_placement: str,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     user_prompt = _llm_page_lecture_prompt(
@@ -1194,6 +1384,8 @@ def _generate_page_lecture_context(
         page_neighborhood=page_neighborhood,
         section_title=section_title,
         screenshot_policy=screenshot_policy,
+        figure_placement=figure_placement,
+        source_type=deck.source_type,
     )
     return _generate_cached_llm_text(
         context=context,
@@ -1219,6 +1411,7 @@ def _generate_page_lecture_context(
             "term_policy": term_policy,
             "page_neighborhood": page_neighborhood,
             "screenshot_policy": screenshot_policy,
+            "figure_placement": figure_placement,
         },
     )
 
@@ -1403,6 +1596,8 @@ def _llm_page_prompt(page: SlidePage, supports_image_input: bool = False) -> str
         note_language="zh",
         term_policy="bilingual",
         screenshot_policy="fallback",
+        figure_placement="inline",
+        source_type="pdf",
     )
 
 
@@ -1416,12 +1611,18 @@ def _llm_context_prompt(
     note_language: str,
     term_policy: str,
     screenshot_policy: str,
+    figure_placement: str,
+    source_type: str,
 ) -> str:
     payload = {
         "context_id": context.id,
         "context_kind": context.kind,
         "context_title": context.title,
-        "pages": [_page_payload_for_prompt(page, asset_map, supports_image_input, screenshot_policy) for page in context.pages],
+        "figure_placement": figure_placement,
+        "pages": [
+            _page_payload_for_prompt(page, asset_map, supports_image_input, screenshot_policy, source_type=source_type)
+            for page in context.pages
+        ],
     }
     source_rule = {
         "hidden": (
@@ -1451,6 +1652,7 @@ def _llm_context_prompt(
         "图片必须用真正的 Markdown 图片语法插入，不能放进反引号。"
         "图片 alt 文本不能为空，应用简短文字说明图片主题。"
         "如果 JSON 里有 ocr_text、visual_summary、page_ocr_text 或 page_visual_summary，要把它们和相关概念合并讲解。"
+        "如果 JSON 里有 ordered_elements、anchor_element_ids 或 figure_explanation，请按版面顺序把图片放在锚点段落附近，解释这张图补充了什么，避免把图片全部堆到页尾。"
         "如果没有视觉摘要，不要写“未提供图片像素”“无法视觉解析”“建议查看原 PPT”等说明；只插入图片，不猜测图片内容。"
     )
     banned_rule = (
@@ -1487,6 +1689,8 @@ def _llm_page_lecture_prompt(
     page_neighborhood: int,
     section_title: str | None,
     screenshot_policy: str,
+    figure_placement: str,
+    source_type: str,
 ) -> str:
     page = context.pages[0]
     payload = {
@@ -1494,7 +1698,8 @@ def _llm_page_lecture_prompt(
         "context_id": context.id,
         "source_file": Path(deck.source_path).stem,
         "section_title": section_title,
-        "current_page": _page_payload_for_prompt(page, asset_map, supports_image_input, screenshot_policy),
+        "figure_placement": figure_placement,
+        "current_page": _page_payload_for_prompt(page, asset_map, supports_image_input, screenshot_policy, source_type=source_type),
         "nearby_pages": _nearby_page_payloads(deck, page.slide_id, page_neighborhood),
     }
     depth_rule = _note_depth_rule(note_depth)
@@ -1516,10 +1721,11 @@ def _llm_page_lecture_prompt(
         "硬性要求：\n"
         "1. 本页的重要定义、条件、例子、公式、表格、图片、OCR 和视觉摘要都要进入讲解。\n"
         "2. 不要写“这一页展示了若干 bullet”这种空话，要直接解释这些 bullet 在课程中的含义。\n"
-        "3. 对没有视觉摘要的图片，只插入图片，不猜测、不道歉、不说无法解析。\n"
-        f"4. {source_rule}\n"
-        "5. 图片 alt 文本不能为空，应用简短文字说明图片主题。\n"
-        "6. 只能使用 ### 或更低级标题，严禁输出“好的，这是”“根据 JSON”“课程笔记已严格遵循”等元叙述。\n\n"
+        "3. current_page.ordered_elements 已按版面顺序给出；图片若带 anchor_element_ids，要放在对应概念附近，并用 figure_explanation 解释它补充了什么，避免重复正文定义。\n"
+        "4. 对没有视觉摘要的图片，只插入图片，不猜测、不道歉、不说无法解析。\n"
+        f"5. {source_rule}\n"
+        "6. 图片 alt 文本不能为空，应用简短文字说明图片主题。\n"
+        "7. 只能使用 ### 或更低级标题，严禁输出“好的，这是”“根据 JSON”“课程笔记已严格遵循”等元叙述。\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
@@ -1622,7 +1828,13 @@ def _note_depth_rule(note_depth: str) -> str:
     }[note_depth]
 
 
-def _page_payload_for_prompt(page: SlidePage, asset_map: dict[str, str], supports_image_input: bool, screenshot_policy: str) -> dict[str, Any]:
+def _page_payload_for_prompt(
+    page: SlidePage,
+    asset_map: dict[str, str],
+    supports_image_input: bool,
+    screenshot_policy: str,
+    source_type: str,
+) -> dict[str, Any]:
     page_payload = asdict(page)
     if page_payload.get("page_screenshot") and _should_render_screenshot(page, screenshot_policy):
         page_payload["page_screenshot"] = _asset_display_path(page_payload["page_screenshot"], asset_map)
@@ -1645,6 +1857,8 @@ def _page_payload_for_prompt(page: SlidePage, asset_map: dict[str, str], support
                 if supports_image_input
                 else "image pixels are not attached to this note-writing call; use only supplied OCR/visual_summary"
             )
+    prompt_deck = Deck(source_path="", source_type=source_type, pages=[page])
+    page_payload["ordered_elements"] = ordered_page_elements(prompt_deck, page, asset_map=asset_map)
     return page_payload
 
 
@@ -1694,6 +1908,7 @@ def _build_usage_report(
     page_neighborhood: int,
     asset_mode: str,
     screenshot_policy: str,
+    figure_placement: str,
     page_contexts: list[dict[str, Any]] | None = None,
     weave_contexts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -1741,6 +1956,7 @@ def _build_usage_report(
             "note_style": note_style,
             "asset_mode": asset_mode,
             "screenshot_policy": screenshot_policy,
+            "figure_placement": figure_placement,
         },
         "summary": summary,
         "pages": contexts,
@@ -1891,7 +2107,6 @@ def _source_marker(slide_id: int, element_ids: list[str], source_display: str) -
 def _page_element_ids(page: SlidePage) -> list[str]:
     ids = [block.id for block in page.text_blocks]
     ids.extend(table.id for table in page.tables)
-    ids.extend(image.id for image in page.images if not image.ignored)
     return ids
 
 

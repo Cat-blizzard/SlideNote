@@ -23,9 +23,11 @@ def extract_pptx(input_path: Path, output_root: Path) -> Deck:
     presentation = Presentation(str(input_path))
     screenshot_map, render_warnings = render_pptx_screenshots(input_path, screenshots_dir, output_root)
     pages: list[SlidePage] = []
+    slide_width = float(presentation.slide_width)
+    slide_height = float(presentation.slide_height)
 
     for slide_index, slide in enumerate(presentation.slides, start=1):
-        page = SlidePage(slide_id=slide_index)
+        page = SlidePage(slide_id=slide_index, page_width=slide_width, page_height=slide_height)
         counters = {"text": 1, "table": 1, "image": 1}
         for shape in _iter_shapes(slide.shapes):
             if getattr(shape, "has_table", False):
@@ -42,8 +44,8 @@ def extract_pptx(input_path: Path, output_root: Path) -> Deck:
                     counters["image"],
                     images_dir,
                     output_root,
-                    slide_width=float(presentation.slide_width),
-                    slide_height=float(presentation.slide_height),
+                    slide_width=slide_width,
+                    slide_height=slide_height,
                 )
                 if image:
                     page.images.append(image)

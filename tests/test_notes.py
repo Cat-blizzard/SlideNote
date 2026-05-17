@@ -120,6 +120,41 @@ def test_local_notes_bundle_assets_and_use_renderable_image_links(tmp_path):
     assert result.asset_warnings == []
 
 
+def test_local_notes_place_grounded_image_near_anchor(tmp_path):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    (image_dir / "diagram.png").write_bytes(b"fake")
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                text_blocks=[
+                    TextBlock(id="s1_t1", type="paragraph", content="Quorum 需要读写集合相交。"),
+                    TextBlock(id="s1_t2", type="paragraph", content="后续再讨论具体计算。"),
+                ],
+                images=[
+                    ImageAsset(
+                        id="s1_img1",
+                        path="images/diagram.png",
+                        anchor_element_ids=["s1_t1"],
+                        figure_explanation="图中用两个集合的交集说明 quorum 条件。",
+                    )
+                ],
+            )
+        ],
+    )
+
+    result = generate_notes_result(deck, tmp_path)
+
+    first_text = result.markdown.index("Quorum 需要读写集合相交")
+    image = result.markdown.index("图示说明")
+    second_text = result.markdown.index("后续再讨论具体计算")
+    assert first_text < image < second_text
+    assert "图示说明：图中用两个集合的交集说明 quorum 条件。" in result.markdown
+
+
 def test_screenshot_policy_fallback_keeps_screenshot_when_no_local_image(tmp_path):
     screenshots_dir = tmp_path / "screenshots"
     screenshots_dir.mkdir()
@@ -134,6 +169,84 @@ def test_screenshot_policy_fallback_keeps_screenshot_when_no_local_image(tmp_pat
 
     assert "![第 1 页截图](notes.assets/screenshots/slide1.png)" in result.markdown
     assert (tmp_path / "notes.assets" / "screenshots" / "slide1.png").exists()
+
+
+def test_llm_result_auto_inserts_missing_grounded_image(tmp_path, monkeypatch):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    (image_dir / "diagram.png").write_bytes(b"fake")
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Quorum")],
+                images=[
+                    ImageAsset(
+                        id="s1_img1",
+                        path="images/diagram.png",
+                        anchor_element_ids=["s1_t1"],
+                        figure_explanation="图示补充 quorum 的集合关系。",
+                    )
+                ],
+            )
+        ],
+    )
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            class Result:
+                text = "Quorum 保证读写集合相交。<!-- slidenote-source: p1:s1_t1 -->"
+                usage = {}
+
+            return Result()
+
+    monkeypatch.setattr("slidenote.notes.LLMClient", FakeClient)
+
+    result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct")
+
+    assert "![第 1 页图片](notes.assets/images/diagram.png)" in result.markdown
+    assert "<!-- slidenote-source: p1:s1_img1 -->" in result.markdown
+    assert result.markdown.index("s1_t1") < result.markdown.index("s1_img1")
+
+
+def test_llm_result_adds_source_marker_to_existing_image(tmp_path, monkeypatch):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    (image_dir / "diagram.png").write_bytes(b"fake")
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Quorum")],
+                images=[ImageAsset(id="s1_img1", path="images/diagram.png", anchor_element_ids=["s1_t1"])],
+            )
+        ],
+    )
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            class Result:
+                text = "Quorum 保证读写集合相交。<!-- slidenote-source: p1:s1_t1 -->\n\n![图](notes.assets/images/diagram.png)"
+                usage = {}
+
+            return Result()
+
+    monkeypatch.setattr("slidenote.notes.LLMClient", FakeClient)
+
+    result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct")
+
+    assert "<!-- slidenote-source: p1:s1_img1 -->" in result.markdown
+    assert analyze_coverage(deck, result.markdown)["missing"] == 0
 
 
 def test_source_display_footnote_keeps_clean_page_reference():

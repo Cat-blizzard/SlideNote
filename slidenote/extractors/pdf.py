@@ -26,6 +26,9 @@ def extract_pdf(input_path: Path, output_root: Path) -> Deck:
 
     for page_index, page in enumerate(doc, start=1):
         slide = SlidePage(slide_id=page_index)
+        page_size = _page_size(page)
+        if page_size:
+            slide.page_width, slide.page_height = page_size
         text_blocks = _extract_text_blocks(page, page_index)
         slide.title = _guess_title(text_blocks)
         slide.text_blocks = text_blocks

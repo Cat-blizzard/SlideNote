@@ -8,6 +8,7 @@ from typing import Any
 from slidenote.coverage import analyze_coverage, render_coverage_markdown
 from slidenote.doctor import render_doctor_report, run_doctor
 from slidenote.extractors import extract_deck
+from slidenote.figure_grounding import enrich_deck_with_figure_grounding
 from slidenote.figures import enrich_deck_with_figures
 from slidenote.image_ranking import rank_deck_images
 from slidenote.llm import get_provider_spec, supported_provider_names
@@ -208,6 +209,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Rank images by study value before vision and note generation.",
     )
     build.add_argument(
+        "--figure-grounding",
+        choices=["off", "auto", "vision"],
+        default="auto",
+        help="Anchor study-value figures to nearby text/table elements. auto uses local layout and existing vision/OCR summaries.",
+    )
+    build.add_argument(
+        "--figure-placement",
+        choices=["inline", "page-end"],
+        default="inline",
+        help="Where figures appear in notes.md. inline places them near anchored concepts; page-end groups them after each page.",
+    )
+    build.add_argument(
+        "--figure-audit",
+        choices=["off", "local", "llm"],
+        default="local",
+        help="Audit figure placement/explanation quality. local writes deterministic review flags; llm is reserved for future deeper checks.",
+    )
+    build.add_argument(
         "--figure-cache",
         choices=["on", "off", "refresh"],
         default="on",
@@ -337,12 +356,14 @@ def _build(args: argparse.Namespace) -> int:
             progress.finish_stage("OCR complete")
 
         vision_report = None
-        if args.vision != "off":
+        should_run_vision = args.vision != "off" or args.figure_grounding == "vision"
+        vision_mode = args.vision if args.vision != "off" else "auto"
+        if should_run_vision:
             progress.start_stage("vision", message="Running vision analysis")
             vision_report = enrich_deck_with_vision(
                 deck,
                 output_root=output_root,
-                mode=args.vision,
+                mode=vision_mode,
                 provider=args.vision_provider,
                 model=args.vision_model,
                 api_key=args.vision_api_key,
@@ -363,6 +384,19 @@ def _build(args: argparse.Namespace) -> int:
 
         if image_importance_report is not None and vision_report is not None:
             image_importance_report = rank_deck_images(deck, output_root, mode=args.image_ranking, stage="post_vision")
+
+        figure_grounding_report = None
+        if args.figure_grounding != "off":
+            progress.start_stage("figure_grounding", message="Grounding figures to page text")
+            figure_grounding_report = enrich_deck_with_figure_grounding(
+                deck,
+                output_root=output_root,
+                mode=args.figure_grounding,
+                placement=args.figure_placement,
+                audit=args.figure_audit,
+            )
+            write_json(output_root / "figure_grounding.json", figure_grounding_report)
+            progress.finish_stage("Figure grounding complete")
 
         progress.start_stage("sections", message="Detecting note sections")
         section_report = build_section_plan(
@@ -425,6 +459,7 @@ def _build(args: argparse.Namespace) -> int:
             weave_dedup=args.weave_dedup,
             page_neighborhood=args.page_neighborhood,
             screenshot_policy=args.screenshot_policy,
+            figure_placement=args.figure_placement,
             section_plan=section_report,
         )
         notes_markdown = notes_result.markdown
@@ -459,6 +494,7 @@ def _build(args: argparse.Namespace) -> int:
             image_importance_report=image_importance_report,
             section_report=section_report,
             figure_report=figure_report,
+            figure_grounding_report=figure_grounding_report,
             ocr_report=ocr_report,
             vision_report=vision_report,
             llm_usage=notes_result.llm_usage,
@@ -500,6 +536,8 @@ def _build(args: argparse.Namespace) -> int:
         if figure_report is not None:
             print(f"- figures:  {output_root / 'figures.json'}")
             print(f"- fig use:  {output_root / 'figure_usage.json'}")
+        if figure_grounding_report is not None:
+            print(f"- fig ground: {output_root / 'figure_grounding.json'}")
         if ocr_report is not None:
             print(f"- ocr:      {output_root / 'ocr.json'}")
             print(f"- ocr use:  {output_root / 'ocr_usage.json'}")
@@ -533,6 +571,8 @@ def _friendly_build_error(exc: Exception, args: argparse.Namespace) -> str | Non
                 features.append("vision")
             if args.figure_crop == "vision" or (args.figure_crop == "auto" and args.vision != "off"):
                 features.append("figure-crop")
+            if args.figure_grounding == "vision":
+                features.append("figure-grounding")
             feature_text = "/".join(features) or "vision"
             return (
                 f"当前开启了 {feature_text}，但视觉模型 provider `{vision_spec.canonical_name}` 没有可用 API key。\n"
@@ -568,7 +608,12 @@ def _provider_from_missing_key_error(message: str) -> str | None:
 
 
 def _vision_features_enabled(args: argparse.Namespace) -> bool:
-    return args.vision != "off" or args.figure_crop == "vision" or (args.figure_crop == "auto" and args.vision != "off")
+    return (
+        args.vision != "off"
+        or args.figure_grounding == "vision"
+        or args.figure_crop == "vision"
+        or (args.figure_crop == "auto" and args.vision != "off")
+    )
 
 
 def _apply_speed_mode_defaults(args: argparse.Namespace) -> None:
@@ -695,6 +740,7 @@ def _build_run_summary(
     image_importance_report: dict[str, Any] | None,
     section_report: dict[str, Any],
     figure_report: dict[str, Any] | None,
+    figure_grounding_report: dict[str, Any] | None,
     ocr_report: dict[str, Any] | None,
     vision_report: dict[str, Any] | None,
     llm_usage: dict[str, Any] | None,
@@ -730,6 +776,9 @@ def _build_run_summary(
             "section_detection": args.section_detection,
             "image_ranking": args.image_ranking,
             "figure_crop": args.figure_crop,
+            "figure_grounding": args.figure_grounding,
+            "figure_placement": args.figure_placement,
+            "figure_audit": args.figure_audit,
             "screenshot_policy": args.screenshot_policy,
         },
         "counts": {
@@ -741,6 +790,7 @@ def _build_run_summary(
             "page_screenshots": sum(1 for page in pages if page.page_screenshot),
         },
         "figure_crop": figure_report.get("summary") if figure_report else None,
+        "figure_grounding": figure_grounding_report.get("summary") if figure_grounding_report else None,
         "page_modalities": modality_report.get("summary") if modality_report else None,
         "image_importance": image_importance_report.get("summary") if image_importance_report else None,
         "sections": section_report.get("summary") if section_report else None,
@@ -774,6 +824,7 @@ def _build_run_summary(
             "sections": "sections.json",
             "figures": "figures.json" if figure_report else None,
             "figure_usage": "figure_usage.json" if figure_report else None,
+            "figure_grounding": "figure_grounding.json" if figure_grounding_report else None,
             "llm_usage": "llm_usage.json" if llm_usage else None,
             "page_notes": "page_notes.json" if getattr(args, "note_strategy", "direct") == "lecture-weave" and llm_usage else None,
             "page_notes_markdown": "page_notes.md" if getattr(args, "note_strategy", "direct") == "lecture-weave" and llm_usage else None,

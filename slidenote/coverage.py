@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from slidenote.models import Deck, SlidePage
+from slidenote.figure_grounding import note_candidate_images
+from slidenote.models import Deck, ImageAsset, SlidePage
 
 
 @dataclass(slots=True)
@@ -21,12 +22,14 @@ def analyze_coverage(deck: Deck, notes_markdown: str) -> dict[str, object]:
     covered = sum(1 for item in items if item.covered)
     missing = [item for item in items if not item.covered]
     page_coverage = _page_coverage(deck, items)
+    figure_coverage = _figure_coverage(deck, notes_markdown)
     return {
         "total": total,
         "covered": covered,
         "missing": len(missing),
         "coverage_ratio": covered / total if total else 1.0,
         "page_coverage": page_coverage,
+        "figure_coverage": figure_coverage,
         "items": [
             {
                 "id": item.id,
@@ -63,6 +66,16 @@ def render_coverage_markdown(report: dict[str, object]) -> str:
                 f"- 完全未引用页：{missing_slide_text}",
             ]
         )
+    figure_coverage = report.get("figure_coverage")
+    if isinstance(figure_coverage, dict):
+        lines.extend(
+            [
+                f"- 重要图片进入笔记：{figure_coverage.get('covered_figures', 0)} / {figure_coverage.get('total_figures', 0)}",
+                f"- 已锚定图片：{figure_coverage.get('anchored_figures', 0)}",
+                f"- 已解释图片：{figure_coverage.get('explained_figures', 0)}",
+                f"- 需要人工复查图片：{figure_coverage.get('needs_review', 0)}",
+            ]
+        )
     lines.extend(
         [
             "",
@@ -75,6 +88,24 @@ def render_coverage_markdown(report: dict[str, object]) -> str:
         lines.append(
             f"| {status} | {item['slide_id']} | {item['kind']} | `{item['id']}` | {_escape_table(str(item['preview']))} |"
         )
+    if isinstance(figure_coverage, dict) and figure_coverage.get("figures"):
+        lines.extend(
+            [
+                "",
+                "## 图片覆盖",
+                "",
+                "| 状态 | 页码 | 图片 ID | 锚点 | 解释状态 | 复查 |",
+                "| --- | --- | --- | --- | --- | --- |",
+            ]
+        )
+        for figure in figure_coverage["figures"]:
+            status = "已插入" if figure.get("covered") else "未插入"
+            anchors = ", ".join(figure.get("anchor_element_ids") or []) or "无"
+            review = figure.get("figure_audit_status") or "ok"
+            lines.append(
+                f"| {status} | {figure.get('slide_id')} | `{figure.get('id')}` | {_escape_table(anchors)} | "
+                f"{_escape_table(str(figure.get('figure_explanation_status') or 'missing'))} | {_escape_table(str(review))} |"
+            )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -160,6 +191,41 @@ def _page_items(page: SlidePage, tokens: set[str]) -> list[CoverageItem]:
             )
         )
     return items
+
+
+def _figure_coverage(deck: Deck, notes_markdown: str) -> dict[str, object]:
+    image_targets = [target.strip().strip("<>") for target in re.findall(r"!\[[^\]]*]\(([^)]+)\)", notes_markdown)]
+    figures: list[dict[str, object]] = []
+    for page in deck.pages:
+        for image in note_candidate_images(page):
+            covered = any(target == image.path or target.endswith(image.path) for target in image_targets)
+            figures.append(_figure_record(page, image, covered))
+    return {
+        "total_figures": len(figures),
+        "covered_figures": sum(1 for figure in figures if figure["covered"]),
+        "missing_figures": sum(1 for figure in figures if not figure["covered"]),
+        "anchored_figures": sum(1 for figure in figures if figure["anchor_element_ids"]),
+        "explained_figures": sum(1 for figure in figures if figure["figure_explanation_status"] not in {None, "missing"}),
+        "needs_review": sum(1 for figure in figures if figure["figure_audit_status"] == "needs_review"),
+        "figures": figures,
+    }
+
+
+def _figure_record(page: SlidePage, image: ImageAsset, covered: bool) -> dict[str, object]:
+    return {
+        "id": image.id,
+        "slide_id": page.slide_id,
+        "path": image.path,
+        "role": image.role,
+        "covered": covered,
+        "anchor_element_ids": list(image.anchor_element_ids),
+        "anchor_reason": image.anchor_reason,
+        "grounding_confidence": image.grounding_confidence,
+        "figure_explanation_status": image.figure_explanation_status,
+        "figure_audit_status": image.figure_audit_status,
+        "importance_score": image.importance_score,
+        "importance_rank": image.importance_rank,
+    }
 
 
 def _preview(text: str, limit: int = 120) -> str:

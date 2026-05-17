@@ -109,6 +109,8 @@ def _page_sources(page: SlidePage) -> dict[str, Any]:
         "slide_id": page.slide_id,
         "title": page.title,
         "page_screenshot": page.page_screenshot,
+        "page_width": page.page_width,
+        "page_height": page.page_height,
         "page_ocr_status": page.page_ocr_status,
         "page_visual_status": page.page_visual_status,
         "text_blocks": [block.id for block in page.text_blocks],
@@ -127,6 +129,13 @@ def _page_sources(page: SlidePage) -> dict[str, Any]:
                 "importance_score": image.importance_score,
                 "importance_rank": image.importance_rank,
                 "importance_reason": image.importance_reason,
+                "layout_order": image.layout_order,
+                "anchor_element_ids": image.anchor_element_ids,
+                "anchor_reason": image.anchor_reason,
+                "grounding_confidence": image.grounding_confidence,
+                "figure_explanation": image.figure_explanation,
+                "figure_explanation_status": image.figure_explanation_status,
+                "figure_audit_status": image.figure_audit_status,
             }
             for image in page.images
         ],
@@ -172,6 +181,13 @@ def _image_ref(deck: Deck, page: SlidePage, image: ImageAsset) -> dict[str, Any]
         "importance_score": image.importance_score,
         "importance_rank": image.importance_rank,
         "importance_reason": image.importance_reason,
+        "layout_order": image.layout_order,
+        "anchor_element_ids": image.anchor_element_ids,
+        "anchor_reason": image.anchor_reason,
+        "grounding_confidence": image.grounding_confidence,
+        "figure_explanation": image.figure_explanation,
+        "figure_explanation_status": image.figure_explanation_status,
+        "figure_audit_status": image.figure_audit_status,
         "preview": image.caption or image.path,
     }
 

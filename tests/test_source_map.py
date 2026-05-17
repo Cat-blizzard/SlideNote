@@ -59,6 +59,11 @@ def test_source_map_includes_figure_crop_metadata(tmp_path):
                         crop_bbox=[0.1, 0.2, 0.6, 0.8],
                         crop_method="vision_bbox",
                         confidence=0.88,
+                        anchor_element_ids=["s4_t1"],
+                        anchor_reason="bbox_nearest_preceding_element",
+                        grounding_confidence=0.82,
+                        figure_explanation="图示说明一致性读写关系。",
+                        figure_explanation_status="visual_summary",
                     )
                 ],
             )
@@ -70,4 +75,7 @@ def test_source_map_includes_figure_crop_metadata(tmp_path):
     ref = source_map["note_blocks"][0]["source_refs"][0]
     assert ref["element_id"] == "s4_fig1"
     assert ref["crop_bbox"] == [0.1, 0.2, 0.6, 0.8]
+    assert ref["anchor_element_ids"] == ["s4_t1"]
+    assert ref["figure_explanation_status"] == "visual_summary"
     assert source_map["pages"][0]["images"][0]["crop_method"] == "vision_bbox"
+    assert source_map["pages"][0]["images"][0]["grounding_confidence"] == 0.82

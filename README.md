@@ -220,6 +220,7 @@ outputs/lecture/
   llm_usage.json
   figures.json
   figure_usage.json
+  figure_grounding.json
   ocr.json
   ocr_usage.json
   visuals.json
@@ -246,6 +247,8 @@ By default, `notes.md` references bundled image copies under `notes.assets/`. If
 - `decorative`: low priority unless the user explicitly refreshes it.
 
 `image_importance.json` records per-image study-value scores and reasons. Vision `auto` uses that ranking to choose the best local figure crop or embedded image before falling back to a full-page screenshot.
+
+`figure_grounding.json` records where each study-value figure belongs in the note: layout order, nearby text/table anchors, grounding confidence, explanation status, and whether the figure needs manual review. `notes.md` uses this metadata to place figures near the relevant paragraph instead of dumping all images at the end.
 
 `sections.json` records the section plan used by `--note-context section` and `lecture-weave`. In `--section-detection auto`, SlideNote uses local rules without LLM notes, and switches to LLM-assisted section detection when section-based LLM notes are enabled.
 
@@ -424,6 +427,18 @@ Default limits:
 ```
 
 Figure cropping is best-effort. The model returns bounding boxes, and SlideNote validates, filters, deduplicates, and crops them locally. If no reliable local figure is found, notes fall back to the full-page screenshot.
+
+## Figure Grounding
+
+After OCR/vision and before note writing, SlideNote anchors non-decorative figures to nearby text or table elements. The default is local and deterministic:
+
+```powershell
+--figure-grounding auto   # Default: local layout anchoring, reusing existing OCR/vision summaries
+--figure-placement inline # Default: insert figures near their anchored concept
+--figure-audit local      # Report missing explanations or low-confidence anchors
+```
+
+Use `--figure-grounding vision` when you want image explanations even if `--vision off`; this will trigger the normal vision extraction path for important visual targets. Coverage reports now include a figure section showing which images were inserted, where they were anchored, and which ones need review.
 
 `source_map.json` records the mapping between note blocks and source elements:
 

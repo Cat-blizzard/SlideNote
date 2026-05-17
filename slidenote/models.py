@@ -44,11 +44,20 @@ class ImageAsset:
     importance_score: float | None = None
     importance_rank: int | None = None
     importance_reason: str | None = None
+    layout_order: float | None = None
+    anchor_element_ids: list[str] = field(default_factory=list)
+    anchor_reason: str | None = None
+    grounding_confidence: float | None = None
+    figure_explanation: str | None = None
+    figure_explanation_status: str | None = None
+    figure_audit_status: str | None = None
 
 
 @dataclass(slots=True)
 class SlidePage:
     slide_id: int
+    page_width: float | None = None
+    page_height: float | None = None
     title: str | None = None
     text_blocks: list[TextBlock] = field(default_factory=list)
     tables: list[TableBlock] = field(default_factory=list)

@@ -60,6 +60,35 @@ def test_coverage_tracks_figure_crop_ids():
     assert report["missing"] == 0
 
 
+def test_coverage_reports_figure_grounding_status():
+    deck = Deck(
+        source_path="demo.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=4,
+                images=[
+                    ImageAsset(
+                        id="s4_img1",
+                        path="images/diagram.png",
+                        anchor_element_ids=["s4_t1"],
+                        figure_explanation_status="visual_summary",
+                        figure_audit_status="ok",
+                    )
+                ],
+            )
+        ],
+    )
+
+    report = analyze_coverage(deck, "![图](images/diagram.png)<!-- slidenote-source: p4:s4_img1 -->")
+
+    figures = report["figure_coverage"]["figures"]
+    assert report["figure_coverage"]["covered_figures"] == 1
+    assert report["figure_coverage"]["anchored_figures"] == 1
+    assert report["figure_coverage"]["explained_figures"] == 1
+    assert figures[0]["anchor_element_ids"] == ["s4_t1"]
+
+
 def test_coverage_reports_pages_with_no_referenced_elements():
     deck = Deck(
         source_path="demo.pdf",
