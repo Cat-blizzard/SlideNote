@@ -201,6 +201,7 @@ def _generate_notes_with_llm(
         record_repair(content_guard, repair_record)
         if isinstance(repair_record.get("llm"), dict):
             repair_context_records.append(repair_record["llm"])
+    markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
     usage_report = _build_usage_report(
         deck=deck,
         provider=resolved_provider,
@@ -441,6 +442,7 @@ def _generate_notes_with_lecture_weave(
         record_repair(content_guard, final_repair_record)
         if isinstance(final_repair_record.get("llm"), dict):
             repair_context_records.append(final_repair_record["llm"])
+    markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
     all_context_records = page_records + weave_records + repair_context_records
     usage_report = _build_usage_report(
         deck=deck,

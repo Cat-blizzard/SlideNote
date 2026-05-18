@@ -43,6 +43,40 @@ def test_source_map_links_hidden_source_comments(tmp_path):
     assert [ref["element_id"] for ref in refs] == ["s3_t1"]
 
 
+def test_source_map_note_block_ids_are_stable_across_line_shifts(tmp_path):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[SlidePage(slide_id=1, text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Quorum")])],
+    )
+    first_notes = "# Notes\n\nQuorum 要求读写集合相交。\n<!-- slidenote-source: p1:s1_t1 -->\n"
+    shifted_notes = "# Notes\n\n额外导言。\n\nQuorum 要求读写集合相交。\n<!-- slidenote-source: p1:s1_t1 -->\n"
+
+    first_map = build_source_map(deck, first_notes, tmp_path)
+    shifted_map = build_source_map(deck, shifted_notes, tmp_path)
+
+    first_id = next(block["note_block_id"] for block in first_map["note_blocks"] if block["element_ids"] == ["s1_t1"])
+    shifted_id = next(block["note_block_id"] for block in shifted_map["note_blocks"] if block["element_ids"] == ["s1_t1"])
+    assert first_id == shifted_id
+    assert first_map["note_blocks"][1]["legacy_note_block_id"] == "note_block_2"
+    assert first_map["note_blocks"][1]["heading_path"] == ["Notes"]
+
+
+def test_source_map_links_image_block_by_markdown_target(tmp_path):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[SlidePage(slide_id=1, images=[ImageAsset(id="s1_img1", path="images/diagram.png", role="content")])],
+    )
+
+    source_map = build_source_map(deck, "![diagram](notes.assets/images/diagram.png)\n", tmp_path)
+
+    image_block = source_map["note_blocks"][0]
+    assert image_block["kind"] == "image"
+    assert image_block["element_ids"] == ["s1_img1"]
+    assert image_block["image_targets"] == ["notes.assets/images/diagram.png"]
+
+
 def test_source_map_includes_figure_crop_metadata(tmp_path):
     deck = Deck(
         source_path="lecture.pdf",

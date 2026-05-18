@@ -41,12 +41,16 @@ def _ensure_grounded_figures(
             continue
         for image in note_candidate_images(page):
             image_path = _asset_display_path(image.path, asset_map)
+            block = "\n".join(_render_image(page, image, asset_map=asset_map, source_display=source_display)).strip()
+            if not block:
+                continue
+            if figure_placement == "inline":
+                current = _remove_existing_image_block(current, image_path, image)
+                current = _insert_figure_block(current, page, image, block, figure_placement)
+                continue
             if _image_markdown_present(current, image_path):
                 if image.id not in _source_tokens(current):
                     current = _ensure_image_source_marker(current, page, image, image_path, source_display)
-                continue
-            block = "\n".join(_render_image(page, image, asset_map=asset_map, source_display=source_display)).strip()
-            if not block:
                 continue
             current = _insert_figure_block(current, page, image, block, figure_placement)
     return current.rstrip() + "\n"
@@ -78,6 +82,55 @@ def _ensure_image_source_marker(
             new_lines.insert(index + 1, marker)
             return "\n".join(new_lines).rstrip() + "\n"
     return markdown
+
+
+def _remove_existing_image_block(markdown: str, image_path: str, image: ImageAsset) -> str:
+    if not image_path:
+        return markdown
+    lines = markdown.splitlines()
+    remove: set[int] = set()
+    source_ids = set(_image_source_ids(image))
+    for index, line in enumerate(lines):
+        if not _line_has_image_target(line, image_path):
+            continue
+        remove.add(index)
+        for neighbor in (index - 1, index + 1):
+            if 0 <= neighbor < len(lines) and _is_marker_only_for_ids(lines[neighbor], source_ids):
+                remove.add(neighbor)
+    if not remove:
+        return markdown
+    kept = [line for index, line in enumerate(lines) if index not in remove]
+    return _collapse_blank_lines(kept).rstrip() + "\n"
+
+
+def _line_has_image_target(line: str, image_path: str) -> bool:
+    normalized_path = image_path.strip().strip("<>").replace("\\", "/")
+    for target in re.findall(r"!\[[^\]]*]\(([^)]+)\)", line):
+        normalized_target = target.strip().strip("<>").replace("\\", "/")
+        if normalized_target == normalized_path:
+            return True
+    return False
+
+
+def _is_marker_only_for_ids(line: str, source_ids: set[str]) -> bool:
+    stripped = line.strip()
+    if not stripped or SOURCE_COMMENT_PREFIX not in stripped:
+        return False
+    if not re.fullmatch(r"<!--.*?-->", stripped):
+        return False
+    return bool(source_ids.intersection(_source_tokens(stripped)))
+
+
+def _collapse_blank_lines(lines: list[str]) -> str:
+    collapsed: list[str] = []
+    blank = False
+    for line in lines:
+        is_blank = not line.strip()
+        if is_blank and blank:
+            continue
+        collapsed.append(line)
+        blank = is_blank
+    return "\n".join(collapsed)
 
 
 def _insert_figure_block(markdown: str, page: SlidePage, image: ImageAsset, block: str, figure_placement: str) -> str:

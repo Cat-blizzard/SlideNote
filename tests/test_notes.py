@@ -287,6 +287,60 @@ def test_llm_result_adds_source_marker_to_existing_image(tmp_path, monkeypatch):
     assert analyze_coverage(deck, result.markdown)["missing"] == 0
 
 
+def test_llm_existing_image_is_repositioned_to_anchor(tmp_path, monkeypatch):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    (image_dir / "diagram.png").write_bytes(b"fake")
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                text_blocks=[
+                    TextBlock(id="s1_t1", type="paragraph", content="Quorum"),
+                    TextBlock(id="s1_t2", type="paragraph", content="Later detail"),
+                ],
+                images=[
+                    ImageAsset(
+                        id="s1_img1",
+                        path="images/diagram.png",
+                        anchor_element_ids=["s1_t1"],
+                        figure_explanation="图示补充 quorum 的集合关系。",
+                    )
+                ],
+            )
+        ],
+    )
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            class Result:
+                text = (
+                    "Quorum 保证读写集合相交。<!-- slidenote-source: p1:s1_t1 -->\n\n"
+                    "后续再讨论具体计算。<!-- slidenote-source: p1:s1_t2 -->\n\n"
+                    "![模型放错位置的图](notes.assets/images/diagram.png)"
+                )
+                usage = {}
+
+            return Result()
+
+    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+
+    result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct")
+
+    anchor_pos = result.markdown.index("s1_t1")
+    image_pos = result.markdown.index("![第 1 页图片](notes.assets/images/diagram.png)")
+    later_pos = result.markdown.index("s1_t2")
+    assert anchor_pos < image_pos < later_pos
+    assert result.markdown.count("notes.assets/images/diagram.png") == 1
+    assert "模型放错位置的图" not in result.markdown
+    assert analyze_coverage(deck, result.markdown)["missing"] == 0
+
+
 def test_source_display_footnote_keeps_clean_page_reference():
     deck = Deck(
         source_path="lecture.pdf",
