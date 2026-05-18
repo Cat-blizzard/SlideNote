@@ -144,6 +144,7 @@ def test_quality_first_defaults_are_exposed_by_parser():
     assert args.figure_grounding == "auto"
     assert args.figure_placement == "inline"
     assert args.figure_audit == "local"
+    assert args.content_guard == "auto"
 
 
 def test_doctor_command_writes_json(tmp_path):
@@ -159,6 +160,25 @@ def test_doctor_command_writes_json(tmp_path):
     assert "gui" in report
     assert all("category" in check and "impact" in check for check in report["checks"])
     assert isinstance(report["gui"]["ready_for_local_parse"], bool)
+
+
+def test_doctor_reports_pywin32_missing_when_parent_package_is_absent(monkeypatch):
+    from slidenote import doctor
+
+    real_find_spec = doctor.importlib.util.find_spec
+
+    def fake_find_spec(module):
+        if module == "win32com.client":
+            raise ModuleNotFoundError("No module named 'win32com'")
+        return real_find_spec(module)
+
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", fake_find_spec)
+
+    report = doctor.run_doctor()
+
+    pywin32_check = next(check for check in report["checks"] if check["name"] == "pywin32")
+    assert pywin32_check["status"] == "warn"
+    assert pywin32_check["required"] is False
 
 
 def test_deck_brief_auto_runs_before_lecture_weave(tmp_path, monkeypatch):

@@ -70,6 +70,7 @@ python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --
 - 自动识别由多个嵌入小图片拼成的组合图，从整页截图裁出整体区域，并把小图保留为隐藏来源。
 - 生成 `sections.json`；开启 LLM 时，`--section-detection auto` 可以用模型辅助修正章节边界，再交给 Lecture-Weave 编织。
 - 在高质量 Lecture-Weave 模式下生成 `deck_brief.json` / `deck_brief.md`：先形成全局课程脉络，但只作为导航，不替代逐页覆盖。
+- 生成 `content_guard.json`：记录页面角色、高置信学习内容、required visible coverage、修复尝试和残余风险。
 - 每页尽量保存页面截图：PDF 原生支持；PPTX 需要本机安装 LibreOffice 或 PowerPoint COM 可用。
 - 生成 `content.json` 作为原始内容清单。
 - 生成 `notes.md`，默认隐藏来源标记，也可选择显示简洁页码或详细元素 ID。
@@ -218,6 +219,7 @@ outputs/lecture/
   sections.json
   deck_brief.md
   deck_brief.json
+  content_guard.json
   notes.md
   page_notes.md
   page_notes.json
@@ -261,6 +263,8 @@ outputs/lecture/
 `sections.json` 会记录最终采用的章节计划。不开 LLM 时使用本地规则；在 `--section-detection auto` 且启用章节式 LLM 笔记时，会先调用文本模型辅助识别章节边界。
 
 `deck_brief.json` 会在 `--deck-brief auto` 且同时启用 `--use-llm --note-strategy lecture-weave` 时生成，也可以用 `--deck-brief force` 强制生成。它记录课程主题、核心问题、章节脉络、关键概念、每页角色和跨页关联。后续逐页深讲只把它当作“全局导航图”：正文内容仍只能来自当前页，覆盖率检查仍按原始 text/table/image 元素 ID 执行。
+
+`content_guard.json` 默认由 `--content-guard auto` 生成。不开 `--use-llm` 时，它只记录本地启发式审查；开启 `--use-llm` 后，SlideNote 会先本地预筛表格、公式、定义、条件、OCR 关键文本、视觉摘要和非装饰图片，再让文本模型判断页面角色和元素级学习角色。只有高置信 `must_explain` 元素会进入 `required_visible_coverage` 并触发最多一次自然修复；低置信元素只保留在审查报告里。
 
 ## 环境检测
 
@@ -359,11 +363,14 @@ python -m slidenote build lecture.pdf `
 --note-strategy lecture-weave  # 默认：先逐页深讲，再章节编织
 --note-depth detailed      # 默认：详细讲义式讲解深度
 --deck-brief auto          # 默认：只在 Lecture-Weave 高质量模式下生成全局脉络
+--content-guard auto       # 默认：保护高置信关键学习内容
 --note-language zh         # 默认：输出简体中文笔记
 --term-policy bilingual    # 默认：中文笔记中保留关键英文专业术语
 ```
 
 `lecture-weave` 现在是默认 LLM 笔记策略。这个模式会更耗时、更耗 token，但更接近“逐页问 AI：请你讲讲这一页”的效果：先可生成 Deck Brief 作为全局导航，再为每页生成详细讲解，最后把逐页讲解编织成连贯章节。Deck Brief 有明确约束：不能替代当前页证据，也不能让逐页讲解变短。
+
+`--content-guard auto` 默认开启。它会把 `learning_items` 交给笔记 prompt，并在生成后检查关键元素是否出现在可见正文中，而不是只藏在 HTML source marker 里。需要恢复旧行为或尽量减少额外 LLM 调用时，可以用 `--content-guard off`。
 
 输出语言和课件语言是分开的。英文课件想生成中文笔记时，默认的 `--note-language zh --term-policy bilingual` 会要求模型在关键术语首次出现时尽量写成“中文译名（English term/acronym）”；想要英文笔记可以用 `--note-language en`。如果希望尽量保留原始术语，用 `--term-policy preserve`；如果希望尽量翻译术语，用 `--term-policy translate`。
 

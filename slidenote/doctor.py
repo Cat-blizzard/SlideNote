@@ -129,8 +129,7 @@ def _python_check() -> Check:
 
 
 def _package_check(name: str, module: str, hint: str, fix: str, required: bool = False) -> Check:
-    spec = importlib.util.find_spec(module)
-    if spec:
+    if _module_available(module):
         return Check(name, "ok", "available", "python_package", _package_impact(name), required=required)
     return Check(
         name,
@@ -142,6 +141,13 @@ def _package_check(name: str, module: str, hint: str, fix: str, required: bool =
         hint=hint,
         fix=fix,
     )
+
+
+def _module_available(module: str) -> bool:
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, AttributeError, ValueError):
+        return False
 
 
 def _executable_check(name: str, executables: tuple[str, ...], hint: str, docs: str | None = None) -> Check:

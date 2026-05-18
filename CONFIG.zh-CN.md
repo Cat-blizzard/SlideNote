@@ -24,6 +24,7 @@ python -m slidenote build lecture.pdf `
 --note-context section
 --note-depth detailed
 --deck-brief auto
+--content-guard auto
 --note-language zh
 --term-policy bilingual
 --weave-dedup soft
@@ -88,6 +89,7 @@ python -m slidenote build lecture.pdf `
 | `--note-style` | `article` | `article` / `faithful` | 默认按知识点组织学习笔记；`faithful` 更贴近原顺序。 |
 | `--note-depth` | `detailed` | `concise` / `balanced` / `detailed` | 默认详细讲义式讲解深度。 |
 | `--deck-brief` | `auto` | `auto` / `off` / `force` | 是否在笔记生成前先生成全局课程脉络。`auto` 只在 `--use-llm --note-strategy lecture-weave` 时运行。 |
+| `--content-guard` | `auto` | `auto` / `off` | 学习内容门禁。`auto` 会生成 `content_guard.json`；开启 `--use-llm` 时调用文本模型判断高置信关键内容，未开启时只做本地启发式审查。 |
 | `--note-language` | `zh` | `auto` / `zh` / `en` | 笔记输出语言；可让英文课件生成中文笔记。 |
 | `--term-policy` | `bilingual` | `preserve` / `translate` / `bilingual` | 专业术语处理方式；中文笔记默认保留关键英文术语。 |
 | `--weave-dedup` | `soft` | `soft` / `normal` / `aggressive` | `lecture-weave` 编织阶段的去重强度。 |
@@ -148,6 +150,17 @@ lecture-weave
 | `force` | 即使不是 Lecture-Weave，也尝试生成 `deck_brief.json` / `deck_brief.md`。 | 想单独查看课件总体架构，或为后续 GUI/调试准备。 |
 
 Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主题、核心问题、章节脉络、关键概念、概念依赖、每页角色和跨页关联。逐页深讲阶段会明确约束：`deck_brief` 只能用于理解当前位置和减少重复，正文内容只能来自 `current_page`，不能因为全局脉络而省略当前页元素，也不能把后文内容提前写进当前页。
+
+### `content-guard`
+
+| 值 | 含义 | 适合场景 |
+| --- | --- | --- |
+| `auto` | 默认。先本地预筛候选学习内容；启用 `--use-llm` 时再用文本模型做语义分类。 | 正式生成，尤其是目录标题中混有定义、条件、公式、表格结论或图示说明的课件。 |
+| `off` | 完全关闭学习内容门禁，不生成 `content_guard.json`。 | 只想复现旧行为，或希望减少一次额外文本模型调用。 |
+
+`content_guard.json` 记录 `page_role`（`structural` / `content` / `mixed`）、元素级 `learning_role`、`must_explain`、`confidence`、分类原因、生成后的 `required_visible_coverage`、修复次数和残余风险。纯结构页可以只保留隐藏 source marker；混合页会删除目录/导航碎片，但 `must_explain=true` 且 `confidence >= 0.7` 的元素必须进入可见正文。
+
+覆盖率上，`trace_coverage` 表示元素 ID 是否被 source marker 追踪到，`visible_coverage` 表示是否出现在可见正文中，`required_visible_coverage` 只统计 content guard 判定出的高置信关键学习内容。若 required 元素只出现在隐藏 marker 中，SlideNote 会最多运行一次 repair prompt，把缺失内容自然融入原段落；修复后仍缺失时，会写入 `content_guard.json` 和 `run_summary.json` 的 warning。
 
 ### `section-detection`
 
@@ -261,6 +274,7 @@ image_importance.json
 sections.json
 deck_brief.md
 deck_brief.json
+content_guard.json
 notes.md
 page_notes.md
 page_notes.json
