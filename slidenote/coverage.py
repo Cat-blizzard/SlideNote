@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from slidenote.content_guard import required_item_ids, structural_slide_ids as guard_structural_slide_ids
 from slidenote.figure_grounding import note_candidate_images
 from slidenote.models import Deck, ImageAsset, SlidePage
 
@@ -16,6 +17,7 @@ class CoverageItem:
     visible_covered: bool
     preview: str
     structural: bool = False
+    required: bool = False
 
     @property
     def covered(self) -> bool:
@@ -26,10 +28,19 @@ class CoverageItem:
         return self.trace_covered and not self.visible_covered
 
 
-def analyze_coverage(deck: Deck, notes_markdown: str) -> dict[str, object]:
-    items = _collect_items(deck, notes_markdown)
+def analyze_coverage(deck: Deck, notes_markdown: str, content_guard: dict[str, object] | None = None) -> dict[str, object]:
+    items = _collect_items(deck, notes_markdown, content_guard=content_guard)
     trace_coverage = _coverage_totals(deck, items, coverage_attr="trace_covered")
     visible_coverage = _coverage_totals(deck, items, coverage_attr="visible_covered", exclude_structural=True)
+    required_visible_coverage = _coverage_totals(
+        deck,
+        [item for item in items if item.required],
+        coverage_attr="visible_covered",
+        exclude_structural=False,
+    )
+    required_visible_coverage["missing_items"] = [
+        _item_record(item) for item in items if item.required and not item.visible_covered
+    ]
     marker_only_items = [item for item in items if item.marker_only and not item.structural]
     structural_marker_only_items = [item for item in items if item.marker_only and item.structural]
     figure_coverage = _figure_coverage(deck, notes_markdown)
@@ -41,6 +52,7 @@ def analyze_coverage(deck: Deck, notes_markdown: str) -> dict[str, object]:
         "page_coverage": trace_coverage["page_coverage"],
         "trace_coverage": trace_coverage,
         "visible_coverage": visible_coverage,
+        "required_visible_coverage": required_visible_coverage,
         "marker_only": len(marker_only_items),
         "marker_only_items": [_item_record(item) for item in marker_only_items],
         "structural_marker_only": len(structural_marker_only_items),
@@ -62,6 +74,11 @@ def render_coverage_markdown(report: dict[str, object]) -> str:
     visible_ratio = float(visible_coverage.get("coverage_ratio", 1.0)) if isinstance(visible_coverage, dict) else 1.0
     marker_only = int(report.get("marker_only", 0))
     structural_marker_only = int(report.get("structural_marker_only", 0))
+    required_coverage = report.get("required_visible_coverage") if isinstance(report.get("required_visible_coverage"), dict) else {}
+    required_total = int(required_coverage.get("total", 0)) if isinstance(required_coverage, dict) else 0
+    required_covered = int(required_coverage.get("covered", 0)) if isinstance(required_coverage, dict) else 0
+    required_missing = int(required_coverage.get("missing", 0)) if isinstance(required_coverage, dict) else 0
+    required_ratio = float(required_coverage.get("coverage_ratio", 1.0)) if isinstance(required_coverage, dict) else 1.0
     lines = [
         "# SlideNote 覆盖率报告",
         "",
@@ -70,6 +87,8 @@ def render_coverage_markdown(report: dict[str, object]) -> str:
         f"- 溯源可能遗漏：{missing}",
         f"- 正文解释覆盖：{visible_covered} / {visible_total}（{visible_ratio:.1%}）",
         f"- 正文未显式解释：{visible_missing}",
+        f"- 必讲内容正文覆盖：{required_covered} / {required_total}（{required_ratio:.1%}）",
+        f"- 必讲内容仍未显式解释：{required_missing}",
         f"- 仅溯源标记覆盖：{marker_only}",
         f"- 结构页仅溯源标记覆盖：{structural_marker_only}",
     ]
@@ -133,11 +152,14 @@ def render_coverage_markdown(report: dict[str, object]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _collect_items(deck: Deck, notes_markdown: str) -> list[CoverageItem]:
+def _collect_items(deck: Deck, notes_markdown: str, content_guard: dict[str, object] | None = None) -> list[CoverageItem]:
     items: list[CoverageItem] = []
     trace_tokens = _source_tokens(notes_markdown)
     visible_tokens = _visible_source_tokens(notes_markdown)
-    structural_slide_ids = _structural_slide_ids(deck)
+    required_ids = required_item_ids(content_guard)
+    structural_slide_ids = guard_structural_slide_ids(content_guard) if content_guard else None
+    if structural_slide_ids is None:
+        structural_slide_ids = _structural_slide_ids(deck)
     for page in deck.pages:
         items.extend(
             _page_items(
@@ -145,6 +167,7 @@ def _collect_items(deck: Deck, notes_markdown: str) -> list[CoverageItem]:
                 trace_tokens=trace_tokens,
                 visible_tokens=visible_tokens,
                 structural=page.slide_id in structural_slide_ids,
+                required_ids=required_ids,
             )
         )
     return items
@@ -212,8 +235,10 @@ def _page_items(
     trace_tokens: set[str],
     visible_tokens: set[str],
     structural: bool = False,
+    required_ids: set[str] | None = None,
 ) -> list[CoverageItem]:
     items: list[CoverageItem] = []
+    required_ids = required_ids or set()
     for block in page.text_blocks:
         items.append(
             CoverageItem(
@@ -224,6 +249,7 @@ def _page_items(
                 visible_covered=block.id in visible_tokens,
                 preview=_preview(block.content),
                 structural=structural,
+                required=block.id in required_ids,
             )
         )
     for table in page.tables:
@@ -237,6 +263,7 @@ def _page_items(
                 visible_covered=table.id in visible_tokens,
                 preview=_preview(preview),
                 structural=structural,
+                required=table.id in required_ids,
             )
         )
     for image in page.images:
@@ -251,6 +278,7 @@ def _page_items(
                 visible_covered=image.id in visible_tokens,
                 preview=image.caption or image.path,
                 structural=structural,
+                required=image.id in required_ids,
             )
         )
     return items
@@ -266,6 +294,7 @@ def _item_record(item: CoverageItem) -> dict[str, object]:
         "visible_covered": item.visible_covered,
         "marker_only": item.marker_only,
         "structural": item.structural,
+        "required": item.required,
         "preview": item.preview,
     }
 

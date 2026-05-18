@@ -92,6 +92,7 @@ def generate_notes(
     figure_placement: str = "inline",
     section_plan: dict[str, Any] | None = None,
     deck_brief: dict[str, Any] | None = None,
+    content_guard: dict[str, Any] | None = None,
 ) -> str:
     return generate_notes_result(
         deck=deck,
@@ -122,6 +123,7 @@ def generate_notes(
         figure_placement=figure_placement,
         section_plan=section_plan,
         deck_brief=deck_brief,
+        content_guard=content_guard,
     ).markdown
 
 
@@ -154,6 +156,7 @@ def generate_notes_result(
     figure_placement: str = "inline",
     section_plan: dict[str, Any] | None = None,
     deck_brief: dict[str, Any] | None = None,
+    content_guard: dict[str, Any] | None = None,
 ) -> NoteGenerationResult:
     _validate_generation_options(
         asset_mode,
@@ -200,6 +203,7 @@ def generate_notes_result(
             figure_placement=figure_placement,
             section_plan=section_plan,
             deck_brief=deck_brief,
+            content_guard=content_guard,
         )
         result.asset_warnings = (result.asset_warnings or []) + asset_warnings + _validate_markdown_image_links(
             result.markdown, output_root

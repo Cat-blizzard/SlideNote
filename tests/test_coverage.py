@@ -85,6 +85,30 @@ def test_coverage_treats_comment_only_marker_as_marker_only():
     assert report["marker_only_items"][0]["id"] == "s1_t1"
 
 
+def test_required_coverage_distinguishes_marker_only_content():
+    deck = Deck(
+        source_path="demo.pptx",
+        source_type="pptx",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="replication improves availability")],
+            )
+        ],
+    )
+    content_guard = {
+        "pages": [{"slide_id": 1, "page_role": "content", "items": []}],
+        "items": [{"element_id": "s1_t1", "slide_id": 1, "must_explain": True, "confidence": 0.91}],
+    }
+
+    report = analyze_coverage(deck, "<!-- slidenote-source: p1:s1_t1 -->", content_guard=content_guard)
+
+    assert report["trace_coverage"]["covered"] == 1
+    assert report["required_visible_coverage"]["covered"] == 0
+    assert report["required_visible_coverage"]["missing"] == 1
+    assert report["required_visible_coverage"]["missing_items"][0]["id"] == "s1_t1"
+
+
 def test_structural_pages_are_exempt_from_visible_coverage():
     deck = Deck(
         source_path="demo.pptx",

@@ -691,6 +691,150 @@ def test_lecture_weave_prompt_uses_deck_brief_as_guarded_navigation(tmp_path, mo
     assert analyze_coverage(deck, result.markdown)["missing"] == 0
 
 
+def test_content_guard_learning_items_are_injected_into_page_prompt(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                title="Quorum",
+                text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Quorum requires intersecting read and write sets.")],
+            )
+        ],
+    )
+    content_guard = {
+        "required_confidence_threshold": 0.7,
+        "summary": {"repair_attempts": 0, "required_missing": 0, "residual_risks": 0},
+        "pages": [
+            {
+                "slide_id": 1,
+                "page_role": "content",
+                "items": [
+                    {
+                        "element_id": "s1_t1",
+                        "learning_role": "definition",
+                        "must_explain": True,
+                        "confidence": 0.93,
+                        "reason": "definition",
+                    }
+                ],
+            }
+        ],
+        "items": [
+            {
+                "element_id": "s1_t1",
+                "slide_id": 1,
+                "learning_role": "definition",
+                "must_explain": True,
+                "confidence": 0.93,
+                "reason": "definition",
+            }
+        ],
+    }
+    prompts = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            prompts.append(prompt)
+
+            class Result:
+                usage = {}
+                text = "Quorum 要求读集合和写集合相交。<!-- slidenote-source: p1:s1_t1 -->"
+
+            return Result()
+
+    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+
+    result = generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="openai",
+        api_key="test",
+        note_strategy="direct",
+        note_context="page",
+        content_guard=content_guard,
+    )
+
+    assert '"learning_items"' in prompts[0]
+    assert '"must_explain": true' in prompts[0]
+    assert result.llm_usage["request"]["content_guard_used"] is True
+    assert analyze_coverage(deck, result.markdown, content_guard=content_guard)["required_visible_coverage"]["missing"] == 0
+
+
+def test_content_guard_repairs_marker_only_required_content(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                title="Quorum",
+                text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Quorum requires intersecting read and write sets.")],
+            )
+        ],
+    )
+    content_guard = {
+        "required_confidence_threshold": 0.7,
+        "summary": {"repair_attempts": 0, "required_missing": 0, "residual_risks": 0},
+        "pages": [{"slide_id": 1, "page_role": "content", "items": []}],
+        "items": [
+            {
+                "element_id": "s1_t1",
+                "slide_id": 1,
+                "learning_role": "definition",
+                "must_explain": True,
+                "confidence": 0.95,
+                "reason": "definition",
+            }
+        ],
+        "repairs": [],
+    }
+    prompts = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            prompts.append(prompt)
+
+            class Result:
+                usage = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+
+            result = Result()
+            if '"task": "repair_required_learning_coverage"' in prompt:
+                result.text = "Quorum 要求读集合和写集合相交，用来保证读能看到相关写入。<!-- slidenote-source: p1:s1_t1 -->"
+            else:
+                result.text = "<!-- slidenote-source: p1:s1_t1 -->"
+            return result
+
+    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+
+    result = generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="openai",
+        api_key="test",
+        note_strategy="direct",
+        note_context="page",
+        content_guard=content_guard,
+    )
+    coverage = analyze_coverage(deck, result.markdown, content_guard=content_guard)
+
+    assert any('"task": "repair_required_learning_coverage"' in prompt for prompt in prompts)
+    assert "读集合和写集合相交" in result.markdown
+    assert coverage["trace_coverage"]["covered"] == 1
+    assert coverage["required_visible_coverage"]["missing"] == 0
+    assert content_guard["summary"]["repair_attempts"] == 1
+    assert result.llm_usage["summary"]["repair_contexts"] == 1
+
+
 def test_section_context_notes_use_numbered_outline_headings(tmp_path, monkeypatch):
     deck = Deck(
         source_path="ch06.pdf",

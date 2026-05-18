@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
+from slidenote.content_guard import CONTENT_REPAIR_PROMPT_VERSION, missing_required_items, record_repair
+from slidenote.coverage import analyze_coverage
 from slidenote.llm import LLMClient, SYSTEM_PROMPT, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.models import Deck
@@ -20,6 +22,7 @@ from .assembly import (
 from .prompts import (
     _llm_context_prompt,
     _llm_page_lecture_prompt,
+    _llm_repair_prompt,
     _llm_weave_prompt,
     _prompt_brief_hash,
     _prompt_deck_brief,
@@ -61,6 +64,7 @@ def _generate_notes_with_llm(
     figure_placement: str,
     section_plan: dict[str, Any] | None,
     deck_brief: dict[str, Any] | None,
+    content_guard: dict[str, Any] | None = None,
 ) -> "NoteGenerationResult":  # string annotation to avoid circular import
     from . import NoteGenerationResult
 
@@ -102,6 +106,7 @@ def _generate_notes_with_llm(
             supports_image_input=supports_image_input,
             section_plan=section_plan,
             deck_brief=deck_brief,
+            content_guard=content_guard,
         )
 
     contexts = _select_note_contexts(deck, note_context, section_plan=section_plan)
@@ -137,6 +142,7 @@ def _generate_notes_with_llm(
             figure_placement=figure_placement,
             source_type=deck.source_type,
             deck_brief=deck_brief,
+            content_guard=content_guard,
         )
         content = _postprocess_llm_markdown(content, source_display=source_display)
         return context.id, content, context_record
@@ -163,6 +169,38 @@ def _generate_notes_with_llm(
         usage_contexts.append(context_record)
         final_chunks[context.id] = content
 
+    markdown = _compose_final_markdown(
+        deck=deck,
+        contexts=contexts,
+        final_chunks=final_chunks,
+        section_plan=section_plan,
+        source_display=source_display,
+    )
+    markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
+    repair_context_records: list[dict[str, Any]] = []
+    markdown, repair_record = _repair_required_markdown_once(
+        deck=deck,
+        context=NoteContext(id="final", kind="final", title="final", pages=deck.pages),
+        markdown=markdown,
+        output_root=output_root,
+        cache=cache,
+        cache_mode=cache_mode,
+        provider=resolved_provider,
+        model=resolved_model,
+        api_key=api_key,
+        base_url=resolved_base_url,
+        max_output_tokens=max_output_tokens,
+        temperature=temperature,
+        source_display=source_display,
+        note_language=note_language,
+        term_policy=term_policy,
+        content_guard=content_guard,
+        stage="final",
+    )
+    if repair_record is not None:
+        record_repair(content_guard, repair_record)
+        if isinstance(repair_record.get("llm"), dict):
+            repair_context_records.append(repair_record["llm"])
     usage_report = _build_usage_report(
         deck=deck,
         provider=resolved_provider,
@@ -173,7 +211,7 @@ def _generate_notes_with_llm(
         output_root=output_root,
         max_output_tokens=max_output_tokens,
         temperature=temperature,
-        contexts=usage_contexts,
+        contexts=usage_contexts + repair_context_records,
         note_context=resolved_note_context,
         source_display=source_display,
         note_style=note_style,
@@ -186,16 +224,10 @@ def _generate_notes_with_llm(
         asset_mode=asset_mode,
         screenshot_policy=screenshot_policy,
         figure_placement=figure_placement,
+        repair_contexts=repair_context_records,
         deck_brief=deck_brief,
+        content_guard=content_guard,
     )
-    markdown = _compose_final_markdown(
-        deck=deck,
-        contexts=contexts,
-        final_chunks=final_chunks,
-        section_plan=section_plan,
-        source_display=source_display,
-    )
-    markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
     return NoteGenerationResult(markdown=markdown, llm_usage=usage_report)
 
 
@@ -229,6 +261,7 @@ def _generate_notes_with_lecture_weave(
     supports_image_input: bool,
     section_plan: dict[str, Any] | None,
     deck_brief: dict[str, Any] | None,
+    content_guard: dict[str, Any] | None = None,
 ) -> "NoteGenerationResult":  # string annotation to avoid circular import
     from . import NoteGenerationResult
 
@@ -269,8 +302,32 @@ def _generate_notes_with_lecture_weave(
             screenshot_policy=screenshot_policy,
             figure_placement=figure_placement,
             deck_brief=deck_brief,
+            content_guard=content_guard,
         )
-        return context.id, _postprocess_llm_markdown(content, source_display=source_display), record
+        content = _postprocess_llm_markdown(content, source_display=source_display)
+        page_deck = Deck(source_path=deck.source_path, source_type=deck.source_type, pages=[page])
+        content, repair_record = _repair_required_markdown_once(
+            deck=page_deck,
+            context=context,
+            markdown=content,
+            output_root=output_root,
+            cache=cache,
+            cache_mode=cache_mode,
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            source_display=source_display,
+            note_language=note_language,
+            term_policy=term_policy,
+            content_guard=content_guard,
+            stage="page_note",
+        )
+        if repair_record is not None:
+            record["content_guard_repair"] = repair_record
+        return context.id, content, record
 
     if workers == 1:
         for context in page_contexts:
@@ -289,10 +346,16 @@ def _generate_notes_with_lecture_weave(
 
     page_markdown_by_slide: dict[int, str] = {}
     page_records: list[dict[str, Any]] = []
+    repair_context_records: list[dict[str, Any]] = []
     for context in page_contexts:
         content, record = page_results[context.id]
         page_markdown_by_slide[context.pages[0].slide_id] = content
         page_records.append(record)
+        repair_record = record.get("content_guard_repair")
+        if isinstance(repair_record, dict):
+            record_repair(content_guard, repair_record)
+            if isinstance(repair_record.get("llm"), dict):
+                repair_context_records.append(repair_record["llm"])
 
     from .assembly import _resolved_context_mode
     resolved_note_context = _resolved_context_mode(deck, note_context)
@@ -321,6 +384,7 @@ def _generate_notes_with_lecture_weave(
             term_policy=term_policy,
             weave_dedup=weave_dedup,
             deck_brief=deck_brief,
+            content_guard=content_guard,
         )
         return context.id, _postprocess_llm_markdown(content, source_display=source_display), record
 
@@ -346,7 +410,38 @@ def _generate_notes_with_lecture_weave(
         final_chunks[context.id] = content
         weave_records.append(record)
 
-    all_context_records = page_records + weave_records
+    markdown = _compose_final_markdown(
+        deck=deck,
+        contexts=weave_contexts,
+        final_chunks=final_chunks,
+        section_plan=section_plan,
+        source_display=source_display,
+    )
+    markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
+    markdown, final_repair_record = _repair_required_markdown_once(
+        deck=deck,
+        context=NoteContext(id="final", kind="final", title="final", pages=deck.pages),
+        markdown=markdown,
+        output_root=output_root,
+        cache=cache,
+        cache_mode=cache_mode,
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        max_output_tokens=max_output_tokens,
+        temperature=temperature,
+        source_display=source_display,
+        note_language=note_language,
+        term_policy=term_policy,
+        content_guard=content_guard,
+        stage="weave",
+    )
+    if final_repair_record is not None:
+        record_repair(content_guard, final_repair_record)
+        if isinstance(final_repair_record.get("llm"), dict):
+            repair_context_records.append(final_repair_record["llm"])
+    all_context_records = page_records + weave_records + repair_context_records
     usage_report = _build_usage_report(
         deck=deck,
         provider=provider,
@@ -372,16 +467,10 @@ def _generate_notes_with_lecture_weave(
         figure_placement=figure_placement,
         page_contexts=page_records,
         weave_contexts=weave_records,
+        repair_contexts=repair_context_records,
         deck_brief=deck_brief,
+        content_guard=content_guard,
     )
-    markdown = _compose_final_markdown(
-        deck=deck,
-        contexts=weave_contexts,
-        final_chunks=final_chunks,
-        section_plan=section_plan,
-        source_display=source_display,
-    )
-    markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
 
     from .assembly import _build_page_notes_report, _build_weave_report, _render_page_notes_markdown
 
@@ -451,6 +540,7 @@ def _generate_llm_context(
     figure_placement: str,
     source_type: str,
     deck_brief: dict[str, Any] | None = None,
+    content_guard: dict[str, Any] | None = None,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     user_prompt = _llm_context_prompt(
@@ -467,6 +557,7 @@ def _generate_llm_context(
         figure_placement=figure_placement,
         source_type=source_type,
         deck_brief=deck_brief,
+        content_guard=content_guard,
     )
     prompt_brief = _prompt_deck_brief(deck_brief, [page.slide_id for page in context.pages])
     cache_key_payload = {
@@ -487,6 +578,7 @@ def _generate_llm_context(
         "screenshot_policy": screenshot_policy,
         "figure_placement": figure_placement,
         "deck_brief_hash": _prompt_brief_hash(prompt_brief),
+        "content_guard_used": bool(content_guard),
         "system_prompt_hash": sha256_text(SYSTEM_PROMPT),
         "user_prompt_hash": sha256_text(user_prompt),
         "user_prompt": user_prompt,
@@ -547,6 +639,7 @@ def _generate_llm_context(
                     "note_language": note_language,
                     "term_policy": term_policy,
                     "deck_brief_used": bool(prompt_brief),
+                    "content_guard_used": bool(content_guard),
                 },
                 "prompt_hash": prompt_hash,
                 "output_text": content,
@@ -597,6 +690,7 @@ def _generate_page_lecture_context(
     screenshot_policy: str,
     figure_placement: str,
     deck_brief: dict[str, Any] | None = None,
+    content_guard: dict[str, Any] | None = None,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     from .prompts import _prompt_slide_scope
@@ -616,6 +710,7 @@ def _generate_page_lecture_context(
         figure_placement=figure_placement,
         source_type=deck.source_type,
         deck_brief=deck_brief,
+        content_guard=content_guard,
     )
     prompt_brief = _prompt_deck_brief(deck_brief, _prompt_slide_scope(deck, context.pages[0].slide_id, page_neighborhood))
     return _generate_cached_llm_text(
@@ -645,6 +740,7 @@ def _generate_page_lecture_context(
             "figure_placement": figure_placement,
             "deck_brief_used": bool(prompt_brief),
             "deck_brief_hash": _prompt_brief_hash(prompt_brief),
+            "content_guard_used": bool(content_guard),
         },
     )
 
@@ -669,6 +765,7 @@ def _generate_weave_context(
     term_policy: str,
     weave_dedup: str,
     deck_brief: dict[str, Any] | None = None,
+    content_guard: dict[str, Any] | None = None,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     user_prompt = _llm_weave_prompt(
@@ -682,6 +779,7 @@ def _generate_weave_context(
         term_policy=term_policy,
         weave_dedup=weave_dedup,
         deck_brief=deck_brief,
+        content_guard=content_guard,
     )
     prompt_brief = _prompt_deck_brief(deck_brief, [page.slide_id for page in context.pages])
     return _generate_cached_llm_text(
@@ -709,8 +807,87 @@ def _generate_weave_context(
             "weave_dedup": weave_dedup,
             "deck_brief_used": bool(prompt_brief),
             "deck_brief_hash": _prompt_brief_hash(prompt_brief),
+            "content_guard_used": bool(content_guard),
         },
     )
+
+
+def _repair_required_markdown_once(
+    deck: Deck,
+    context: NoteContext,
+    markdown: str,
+    output_root: Path,
+    cache: LLMCache,
+    cache_mode: str,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    max_output_tokens: int,
+    temperature: float | None,
+    source_display: str,
+    note_language: str,
+    term_policy: str,
+    content_guard: dict[str, Any] | None,
+    stage: str,
+) -> tuple[str, dict[str, Any] | None]:
+    if not content_guard:
+        return markdown, None
+    before_coverage = analyze_coverage(deck, markdown, content_guard=content_guard)
+    missing_before = missing_required_items(content_guard, before_coverage)
+    if not missing_before:
+        return markdown, None
+
+    prompt = _llm_repair_prompt(
+        markdown=markdown,
+        missing_items=missing_before,
+        source_display=source_display,
+        stage=stage,
+        note_language=note_language,
+        term_policy=term_policy,
+    )
+    repaired, llm_record = _generate_cached_llm_text(
+        context=NoteContext(
+            id=f"repair_{stage}_{context.id}",
+            kind=f"repair_{context.kind}",
+            title=context.title,
+            pages=context.pages,
+        ),
+        output_root=output_root,
+        cache=cache,
+        cache_mode=cache_mode,
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        max_output_tokens=max_output_tokens,
+        temperature=temperature,
+        user_prompt=prompt,
+        prompt_version=CONTENT_REPAIR_PROMPT_VERSION,
+        generation_stage=f"content_repair_{stage}",
+        request_options={
+            "source_display": source_display,
+            "note_language": note_language,
+            "term_policy": term_policy,
+            "missing_item_ids": [str(item.get("element_id")) for item in missing_before],
+        },
+        force_refresh=False,
+    )
+    repaired = _postprocess_llm_markdown(repaired, source_display=source_display)
+    after_coverage = analyze_coverage(deck, repaired, content_guard=content_guard)
+    unresolved = missing_required_items(content_guard, after_coverage)
+    before_ids = {str(item.get("element_id")) for item in missing_before}
+    unresolved_ids = {str(item.get("element_id")) for item in unresolved}
+    record = {
+        "stage": stage,
+        "context_id": context.id,
+        "slide_ids": [page.slide_id for page in context.pages],
+        "missing_before": missing_before,
+        "resolved_items": sorted(before_ids - unresolved_ids),
+        "unresolved_items": unresolved,
+        "llm": llm_record,
+    }
+    return repaired, record
 
 
 def _generate_cached_llm_text(
@@ -878,7 +1055,9 @@ def _build_usage_report(
     figure_placement: str,
     page_contexts: list[dict[str, Any]] | None = None,
     weave_contexts: list[dict[str, Any]] | None = None,
+    repair_contexts: list[dict[str, Any]] | None = None,
     deck_brief: dict[str, Any] | None = None,
+    content_guard: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     prompt_brief = _prompt_deck_brief(deck_brief)
     summary = {
@@ -886,6 +1065,7 @@ def _build_usage_report(
         "contexts_total": len(contexts),
         "page_note_contexts": len(page_contexts or []),
         "weave_contexts": len(weave_contexts or []),
+        "repair_contexts": len(repair_contexts or []),
         "page_note_calls": sum(1 for context in (page_contexts or []) if context.get("llm_call")),
         "weave_calls": sum(1 for context in (weave_contexts or []) if context.get("llm_call")),
         "local_cache_hits": sum(1 for context in contexts if context.get("cache_status") == "local_hit"),
@@ -928,12 +1108,14 @@ def _build_usage_report(
             "figure_placement": figure_placement,
             "deck_brief_used": bool(prompt_brief),
             "deck_brief_hash": _prompt_brief_hash(prompt_brief),
+            "content_guard_used": bool(content_guard),
         },
         "summary": summary,
         "pages": contexts,
         "contexts": contexts,
         "page_contexts": page_contexts or [],
         "weave_contexts": weave_contexts or [],
+        "repair_contexts": repair_contexts or [],
     }
 
 

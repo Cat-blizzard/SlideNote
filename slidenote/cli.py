@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from slidenote.composite_figures import enrich_deck_with_composite_figures
+from slidenote.content_guard import build_content_guard, content_guard_warnings, record_required_coverage
 from slidenote.coverage import analyze_coverage, render_coverage_markdown
 from slidenote.deck_brief import build_deck_brief, render_deck_brief_markdown
 from slidenote.doctor import render_doctor_report, run_doctor
@@ -76,6 +77,12 @@ def _build_parser() -> argparse.ArgumentParser:
     build.add_argument("--base-url", default=None, help="Provider base URL override for compatible/proxy endpoints.")
     build.add_argument("--max-output-tokens", type=int, default=None, help="Maximum generated tokens per page.")
     build.add_argument("--temperature", type=float, default=None, help="Optional model temperature.")
+    build.add_argument(
+        "--content-guard",
+        choices=["auto", "off"],
+        default="auto",
+        help="Classify high-value learning content before note generation. auto uses the text LLM when --use-llm is enabled; off disables it.",
+    )
     build.add_argument(
         "--asset-mode",
         choices=["bundle", "absolute", "embed"],
@@ -461,6 +468,27 @@ def _build(args: argparse.Namespace) -> int:
             write_text(output_root / "deck_brief.md", render_deck_brief_markdown(deck_brief_report))
             progress.finish_stage("Deck brief complete")
 
+        content_guard_report = None
+        if args.content_guard != "off":
+            progress.start_stage("content_guard", message="Classifying required learning content")
+            content_guard_report = build_content_guard(
+                deck,
+                output_root=output_root,
+                mode=args.content_guard,
+                use_llm=args.use_llm,
+                provider=args.provider,
+                model=args.model,
+                api_key=args.api_key,
+                base_url=args.base_url,
+                cache_mode=args.cache,
+                cache_dir=cache_dirs["llm"],
+                max_output_tokens=min(args.max_output_tokens or 1800, 2500),
+                temperature=0.0,
+            )
+            if content_guard_report is not None:
+                write_json(output_root / "content_guard.json", content_guard_report)
+            progress.finish_stage("Content guard complete")
+
         progress.start_stage("export_content", message="Writing structured content")
         write_json(output_root / "content.json", deck.to_dict())
         if image_importance_report is not None:
@@ -507,6 +535,7 @@ def _build(args: argparse.Namespace) -> int:
             figure_placement=args.figure_placement,
             section_plan=section_report,
             deck_brief=deck_brief_report,
+            content_guard=content_guard_report,
         )
         notes_markdown = notes_result.markdown
         write_text(output_root / "notes.md", notes_markdown)
@@ -523,7 +552,10 @@ def _build(args: argparse.Namespace) -> int:
         progress.finish_stage("Notes generated")
 
         progress.start_stage("coverage", message="Checking coverage")
-        coverage_report = analyze_coverage(deck, notes_markdown)
+        coverage_report = analyze_coverage(deck, notes_markdown, content_guard=content_guard_report)
+        if content_guard_report is not None:
+            record_required_coverage(content_guard_report, coverage_report, stage="final")
+            write_json(output_root / "content_guard.json", content_guard_report)
         write_json(output_root / "coverage.json", coverage_report)
         write_text(output_root / "coverage.md", render_coverage_markdown(coverage_report))
         source_map = build_source_map(deck, notes_markdown, output_root)
@@ -545,6 +577,7 @@ def _build(args: argparse.Namespace) -> int:
             figure_grounding_report=figure_grounding_report,
             ocr_report=ocr_report,
             vision_report=vision_report,
+            content_guard_report=content_guard_report,
             llm_usage=notes_result.llm_usage,
             coverage_report=coverage_report,
             source_map=source_map,
@@ -572,6 +605,8 @@ def _build(args: argparse.Namespace) -> int:
         print(f"- sections: {output_root / 'sections.json'}")
         if deck_brief_report is not None:
             print(f"- deck brief: {output_root / 'deck_brief.json'}")
+        if content_guard_report is not None:
+            print(f"- content guard: {output_root / 'content_guard.json'}")
         print(f"- progress: {progress.path}")
         print(f"- summary:  {output_root / 'run_summary.json'}")
         if image_importance_report is not None:
@@ -805,6 +840,7 @@ def _build_run_summary(
     figure_grounding_report: dict[str, Any] | None,
     ocr_report: dict[str, Any] | None,
     vision_report: dict[str, Any] | None,
+    content_guard_report: dict[str, Any] | None,
     llm_usage: dict[str, Any] | None,
     coverage_report: dict[str, Any],
     source_map: dict[str, Any],
@@ -834,6 +870,7 @@ def _build_run_summary(
             "note_strategy": args.note_strategy,
             "note_depth": args.note_depth,
             "deck_brief": args.deck_brief,
+            "content_guard": args.content_guard,
             "weave_dedup": args.weave_dedup,
             "page_neighborhood": args.page_neighborhood,
             "section_detection": args.section_detection,
@@ -863,6 +900,7 @@ def _build_run_summary(
         "deck_brief": deck_brief_report.get("summary") if deck_brief_report else None,
         "ocr": ocr_report.get("summary") if ocr_report else None,
         "vision": vision_report.get("summary") if vision_report else None,
+        "content_guard": content_guard_report.get("summary") if content_guard_report else None,
         "llm": llm_usage.get("summary") if llm_usage else None,
         "coverage": {
             "total": coverage_report.get("total"),
@@ -872,6 +910,7 @@ def _build_run_summary(
             "page_coverage": coverage_report.get("page_coverage"),
             "trace_coverage": coverage_report.get("trace_coverage"),
             "visible_coverage": coverage_report.get("visible_coverage"),
+            "required_visible_coverage": coverage_report.get("required_visible_coverage"),
             "marker_only": coverage_report.get("marker_only"),
             "structural_marker_only": coverage_report.get("structural_marker_only"),
         },
@@ -881,6 +920,7 @@ def _build_run_summary(
         },
         "warnings": {
             "note_assets": note_asset_warnings,
+            "content_guard": content_guard_warnings(content_guard_report),
         },
         "artifacts": {
             "content": "content.json",
@@ -896,6 +936,7 @@ def _build_run_summary(
             "sections": "sections.json",
             "deck_brief": "deck_brief.json" if deck_brief_report else None,
             "deck_brief_markdown": "deck_brief.md" if deck_brief_report else None,
+            "content_guard": "content_guard.json" if content_guard_report else None,
             "figures": "figures.json" if figure_report else None,
             "figure_usage": "figure_usage.json" if figure_report else None,
             "figure_grounding": "figure_grounding.json" if figure_grounding_report else None,

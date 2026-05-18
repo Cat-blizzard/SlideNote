@@ -6,6 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from slidenote.content_guard import learning_items_for_page, page_role_for_slide
 from slidenote.deck_brief import deck_brief_for_prompt
 from slidenote.figure_grounding import ordered_page_elements
 from slidenote.llm_cache import sha256_text, stable_json
@@ -47,6 +48,7 @@ def _llm_context_prompt(
     figure_placement: str,
     source_type: str,
     deck_brief: dict[str, Any] | None = None,
+    content_guard: dict[str, Any] | None = None,
 ) -> str:
     prompt_brief = _prompt_deck_brief(deck_brief, [page.slide_id for page in context.pages])
     payload = {
@@ -55,10 +57,22 @@ def _llm_context_prompt(
         "context_title": context.title,
         "figure_placement": figure_placement,
         "pages": [
-            _page_payload_for_prompt(page, asset_map, supports_image_input, screenshot_policy, source_type=source_type)
+            _page_payload_for_prompt(
+                page,
+                asset_map,
+                supports_image_input,
+                screenshot_policy,
+                source_type=source_type,
+                content_guard=content_guard,
+            )
             for page in context.pages
         ],
     }
+    if content_guard:
+        payload["content_guard"] = {
+            "required_confidence_threshold": content_guard.get("required_confidence_threshold"),
+            "rule": "learning_items marked must_explain=true and confidence>=threshold must be explained in visible prose, not only hidden source markers.",
+        }
     if prompt_brief:
         payload["deck_brief"] = prompt_brief
     source_rule = {
@@ -122,6 +136,7 @@ def _llm_context_prompt(
         f"{depth_rule}\n"
         "\u786c\u6027\u8981\u6c42\uff1a\n"
         "1. \u5148\u5224\u65ad\u54ea\u4e9b\u662f\u5b66\u751f\u771f\u6b63\u9700\u8981\u7406\u89e3\u7684\u77e5\u8bc6\u70b9\uff0c\u518d\u8bb2\u6e05\u5b83\u4eec\u7684\u542b\u4e49\u3001\u56e0\u679c\u3001\u4f8b\u5b50\u3001\u516c\u5f0f\u548c\u56fe\u8868\u7ed3\u8bba\u3002\n"
+        "   如果 JSON 中有 learning_items，must_explain=true 且 confidence>=required_confidence_threshold 的元素必须进入可见正文；结构性、重复性或装饰性元素只保留 source marker 即可。\n"
         "2. \u5408\u5e76\u91cd\u590d bullet\u3001\u8868\u683c\u58f3\u3001OCR \u91cd\u590d\u6587\u672c\u548c\u9875\u9762\u5b57\u6bb5\uff1b\u4e0d\u8981\u628a PPT \u5b57\u6bb5\u987a\u5e8f\u6539\u5199\u6210\u4e00\u4e32\u7ffb\u8bd1\u3002\n"
         f"3. {source_rule}\n"
         f"4. {image_rule}\n"
@@ -147,6 +162,7 @@ def _llm_page_lecture_prompt(
     figure_placement: str,
     source_type: str,
     deck_brief: dict[str, Any] | None = None,
+    content_guard: dict[str, Any] | None = None,
 ) -> str:
     page = context.pages[0]
     prompt_brief = _prompt_deck_brief(deck_brief, _prompt_slide_scope(deck, page.slide_id, page_neighborhood))
@@ -156,9 +172,14 @@ def _llm_page_lecture_prompt(
         "source_file": Path(deck.source_path).stem,
         "section_title": section_title,
         "figure_placement": figure_placement,
-        "current_page": _page_payload_for_prompt(page, asset_map, supports_image_input, screenshot_policy, source_type=source_type),
+        "current_page": _page_payload_for_prompt(page, asset_map, supports_image_input, screenshot_policy, source_type=source_type, content_guard=content_guard),
         "nearby_pages": _nearby_page_payloads(deck, page.slide_id, page_neighborhood),
     }
+    if content_guard:
+        payload["content_guard"] = {
+            "required_confidence_threshold": content_guard.get("required_confidence_threshold"),
+            "rule": "must_explain learning_items at or above the threshold require visible explanation.",
+        }
     if prompt_brief:
         payload["deck_brief"] = prompt_brief
     depth_rule = _note_depth_rule(note_depth)
@@ -193,6 +214,7 @@ def _llm_page_lecture_prompt(
         f"{depth_rule}\n"
         "\u786c\u6027\u8981\u6c42\uff1a\n"
         "1. \u91cd\u8981\u5b9a\u4e49\u3001\u6761\u4ef6\u3001\u4f8b\u5b50\u3001\u516c\u5f0f\u3001\u8868\u683c\u3001\u56fe\u7247\u3001OCR \u548c\u89c6\u89c9\u6458\u8981\u82e5\u652f\u6491\u5f53\u524d\u77e5\u8bc6\u70b9\uff0c\u8981\u878d\u5165\u8bb2\u89e3\uff1b\u7ed3\u6784\u6027\u6216\u91cd\u590d\u5143\u7d20\u53ea\u9700\u6eaf\u6e90\u6807\u8bb0\u3002\n"
+        "   current_page.learning_items 中 must_explain=true 且 confidence>=content_guard.required_confidence_threshold 的元素，必须有可见正文解释，不能只出现在 HTML source marker 里。\n"
         "2. \u4e25\u7981\u4f7f\u7528\u201c\u8fd9\u4e00\u9875\u201d\u3001\u201c\u672c\u9875\u201d\u3001\u201c\u5e7b\u706f\u7247\u201d\u3001\u201c\u4e0a\u4e00\u9875\u201d\u3001\u201c\u4e0b\u4e00\u9875\u201d\u3001\u201c\u8fd9\u5f20\u5e7b\u706f\u7247\u201d\u3001\u201c\u6b64\u9875\u201d\u3001\u201c\u8fd9\u9875\u201d\u7b49 PPT \u7ed3\u6784\u8868\u8ff0\uff1b\u76f4\u63a5\u8bb2\u77e5\u8bc6\uff0c\u4e0d\u8981\u63cf\u8ff0\u201c\u5e7b\u706f\u7247\u4e0a\u5c55\u793a\u4e86\u4ec0\u4e48\u201d\u6216\u201c\u8fd9\u4e00\u9875\u5728\u4e0a\u4e00\u9875\u7684\u57fa\u7840\u4e0a\u201d\u3002\n"
         "3. current_page.ordered_elements \u5df2\u6309\u7248\u9762\u987a\u5e8f\u7ed9\u51fa\uff1b\u56fe\u7247\u82e5\u5e26 anchor_element_ids\uff0c\u8981\u653e\u5728\u5bf9\u5e94\u6982\u5ff5\u9644\u8fd1\uff0c\u5e76\u7528 figure_explanation \u89e3\u91ca\u5b83\u8865\u5145\u4e86\u4ec0\u4e48\uff0c\u907f\u514d\u91cd\u590d\u6b63\u6587\u5b9a\u4e49\u3002\n"
         "4. \u5bf9 role=composite_figure \u7684\u56fe\u7247\uff0c\u628a\u5b83\u5f53\u4f5c\u5b8c\u6574\u6d41\u7a0b\u56fe\u6216\u7ed3\u6784\u56fe\u63d2\u5165\u548c\u8bb2\u89e3\uff1b\u4e0d\u8981\u518d\u628a role=composite_child \u7684\u5c0f\u56fe\u5355\u72ec\u5199\u6210\u6b63\u6587\u3002\n"
@@ -215,12 +237,14 @@ def _llm_weave_prompt(
     term_policy: str,
     weave_dedup: str,
     deck_brief: dict[str, Any] | None = None,
+    content_guard: dict[str, Any] | None = None,
 ) -> str:
     page_notes = [
         {
             "slide_id": page.slide_id,
             "title": page.title,
             "page_note_markdown": page_markdown_by_slide.get(page.slide_id, ""),
+            "learning_items": learning_items_for_page(content_guard, page.slide_id) if content_guard else [],
         }
         for page in context.pages
     ]
@@ -235,6 +259,11 @@ def _llm_weave_prompt(
     prompt_brief = _prompt_deck_brief(deck_brief, [page.slide_id for page in context.pages])
     if prompt_brief:
         payload["deck_brief"] = prompt_brief
+    if content_guard:
+        payload["content_guard"] = {
+            "required_confidence_threshold": content_guard.get("required_confidence_threshold"),
+            "rule": "Do not drop visible explanations for required learning_items while weaving.",
+        }
     source_rule = _source_prompt_rule(source_display)
     depth_rule = _note_depth_rule(note_depth)
     language_rule = _language_prompt_rule(note_language)
@@ -260,11 +289,40 @@ def _llm_weave_prompt(
         f"\u53bb\u91cd\u7b56\u7565\uff1a{dedup_rule}\n"
         "\u786c\u6027\u8981\u6c42\uff1a\n"
         "1. \u4fdd\u7559 page_notes \u4e2d\u5df2\u7ecf\u5199\u51fa\u7684\u56fe\u7247 Markdown \u548c\u9690\u85cf\u6765\u6e90\u6807\u8bb0\u3002\n"
-        "2. \u5bf9\u6b63\u6587\u53ef\u4ee5\u6309\u6982\u5ff5\u8c03\u6574\u987a\u5e8f\u3001\u5408\u5e76\u6bb5\u843d\u3001\u5220\u53bb\u7ed3\u6784\u6027\u8bf4\u660e\uff1b\u4e0d\u8981\u4e3a\u4e86\u4fdd\u7559\u6bcf\u4e2a source marker \u800c\u9010\u5b57\u6bb5\u590d\u8ff0\u3002\n"
+        "2. \u5bf9\u6b63\u6587\u53ef\u4ee5\u6309\u6982\u5ff5\u8c03\u6574\u987a\u5e8f\u3001\u5408\u5e76\u6bb5\u843d\u3001\u5220\u53bb\u7ed3\u6784\u6027\u8bf4\u660e\uff1b\u4e0d\u8981\u4e3a\u4e86\u4fdd\u7559\u6bcf\u4e2a source marker \u800c\u9010\u5b57\u6bb5\u590d\u8ff0\u3002page_notes.learning_items 中 must_explain=true 且达到阈值的内容不能在 weave 时被删掉。\n"
         "3. \u5916\u5c42\u7ae0\u8282\u6807\u9898\u7531\u7cfb\u7edf\u7edf\u4e00\u6dfb\u52a0\uff1b\u6b63\u6587\u5c0f\u6807\u9898\u53ea\u80fd\u4f7f\u7528 ### \u6216\u66f4\u4f4e\u7ea7\u6807\u9898\uff0c\u4e0d\u8981\u8f93\u51fa\u5168\u6587 H1\uff0c\u4e5f\u4e0d\u8981\u7528\u201c\u8bfe\u7a0b\u7b14\u8bb0\u201d\u5f53\u6807\u9898\u3002\n"
         f"4. {source_rule}\n"
         "5. \u56fe\u7247 alt \u6587\u672c\u4e0d\u80fd\u4e3a\u7a7a\uff1b\u4e25\u7981\u8f93\u51fa\u201c\u597d\u7684\uff0c\u8fd9\u662f\u201d\u201c\u6839\u636e JSON\u201d\u201c\u7b14\u8bb0\u5df2\u4e25\u683c\u9075\u5faa\u201d\u201c\u65e0\u6cd5\u89c6\u89c9\u89e3\u6790\u201d\u7b49\u5143\u53d9\u8ff0\u3002\n"
         "6. \u4e25\u7981\u4f7f\u7528\u201c\u8fd9\u4e00\u9875\u201d\u201c\u672c\u9875\u201d\u201c\u5e7b\u706f\u7247\u201d\u201c\u4e0a\u4e00\u9875\u201d\u201c\u4e0b\u4e00\u9875\u201d\u201c\u6b64\u9875\u201d\u7b49 PPT \u9875\u9762\u7ed3\u6784\u8868\u8ff0\uff1b\u76f4\u63a5\u8bb2\u77e5\u8bc6\uff0c\u81ea\u7136\u8fc7\u6e21\u3002\n\n"
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    )
+
+
+def _llm_repair_prompt(
+    markdown: str,
+    missing_items: list[dict[str, Any]],
+    source_display: str,
+    stage: str,
+    note_language: str,
+    term_policy: str,
+) -> str:
+    payload = {
+        "task": "repair_required_learning_coverage",
+        "stage": stage,
+        "current_markdown": markdown,
+        "missing_learning_items": missing_items,
+    }
+    source_rule = _source_prompt_rule(source_display)
+    language_rule = _language_prompt_rule(note_language)
+    term_rule = _term_policy_prompt_rule(note_language, term_policy)
+    return (
+        "请修订 current_markdown，使 missing_learning_items 中的关键学习内容自然进入可见正文。\n"
+        "只输出修订后的完整 Markdown，不要解释你的修改，不要输出 JSON，不要追加“遗漏列表”。\n"
+        "保持学习笔记风格：把缺失内容融入已有段落或相邻段落，必要时可增加一小段自然讲解；不要改成逐字段清单。\n"
+        "必须保留已有的 Markdown 图片链接和 HTML source marker；新增讲解时也要保留或补上对应 source marker。\n"
+        f"{source_rule}\n"
+        f"{language_rule}\n"
+        f"{term_rule}\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
@@ -321,6 +379,7 @@ def _page_payload_for_prompt(
     supports_image_input: bool,
     screenshot_policy: str,
     source_type: str,
+    content_guard: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     page_payload = asdict(page)
     if page_payload.get("page_screenshot") and _should_render_screenshot(page, screenshot_policy):
@@ -346,6 +405,9 @@ def _page_payload_for_prompt(
             )
     prompt_deck = Deck(source_path="", source_type=source_type, pages=[page])
     page_payload["ordered_elements"] = ordered_page_elements(prompt_deck, page, asset_map=asset_map)
+    if content_guard:
+        page_payload["page_role"] = page_role_for_slide(content_guard, page.slide_id)
+        page_payload["learning_items"] = learning_items_for_page(content_guard, page.slide_id)
     return page_payload
 
 
