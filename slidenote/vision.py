@@ -218,6 +218,7 @@ def _process_visual_target(
                 {
                     "cache_status": cache_status,
                     "llm_call": True,
+                    "api_retries": response_usage.get("retries", 0),
                     "input_tokens": response_usage.get("input_tokens"),
                     "output_tokens": response_usage.get("output_tokens"),
                     "total_tokens": response_usage.get("total_tokens"),
@@ -452,6 +453,7 @@ def _build_report(
         "targets_total": len(records),
         "local_cache_hits": sum(1 for record in records if record.get("cache_status") == "local_hit"),
         "llm_calls": sum(1 for record in records if record.get("llm_call")),
+        "api_retries": sum(int(record.get("api_retries") or 0) for record in records),
         "skipped": sum(1 for record in records if record.get("cache_status") == "skipped"),
         "input_tokens": _sum_int(record.get("input_tokens") for record in records),
         "output_tokens": _sum_int(record.get("output_tokens") for record in records),

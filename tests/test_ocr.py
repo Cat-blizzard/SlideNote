@@ -90,6 +90,40 @@ def test_ocr_enrichment_writes_text_and_uses_cache(tmp_path, monkeypatch):
     assert second["summary"]["api_calls"] == 0
 
 
+def test_ocr_enrichment_retries_transient_errors(tmp_path, monkeypatch):
+    screenshot = tmp_path / "screenshots" / "slide1.png"
+    screenshot.parent.mkdir()
+    Image.new("RGB", (800, 450), "white").save(screenshot)
+    deck = Deck(source_path="lecture.pdf", source_type="pdf", pages=[SlidePage(slide_id=1, page_screenshot="screenshots/slide1.png")])
+    calls = {"count": 0}
+
+    class FlakyOCRClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def recognize(self, image_path: Path):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError("HTTP 429 rate limit")
+
+            class Result:
+                text = "getline"
+                usage = {"words_result_num": 1}
+                raw = {"words_result_num": 1}
+
+            return Result()
+
+    monkeypatch.setattr("slidenote.api_retry.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("slidenote.ocr.OCRClient", FlakyOCRClient)
+
+    report = enrich_deck_with_ocr(deck, tmp_path, mode="auto", provider="baidu", api_key="k", secret_key="s", cache_dir=tmp_path / "cache")
+
+    assert calls["count"] == 2
+    assert report["summary"]["api_retries"] == 1
+    assert report["targets"][0]["provider_usage"]["retries"] == 1
+    assert deck.pages[0].page_ocr_text == "getline"
+
+
 def test_ocr_enrichment_cleans_temp_image_on_api_error(tmp_path, monkeypatch):
     screenshot = tmp_path / "screenshots" / "slide1.png"
     screenshot.parent.mkdir()

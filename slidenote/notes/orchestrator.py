@@ -654,6 +654,7 @@ def _generate_llm_context(
             {
                 "cache_status": cache_status,
                 "llm_call": True,
+                "api_retries": response_usage.get("retries", 0),
                 "input_tokens": response_usage.get("input_tokens"),
                 "output_tokens": response_usage.get("output_tokens"),
                 "total_tokens": response_usage.get("total_tokens"),
@@ -991,6 +992,7 @@ def _generate_cached_llm_text(
             {
                 "cache_status": cache_status,
                 "llm_call": True,
+                "api_retries": response_usage.get("retries", 0),
                 "input_tokens": response_usage.get("input_tokens"),
                 "output_tokens": response_usage.get("output_tokens"),
                 "total_tokens": response_usage.get("total_tokens"),
@@ -1075,6 +1077,7 @@ def _build_usage_report(
         "local_cache_refreshes": sum(1 for context in contexts if context.get("cache_status") == "refresh"),
         "cache_disabled_calls": sum(1 for context in contexts if context.get("cache_status") == "disabled"),
         "llm_calls": sum(1 for context in contexts if context.get("llm_call")),
+        "api_retries": sum(int(context.get("api_retries") or 0) for context in contexts),
         "input_tokens": _sum_int(context.get("input_tokens") for context in contexts),
         "output_tokens": _sum_int(context.get("output_tokens") for context in contexts),
         "total_tokens": _sum_int(context.get("total_tokens") for context in contexts),

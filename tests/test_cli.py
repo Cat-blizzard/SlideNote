@@ -4,7 +4,8 @@ from pathlib import Path
 
 import fitz
 
-from slidenote.cli import _apply_speed_mode_defaults, _parse_slide_ranges, main
+from slidenote.cli import _apply_speed_mode_defaults, _parse_slide_ranges, _resolve_api_concurrency, main
+from slidenote.notes import NoteGenerationResult
 
 
 def test_parse_slide_ranges():
@@ -29,6 +30,30 @@ def test_speed_mode_fills_unset_limits():
     assert args.max_output_tokens == 2500
     assert args.vision_max_targets == 25
     assert args.vision_detail == "low"
+
+
+def test_api_concurrency_defaults_to_global_value():
+    args = Namespace(
+        concurrency=3,
+        llm_concurrency=None,
+        vision_concurrency=None,
+        ocr_concurrency=None,
+        figure_concurrency=None,
+    )
+
+    assert _resolve_api_concurrency(args) == {"llm": 3, "vision": 3, "ocr": 3, "figure": 3}
+
+
+def test_api_concurrency_can_override_individual_stages():
+    args = Namespace(
+        concurrency=3,
+        llm_concurrency=5,
+        vision_concurrency=None,
+        ocr_concurrency=0,
+        figure_concurrency=-2,
+    )
+
+    assert _resolve_api_concurrency(args) == {"llm": 5, "vision": 3, "ocr": 1, "figure": 1}
 
 
 def test_build_writes_progress_and_run_summary(tmp_path):
@@ -85,7 +110,80 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["run"]["note_language"] == "zh"
     assert run_summary["run"]["term_policy"] == "bilingual"
     assert run_summary["run"]["deck_brief"] == "auto"
+    assert run_summary["run"]["api_concurrency"] == {"llm": 1, "vision": 1, "ocr": 1, "figure": 1}
+    assert "slowest_stages" in run_summary["stage_timings"]
     assert not (out / "export_report.json").exists()
+
+
+def test_api_concurrency_is_wired_to_build_stages(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Transport Layer")
+    doc.save(source)
+    doc.close()
+    out = tmp_path / "out"
+    seen = {}
+
+    def fake_ocr(*args, **kwargs):
+        seen["ocr"] = kwargs["concurrency"]
+        return {"summary": {"api_calls": 0}}
+
+    def fake_vision(*args, **kwargs):
+        seen["vision"] = kwargs["concurrency"]
+        return {"summary": {"llm_calls": 0}}
+
+    def fake_figures(*args, **kwargs):
+        seen["figure"] = kwargs["concurrency"]
+        return {"summary": {"llm_calls": 0}}
+
+    def fake_notes(*args, **kwargs):
+        seen["llm"] = kwargs["concurrency"]
+        return NoteGenerationResult(markdown="Transport Layer. <!-- slidenote-source: p1:s1_t1 -->")
+
+    monkeypatch.setattr("slidenote.cli.enrich_deck_with_ocr", fake_ocr)
+    monkeypatch.setattr("slidenote.cli.enrich_deck_with_vision", fake_vision)
+    monkeypatch.setattr("slidenote.cli.enrich_deck_with_figures", fake_figures)
+    monkeypatch.setattr("slidenote.cli.generate_notes_result", fake_notes)
+
+    exit_code = main(
+        [
+            "build",
+            str(source),
+            "--out",
+            str(out),
+            "--quiet",
+            "--use-llm",
+            "--ocr",
+            "auto",
+            "--vision",
+            "auto",
+            "--figure-crop",
+            "vision",
+            "--content-guard",
+            "off",
+            "--deck-brief",
+            "off",
+            "--section-detection",
+            "local",
+            "--concurrency",
+            "9",
+            "--llm-concurrency",
+            "5",
+            "--vision-concurrency",
+            "4",
+            "--ocr-concurrency",
+            "2",
+            "--figure-concurrency",
+            "3",
+        ]
+    )
+
+    assert exit_code == 0
+    assert seen == {"figure": 3, "ocr": 2, "vision": 4, "llm": 5}
+    run_summary = json.loads((out / "run_summary.json").read_text(encoding="utf-8"))
+    assert run_summary["run"]["concurrency"] == 9
+    assert run_summary["run"]["api_concurrency"] == {"llm": 5, "vision": 4, "ocr": 2, "figure": 3}
 
 
 def test_auto_figure_crop_with_vision_off_does_not_call_api(tmp_path):

@@ -344,11 +344,18 @@ python -m slidenote build lecture.pdf `
   --provider deepseek
 ```
 
-OCR, vision, and LLM note contexts can run concurrently. Higher concurrency can be faster, but may hit provider rate limits. Start with `2` or `3`:
+OCR, vision, figure crop, and LLM note contexts can run concurrently. For no-loss acceleration on large decks, keep the quality stages enabled and raise API concurrency explicitly:
 
 ```powershell
---concurrency 3
+python -m slidenote build lecture.pdf `
+  --out outputs\lecture `
+  --use-llm `
+  --speed-mode quality `
+  --concurrency 3 `
+  --global-cache-dir .slidenote-cache
 ```
+
+`--concurrency` is the fallback for all API classes. You can tune them independently with `--llm-concurrency`, `--vision-concurrency`, `--ocr-concurrency`, and `--figure-concurrency`. Start with `3` for large files; if the provider rate-limits, use `2` instead of disabling quality stages.
 
 To reuse cache across different output directories, set a global cache root:
 

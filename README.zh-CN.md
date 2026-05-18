@@ -344,11 +344,18 @@ python -m slidenote build lecture.pdf `
   --provider deepseek
 ```
 
-OCR、Vision 和 LLM 笔记上下文可以并发调用 API。并发能加速，但也更容易触发服务商限速；建议先从 `2` 或 `3` 开始：
+OCR、Vision、局部图裁剪和 LLM 笔记上下文都可以并发调用 API。大文件想无损加速时，建议保留质量阶段，只显式提高并发：
 
 ```powershell
---concurrency 3
+python -m slidenote build lecture.pdf `
+  --out outputs\lecture `
+  --use-llm `
+  --speed-mode quality `
+  --concurrency 3 `
+  --global-cache-dir .slidenote-cache
 ```
+
+`--concurrency` 会作为所有 API 类型的默认并发；也可以用 `--llm-concurrency`、`--vision-concurrency`、`--ocr-concurrency`、`--figure-concurrency` 单独调某类 API。大文件先从 `3` 开始，遇到限流就降到 `2`，不要靠关闭质量阶段提速。
 
 如果希望不同输出目录共用缓存，可以设置全局缓存目录：
 

@@ -61,7 +61,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default="quality",
         help="Preset for cost/time limits. Defaults to quality; it fills unset limits but does not enable OCR or LLM by itself.",
     )
-    build.add_argument("--concurrency", type=int, default=1, help="Maximum parallel API calls for OCR, vision, and page-level LLM work.")
+    build.add_argument("--concurrency", type=int, default=1, help="Fallback parallel API calls for OCR, vision, figure crop, and page-level LLM work.")
+    build.add_argument("--llm-concurrency", type=int, default=None, help="Parallel text LLM calls for notes, page notes, weave, and repairs. Defaults to --concurrency.")
+    build.add_argument("--vision-concurrency", type=int, default=None, help="Parallel vision extraction calls. Defaults to --concurrency.")
+    build.add_argument("--ocr-concurrency", type=int, default=None, help="Parallel OCR calls. Defaults to --concurrency.")
+    build.add_argument("--figure-concurrency", type=int, default=None, help="Parallel figure crop/bbox vision calls. Defaults to --concurrency.")
     build.add_argument("--global-cache-dir", type=Path, default=None, help="Shared cache root. Defaults to per-output .cache folders.")
     build.add_argument(
         "--refresh-pages",
@@ -325,6 +329,7 @@ def _build(args: argparse.Namespace) -> int:
     progress = ProgressReporter((args.progress_json or (output_root / "progress.json")).resolve(), quiet=args.quiet)
     refresh_slide_ids = _parse_slide_ranges(args.refresh_pages)
     concurrency = max(1, args.concurrency)
+    api_concurrency = _resolve_api_concurrency(args)
     cache_dirs = _resolve_cache_dirs(args, output_root)
     artifacts = ArtifactRegistry(output_root)
     artifacts.register("progress", progress.path)
@@ -412,7 +417,7 @@ def _build(args: argparse.Namespace) -> int:
                 temperature=args.vision_temperature,
                 detail=args.vision_detail,
                 max_edge=args.vision_max_edge,
-                concurrency=concurrency,
+                concurrency=api_concurrency["figure"],
                 refresh_slide_ids=refresh_slide_ids,
                 progress_callback=_target_progress(progress, "figure"),
             )
@@ -442,7 +447,7 @@ def _build(args: argparse.Namespace) -> int:
                 min_text_chars=args.ocr_min_text_chars,
                 min_area=args.ocr_min_area,
                 max_edge=args.ocr_max_edge,
-                concurrency=concurrency,
+                concurrency=api_concurrency["ocr"],
                 refresh_slide_ids=refresh_slide_ids,
                 progress_callback=_target_progress(progress, "ocr"),
             )
@@ -469,7 +474,7 @@ def _build(args: argparse.Namespace) -> int:
                 max_targets=args.vision_max_targets,
                 min_area=args.vision_min_area,
                 max_edge=args.vision_max_edge,
-                concurrency=concurrency,
+                concurrency=api_concurrency["vision"],
                 refresh_slide_ids=refresh_slide_ids,
                 progress_callback=_target_progress(progress, "vision"),
             )
@@ -581,7 +586,7 @@ def _build(args: argparse.Namespace) -> int:
             temperature=args.temperature,
             cache_mode=args.cache,
             cache_dir=cache_dirs["llm"],
-            concurrency=concurrency,
+            concurrency=api_concurrency["llm"],
             refresh_slide_ids=refresh_slide_ids,
             progress_callback=_llm_progress(progress),
             asset_mode=args.asset_mode,
@@ -667,6 +672,7 @@ def _build(args: argparse.Namespace) -> int:
             note_asset_warnings=notes_result.asset_warnings or [],
             export_report=export_report,
             artifact_registry=artifacts,
+            api_concurrency=api_concurrency,
         )
         artifacts.write_json("run_summary", "run_summary.json", run_summary)
     except Exception as exc:
@@ -718,6 +724,8 @@ def _build(args: argparse.Namespace) -> int:
             print(f"- vision:   {output_root / 'vision_usage.json'}")
         if export_report is not None:
             print(f"- exports:  {output_root / 'export_report.json'}")
+        for stage in _slowest_stages(progress, limit=3):
+            print(f"- slow stage: {stage['name']} {stage['elapsed_seconds']:.1f}s")
     return export_exit_code
 
 
@@ -900,6 +908,22 @@ def _apply_speed_mode_defaults(args: argparse.Namespace) -> None:
             setattr(args, name, value)
 
 
+def _resolve_api_concurrency(args: argparse.Namespace) -> dict[str, int]:
+    fallback = max(1, int(args.concurrency or 1))
+    return {
+        "llm": _coerce_api_concurrency(args.llm_concurrency, fallback),
+        "vision": _coerce_api_concurrency(args.vision_concurrency, fallback),
+        "ocr": _coerce_api_concurrency(args.ocr_concurrency, fallback),
+        "figure": _coerce_api_concurrency(args.figure_concurrency, fallback),
+    }
+
+
+def _coerce_api_concurrency(value: int | None, fallback: int) -> int:
+    if value is None:
+        value = fallback
+    return max(1, int(value))
+
+
 def _resolve_cache_dirs(args: argparse.Namespace, output_root: Path) -> dict[str, Path | None]:
     global_cache = args.global_cache_dir.resolve() if args.global_cache_dir else None
     return {
@@ -966,6 +990,37 @@ def _llm_progress(progress: ProgressReporter):
     return callback
 
 
+def _stage_metrics(progress: ProgressReporter) -> dict[str, Any]:
+    snapshot = progress.snapshot()
+    stages = snapshot.get("stages") if isinstance(snapshot, dict) else []
+    stage_records = [stage for stage in stages if isinstance(stage, dict)]
+    return {
+        "elapsed_seconds": snapshot.get("elapsed_seconds") if isinstance(snapshot, dict) else None,
+        "stages": stage_records,
+        "slowest_stages": _slowest_stage_records(stage_records, limit=3),
+    }
+
+
+def _slowest_stages(progress: ProgressReporter, limit: int = 3) -> list[dict[str, Any]]:
+    snapshot = progress.snapshot()
+    stages = snapshot.get("stages") if isinstance(snapshot, dict) else []
+    return _slowest_stage_records([stage for stage in stages if isinstance(stage, dict)], limit=limit)
+
+
+def _slowest_stage_records(stages: list[dict[str, Any]], limit: int = 3) -> list[dict[str, Any]]:
+    ranked = sorted(stages, key=lambda stage: float(stage.get("elapsed_seconds") or 0.0), reverse=True)
+    return [
+        {
+            "name": stage.get("name"),
+            "elapsed_seconds": float(stage.get("elapsed_seconds") or 0.0),
+            "api_calls": int(stage.get("api_calls") or 0),
+            "cache_hits": int(stage.get("cache_hits") or 0),
+            "skipped": int(stage.get("skipped") or 0),
+        }
+        for stage in ranked[: max(0, limit)]
+    ]
+
+
 def _build_run_summary(
     args: argparse.Namespace,
     input_path: Path,
@@ -992,6 +1047,7 @@ def _build_run_summary(
     note_asset_warnings: list[str],
     export_report: dict[str, Any] | None = None,
     artifact_registry: ArtifactRegistry | None = None,
+    api_concurrency: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     pages = deck.pages
     images_count = sum(len(page.images) for page in pages)
@@ -1003,6 +1059,7 @@ def _build_run_summary(
         "run": {
             "speed_mode": args.speed_mode,
             "concurrency": max(1, args.concurrency),
+            "api_concurrency": api_concurrency or _resolve_api_concurrency(args),
             "refresh_slide_ids": sorted(refresh_slide_ids),
             "cache_dirs": {name: str(path) if path else None for name, path in cache_dirs.items()},
             "asset_mode": args.asset_mode,
@@ -1066,6 +1123,7 @@ def _build_run_summary(
             "note_blocks": len(source_map.get("note_blocks", [])),
             "default_display_mode": source_map.get("default_display_mode"),
         },
+        "stage_timings": _stage_metrics(progress),
         "warnings": {
             "note_assets": note_asset_warnings,
             "content_guard": content_guard_warnings(content_guard_report),

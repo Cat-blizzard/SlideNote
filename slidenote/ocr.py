@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from PIL import Image
 
+from slidenote.api_retry import with_api_retries
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, utc_now_iso
 from slidenote.modality import page_has_hint
 from slidenote.models import Deck, ImageAsset, SlidePage
@@ -260,9 +261,11 @@ def _process_ocr_target(
             )
         else:
             client = OCRClient(provider=provider_name, api_key=api_key, secret_key=secret_key, endpoint=endpoint, language=language)
-            result = client.recognize(prepared_path)
+            retry_result = with_api_retries(lambda: client.recognize(prepared_path))
+            result = retry_result.value
             text = result.text
-            provider_usage = result.usage
+            provider_usage = dict(result.usage or {})
+            provider_usage["retries"] = retry_result.retries
             raw = result.raw
             cache_status = "disabled" if cache_mode == "off" else "refresh" if cache_mode == "refresh" or force_refresh else "miss"
             written_path = cache.write(
@@ -285,6 +288,7 @@ def _process_ocr_target(
                 {
                     "cache_status": cache_status,
                     "api_call": True,
+                    "api_retries": retry_result.retries,
                     "text_chars": len(text),
                     "provider_usage": provider_usage,
                 }
@@ -431,6 +435,7 @@ def _build_report(
         "targets_total": len(records),
         "local_cache_hits": sum(1 for record in records if record.get("cache_status") == "local_hit"),
         "api_calls": sum(1 for record in records if record.get("api_call")),
+        "api_retries": sum(int(record.get("api_retries") or 0) for record in records),
         "skipped": sum(1 for record in records if record.get("cache_status") == "skipped"),
         "text_chars": sum(record.get("text_chars", 0) for record in records if isinstance(record.get("text_chars"), int)),
     }

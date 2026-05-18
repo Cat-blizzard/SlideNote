@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from slidenote.api_retry import with_api_retries
+
 
 @dataclass(frozen=True, slots=True)
 class ProviderSpec:
@@ -171,13 +173,17 @@ class LLMClient:
         return self.generate_with_usage(user_prompt, system_prompt).text
 
     def generate_with_usage(self, user_prompt: str, system_prompt: str = SYSTEM_PROMPT) -> LLMResult:
-        if self.spec.family == "openai_compatible":
-            return self._generate_openai_compatible(system_prompt, user_prompt)
-        if self.spec.family == "gemini":
-            return self._generate_gemini(system_prompt, user_prompt)
-        if self.spec.family == "claude":
-            return self._generate_claude(system_prompt, user_prompt)
-        raise RuntimeError(f"Unsupported provider family: {self.spec.family}")
+        def call() -> LLMResult:
+            if self.spec.family == "openai_compatible":
+                return self._generate_openai_compatible(system_prompt, user_prompt)
+            if self.spec.family == "gemini":
+                return self._generate_gemini(system_prompt, user_prompt)
+            if self.spec.family == "claude":
+                return self._generate_claude(system_prompt, user_prompt)
+            raise RuntimeError(f"Unsupported provider family: {self.spec.family}")
+
+        retry_result = with_api_retries(call)
+        return _with_retry_usage(retry_result.value, retry_result.retries)
 
     def generate_image_with_usage(
         self,
@@ -190,13 +196,17 @@ class LLMClient:
             raise RuntimeError(f"Provider `{self.provider_name}` does not support image input in SlideNote.")
         image_bytes = image_path.read_bytes()
         mime_type = _guess_mime_type(image_path)
-        if self.spec.family == "openai_compatible":
-            return self._generate_openai_image(system_prompt, user_prompt, image_bytes, mime_type, image_detail)
-        if self.spec.family == "gemini":
-            return self._generate_gemini_image(system_prompt, user_prompt, image_bytes, mime_type)
-        if self.spec.family == "claude":
-            return self._generate_claude_image(system_prompt, user_prompt, image_bytes, mime_type)
-        raise RuntimeError(f"Unsupported vision provider family: {self.spec.family}")
+        def call() -> LLMResult:
+            if self.spec.family == "openai_compatible":
+                return self._generate_openai_image(system_prompt, user_prompt, image_bytes, mime_type, image_detail)
+            if self.spec.family == "gemini":
+                return self._generate_gemini_image(system_prompt, user_prompt, image_bytes, mime_type)
+            if self.spec.family == "claude":
+                return self._generate_claude_image(system_prompt, user_prompt, image_bytes, mime_type)
+            raise RuntimeError(f"Unsupported vision provider family: {self.spec.family}")
+
+        retry_result = with_api_retries(call)
+        return _with_retry_usage(retry_result.value, retry_result.retries)
 
     def _generate_openai_compatible(self, system_prompt: str, user_prompt: str) -> LLMResult:
         try:
@@ -402,6 +412,12 @@ def get_provider_spec(provider: str) -> ProviderSpec:
 
 def supported_provider_names() -> list[str]:
     return sorted(PROVIDERS)
+
+
+def _with_retry_usage(result: LLMResult, retries: int) -> LLMResult:
+    usage = dict(result.usage or {})
+    usage["retries"] = retries
+    return LLMResult(text=result.text, usage=usage)
 
 
 def resolve_provider_runtime(provider: str, model: str | None = None, base_url: str | None = None, for_vision: bool = False) -> dict[str, Any]:
