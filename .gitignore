@@ -12,3 +12,4 @@ materials/
 *.pem
 .smoke/
 .slidenote-cache/
+gui_runs/

@@ -61,6 +61,17 @@ python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --
 
 生成后打开 `outputs\lecture\notes.md`。图片会默认打包在 `outputs\lecture\notes.assets\` 里。
 
+## 可选 GUI
+
+SlideNote Studio 是套在同一条 CLI pipeline 外面的 Streamlit 图形界面。它支持上传 PPT/PDF、配置 provider、查看进度，并预览 notes、coverage、usage 和成本报告。
+
+```powershell
+python -m pip install -e ".[dev,llm,gui]"
+streamlit run gui/app.py
+```
+
+GUI 会通过子进程环境变量传递 API key，不把 key 放进命令行参数。更多说明见 [gui/README_GUI.md](gui/README_GUI.md)。
+
 ## 功能
 
 - 支持 `.pptx` 和 `.pdf`，`.ppt` 会尝试通过 LibreOffice 转成 PDF 后解析。

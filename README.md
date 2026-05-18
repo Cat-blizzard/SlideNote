@@ -61,6 +61,17 @@ python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --
 
 Open `outputs\lecture\notes.md`. Images are bundled under `outputs\lecture\notes.assets\`.
 
+## Optional GUI
+
+SlideNote Studio is a Streamlit wrapper around the same CLI pipeline. It lets you upload PPT/PDF files, configure providers, watch progress, and view notes, coverage, usage, and cost reports.
+
+```powershell
+python -m pip install -e ".[dev,llm,gui]"
+streamlit run gui/app.py
+```
+
+The GUI passes API keys through subprocess environment variables, not command-line arguments. See [gui/README_GUI.md](gui/README_GUI.md) for details.
+
 ## Features
 
 - Supports `.pptx` and `.pdf`; `.ppt` is handled by attempting a LibreOffice conversion to PDF.
