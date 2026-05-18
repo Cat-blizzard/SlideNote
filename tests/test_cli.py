@@ -141,10 +141,10 @@ def test_api_concurrency_is_wired_to_build_stages(tmp_path, monkeypatch):
         seen["llm"] = kwargs["concurrency"]
         return NoteGenerationResult(markdown="Transport Layer. <!-- slidenote-source: p1:s1_t1 -->")
 
-    monkeypatch.setattr("slidenote.cli.enrich_deck_with_ocr", fake_ocr)
-    monkeypatch.setattr("slidenote.cli.enrich_deck_with_vision", fake_vision)
-    monkeypatch.setattr("slidenote.cli.enrich_deck_with_figures", fake_figures)
-    monkeypatch.setattr("slidenote.cli.generate_notes_result", fake_notes)
+    monkeypatch.setattr("slidenote.build_pipeline.enrich_deck_with_ocr", fake_ocr)
+    monkeypatch.setattr("slidenote.build_pipeline.enrich_deck_with_vision", fake_vision)
+    monkeypatch.setattr("slidenote.build_pipeline.enrich_deck_with_figures", fake_figures)
+    monkeypatch.setattr("slidenote.build_pipeline.generate_notes_result", fake_notes)
 
     exit_code = main(
         [
