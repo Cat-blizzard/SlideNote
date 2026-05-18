@@ -1,0 +1,43 @@
+{
+  "currency": "USD",
+  "exchange_rates": {
+    "USD": 1.0,
+    "CNY": 7.2
+  },
+  "models": {
+    "openai/gpt-4.1-mini": {
+      "input_per_1m_tokens_usd": 0.0,
+      "cached_input_per_1m_tokens_usd": 0.0,
+      "output_per_1m_tokens_usd": 0.0
+    },
+    "deepseek/deepseek-v4-flash": {
+      "input_per_1m_tokens_usd": 0.0,
+      "cached_input_per_1m_tokens_usd": 0.0,
+      "output_per_1m_tokens_usd": 0.0
+    },
+    "qwen/qwen-plus": {
+      "input_per_1m_tokens_usd": 0.0,
+      "cached_input_per_1m_tokens_usd": 0.0,
+      "output_per_1m_tokens_usd": 0.0
+    },
+    "qwen/qwen-vl-plus": {
+      "input_per_1m_tokens_usd": 0.0,
+      "cached_input_per_1m_tokens_usd": 0.0,
+      "output_per_1m_tokens_usd": 0.0
+    }
+  },
+  "ocr": {
+    "baidu": {
+      "per_1k_calls_usd": 0.0,
+      "per_1k_chars_usd": 0.0
+    },
+    "mathpix": {
+      "per_1k_calls_usd": 0.0,
+      "per_1k_chars_usd": 0.0
+    },
+    "google": {
+      "per_1k_calls_usd": 0.0,
+      "per_1k_chars_usd": 0.0
+    }
+  }
+}
