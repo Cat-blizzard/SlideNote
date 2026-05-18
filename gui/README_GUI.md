@@ -1,5 +1,7 @@
 # SlideNote Studio GUI
 
+[中文说明](README_GUI.zh-CN.md)
+
 This GUI wraps the existing `python -m slidenote build` pipeline with a Streamlit page. It does not replace or modify the core parser/LLM pipeline.
 
 ## What it adds

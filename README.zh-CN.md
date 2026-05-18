@@ -70,7 +70,7 @@ python -m pip install -e ".[dev,llm,gui]"
 streamlit run gui/app.py
 ```
 
-GUI 会通过子进程环境变量传递 API key，不把 key 放进命令行参数。更多说明见 [gui/README_GUI.md](gui/README_GUI.md)。
+GUI 会通过子进程环境变量传递 API key，不把 key 放进命令行参数。更多说明见 [gui/README_GUI.zh-CN.md](gui/README_GUI.zh-CN.md)。
 
 ## 功能
 
@@ -90,6 +90,8 @@ GUI 会通过子进程环境变量传递 API key，不把 key 放进命令行参
 - 支持多家 LLM：ChatGPT/OpenAI、DeepSeek、通义千问、豆包、GLM、Gemini、Claude。
 - 支持 `lecture-weave` 高质量笔记策略：先逐页深讲，再按章节编织成连贯笔记。
 - 支持控制笔记输出语言和术语策略：英文课件可以生成中文或英文笔记，中文笔记可保留英文专业术语。
+- 结构化 usage、缓存和成本报告让 token/API 成本可见，并能在 SlideNote Studio 中查看。
+- 提供可选 Streamlit GUI：上传文件、配置 provider、查看进度、预览结果和 token/cost dashboard。
 
 ## 起源
 
@@ -496,7 +498,7 @@ figure_usage.json
 
 如果希望即使 `--vision off` 也给重要图片补解释，可以用 `--figure-grounding vision`，这会触发正常的视觉解析流程。`coverage.md` 现在也会单独列出图片覆盖情况：哪些图进入了笔记、锚定到哪里、解释是否缺失、是否需要人工复查。
 
-`source_map.json` 会记录笔记块和原始元素之间的映射，方便未来 GUI、LaTeX/Word/HTML 导出和来源显示策略使用：
+`source_map.json` 会记录笔记块和原始元素之间的映射，方便 GUI、LaTeX/Word/HTML 导出和来源显示策略使用：
 
 ```text
 note block -> PPT/PDF 页码 -> text/table/image element id

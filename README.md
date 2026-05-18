@@ -90,7 +90,8 @@ The GUI passes API keys through subprocess environment variables, not command-li
 - Optional LLM generation supports OpenAI/ChatGPT, DeepSeek, Qwen, Doubao/Volcengine Ark, GLM, Gemini, and Claude.
 - Optional `lecture-weave` note strategy first generates detailed per-page explanations, then weaves them into coherent sections.
 - Configurable note language and term policy: English slides can produce Chinese or English notes, and Chinese notes can preserve key academic English terms.
-- Local caching and usage reports make token cost visible and reusable by a future GUI.
+- Local caching, structured usage reports, and cost reports make token/API cost visible in CLI outputs and SlideNote Studio.
+- Optional Streamlit GUI lets users upload files, configure providers, monitor progress, preview outputs, and inspect token/cost dashboards.
 
 ## Origin
 
@@ -802,7 +803,7 @@ PPT/PDF -> structured extraction -> source inventory -> note generation -> cover
 
 The local rule-based draft is only a baseline for debugging extraction and coverage. Production notes should use `--use-llm`, while coverage checks still rely on element IDs so the model cannot silently summarize away details.
 
-Internally, the build is being organized around explicit pipeline stages with named dependencies and artifacts. `run_summary.json` includes the registered artifact map, while `element_ir.json` is the shared contract for prompt payloads, coverage, and `source_map.json`. This keeps the current CLI behavior stable while making future GUI and partial-revise work less brittle.
+Internally, the build is being organized around explicit pipeline stages with named dependencies and artifacts. `run_summary.json` includes the registered artifact map, while `element_ir.json` is the shared contract for prompt payloads, coverage, and `source_map.json`. This keeps the current CLI behavior stable while making GUI features and partial-revise work less brittle.
 
 ## References
 

@@ -17,26 +17,30 @@ SlideNote 当前的核心定位仍然是：
 - 支持多家文本 LLM：OpenAI、DeepSeek、Qwen、豆包/火山方舟、GLM、Gemini、Claude。
 - 支持独立 OCR：百度 OCR、Mathpix、Google Vision OCR。
 - 支持独立视觉解析：OpenAI、Qwen-VL、豆包/火山方舟等视觉模型。
-- 有 LLM / OCR / Vision 缓存和用量报告，便于未来 GUI 展示成本和缓存命中。
+- 有 LLM / OCR / Vision 缓存和结构化用量报告，便于 CLI/GUI 展示成本和缓存命中。
 - 有基础运行进度文件 `progress.json` 和运行总览 `run_summary.json`。
-- 支持基础 `--speed-mode` 预设、`--concurrency` 并发参数、`--global-cache-dir` 全局缓存目录。
+- 支持基础 `--speed-mode` 预设、总并发与 LLM/Vision/OCR/Figure 细分并发、`--global-cache-dir` 全局缓存目录，并对临时 API 错误做退避重试。
 - 支持 `--refresh-pages` 对指定页绕过本地缓存进行局部刷新。
 - 支持 `slidenote doctor` 环境检测。
 - 支持疑似小图标/装饰图标记，默认从笔记、覆盖率、OCR fallback 和视觉目标中过滤。
-- 支持 `source_map.json`，记录笔记块与原始 PPT/PDF 元素之间的来源映射。
+- 支持 `element_ir.json` 和 `source_map.json`，用统一 Element IR 与块级 note source map 记录笔记块和原始 PPT/PDF 元素之间的来源映射。
 - 支持 `notes.assets/` 图片资产目录，默认让 `notes.md` 使用便携相对图片路径。
+- 支持表格理解 `table_understanding.json`，输出 table summary / conclusion / key rows，避免只机械覆盖单元格。
 - 支持 `--note-context auto|document|section|page`，短材料整份生成，长材料按章节/分组生成，逐页模式保留为调试选项。
 - 支持 `--source-display hidden|footnote|inline`，默认隐藏正文来源但保留覆盖率和溯源。
 - 支持 `--note-style article|faithful` 和 `--note-depth detailed`，默认生成详细讲义式学习笔记。
 - 支持基础局部图裁剪 `--figure-crop auto|vision|off`，可用视觉模型定位整页截图中的局部图并裁剪到 `figures/`。
 - 支持组合图识别 `--composite-figures auto|off`，可把多个嵌入小图片拼成的流程图/结构图裁成整体图，并把子图片保留为隐藏来源。
 - 支持 `--screenshot-policy fallback|always|never`，默认有局部图/嵌入图时不在笔记里重复插入整页截图。
-- 支持基础图片学习价值排序 `--image-ranking local|off`，输出 `image_importance.json`，供视觉目标选择、笔记插图和未来 GUI 使用。
+- 支持基础图片学习价值排序 `--image-ranking local|off`，输出 `image_importance.json`，供视觉目标选择、笔记插图和 GUI 使用。
 - 支持章节计划输出 `sections.json`，并提供 `--section-detection auto|local|llm`；开启章节式 LLM 笔记时可用模型辅助识别章节边界。
 - 支持 `--note-language auto|zh|en` 和 `--term-policy preserve|translate|bilingual`，可让英文课件输出中文/英文笔记，并控制专业术语保留方式。
 - 支持 Lecture-Weave 分层生成策略：`--note-strategy lecture-weave`（默认），先逐页让模型"讲课"，再按章节编织成连贯笔记。输出中间产物 `page_notes.json`、`page_notes.md` 和 `weave_report.json`。
 - 支持 Deck Brief 课程全景图：`--deck-brief auto` 可用 LLM 生成课程主题、核心问题、概念依赖关系和页面角色划分，作为后续笔记生成的全局导航。
 - 支持 Figure Grounding 图文锚定：`--figure-grounding local|vision` 将图片锚定到页面内最近的文本或表格元素，让笔记中的图片出现在相关概念附近而非堆积在页尾。输出 `figure_grounding.json`。
+- 支持 Content Guard：`--content-guard auto` 识别高置信关键学习内容，并对 required visible coverage 做一次自然修复。
+- 支持额外导出：带目录 Markdown、Word、PDF、LaTeX；Word/PDF/LaTeX 通过可选 Pandoc。
+- 支持基础 SlideNote Studio GUI 和成本报告：上传文件、配置 provider、查看进度、预览输出和 token/cost dashboard。
 
 ## 1. 上下文策略增强
 
@@ -367,14 +371,23 @@ lecture-weave 第二阶段按 section 编织
 
 ## 6. GUI 可视化界面
 
-当前项目是 CLI。未来如果面向没有计算机基础的用户，GUI 会非常重要。
+基础版已经合入 SlideNote Studio：一个 Streamlit GUI，包装现有 `python -m slidenote build` pipeline，不改核心解析和生成逻辑。它已经支持上传 PPT/PDF、选择预设、填写 provider/API key、配置 OCR/Vision/LLM、设置缓存和并发、查看 `progress.json`、预览 notes/coverage/run summary，并生成 token/cost 报告。
 
-核心目标：
+当前基础版已经实现：
 
 - 降低 API key 配置门槛。
-- 让用户看到 PPT 原页、结构化解析结果、AI 笔记和覆盖状态。
-- 让用户可以选择需要 OCR / 视觉解析的页面。
-- 让缓存、费用、进度更透明。
+- 用环境变量把 key 传给子进程，避免把 key 放进命令行参数。
+- 工作流预设：本地预览、快速 API 草稿、平衡笔记、高质量详细笔记。
+- 总并发与 LLM / Vision / OCR / Figure 四类 API 独立并发。
+- 共享全局缓存、OCR/Vision target 限额、note strategy、deck brief、content guard 等常用开关。
+- 结果页预览 `notes.md`、`coverage.md`、`run_summary.json`、usage 文件和成本报告。
+
+后续目标：
+
+- 让用户看到 PPT 原页、结构化解析结果、AI 笔记和覆盖状态的联动视图。
+- 让用户可以点选需要 OCR / 视觉解析 / 局部 refresh 的页面。
+- 加入 doctor 一键诊断面板和 API key 连通性测试。
+- 增强任务状态面板：ETA、失败原因、可重试阶段、最慢阶段解释。
 
 可能界面：
 
@@ -382,7 +395,7 @@ lecture-weave 第二阶段按 section 编织
 - 中间：页面元素清单和覆盖状态。
 - 右侧：生成后的笔记。
 - 顶部：模型选择、OCR 开关、视觉解析开关、成本模式。
-- 设置页：配置 OpenAI、DeepSeek、Qwen、豆包、百度 OCR 等 API key。
+- 设置页：配置 OpenAI、DeepSeek、Qwen、豆包、百度 OCR 等 API key，并测试是否可用。
 
 需要考虑：
 
@@ -530,7 +543,7 @@ GUI 阶段则做成：
 
 ### 建议优先级
 
-这个方向很适合放在 GUI 原型之后，但底层数据结构可以提前准备。尤其是：
+这个方向很适合放在基础 GUI 原型之后继续推进，底层数据结构可以提前准备。尤其是：
 
 - 段落级 note block ID。
 - source map。
@@ -566,7 +579,7 @@ GUI 阶段则做成：
 
 长课件、扫描 PDF、图片驱动型 PPT 会让运行时间和 token 成本快速上升。后续需要把 SlideNote 从“顺序执行所有步骤”升级为“可调度的处理管线”，让用户可以在速度、成本和质量之间做选择。
 
-当前基础版已经实现：`--speed-mode`、`--concurrency`、`--global-cache-dir` 和 `--refresh-pages`。它们提供了第一层成本控制；后续仍需要加入 provider 限速、失败重试、真正的局部小节重跑和更智能的任务调度。
+当前基础版已经实现：`--speed-mode`、`--concurrency`、`--llm-concurrency`、`--vision-concurrency`、`--ocr-concurrency`、`--figure-concurrency`、`--global-cache-dir` 和 `--refresh-pages`。LLM / Vision / OCR API 调用已经有临时限流、网络超时和 5xx 的退避重试；`run_summary.json` 会记录 `api_concurrency`、阶段耗时和最慢阶段。后续仍需要加入 provider 自动限速、真正的局部小节重跑和更智能的任务调度。
 
 ### 当前耗时来源
 
@@ -675,41 +688,48 @@ OCR 不应默认扫所有页。
 
 ### 缓存与复用
 
-当前已有 LLM / OCR / Vision 缓存，但后续可以增强为跨输出目录、跨课程复用的全局缓存。
+当前已有 LLM / OCR / Vision 缓存，并支持 `--global-cache-dir` 跨输出目录复用。GUI 会默认使用共享缓存目录，成本报告也会显示缓存命中与调用统计。
 
-计划增强：
+后续增强：
 
-- 支持全局缓存目录。
 - 缓存 key 包含文件 hash、页 hash、模型、prompt、参数。
-- 换输出目录不丢缓存。
 - 多 PPT 课程中相同页面或相同图片不重复调用。
-- `run_summary.json` 中显示缓存节省的调用次数和估算成本。
+- `run_summary.json` / cost report 中进一步显示缓存节省的估算成本。
 
 ### 并发与限速
 
-未来可以支持并发处理，但必须谨慎。
+当前已经支持同一阶段内的 API 并发处理，但必须谨慎使用。
 
 适合并发的任务：
 
 - 多页 OCR。
 - 多页 Vision。
 - 多页 LLM 改写。
-- 图片尺寸分析。
+- Figure crop 视觉 bbox 定位。
 
 需要限制：
 
 - provider 的 QPS / RPM / TPM。
-- 失败重试次数。
+- 失败重试次数，目前临时错误默认最多重试 2 次。
 - 并发任务数。
 - 网络错误和超时。
 - API 余额不足时的中断恢复。
 
-可能参数：
+已有参数：
 
 ```powershell
 --concurrency 4
---max-retries 3
+--llm-concurrency 3
+--vision-concurrency 2
+--ocr-concurrency 2
+--figure-concurrency 2
+```
+
+后续可能补充：
+
+```powershell
 --rate-limit auto
+--max-retries 3
 ```
 
 ### 增量更新
@@ -1377,7 +1397,7 @@ python -m slidenote update-course outputs/my-course
 - `changed_pages.json`
 - `stale_notes.json`
 
-这个方向非常适合未来 GUI，因为用户可以像维护一个课程项目一样维护自己的学习材料。
+这个方向非常适合在后续 GUI 中深化，因为用户可以像维护一个课程项目一样维护自己的学习材料。
 
 ## 22. 输入格式扩展
 
@@ -1455,7 +1475,8 @@ CLI 对新手不够友好，尤其是多个服务商都要 key。
 
 - `slidenote doctor` 环境检测：已实现完整命令行诊断；后续补 GUI 一键诊断和更友好的 API key 配置引导。
 - 运行进度系统：CLI 实时进度、`progress.json`、`run_summary.json` 已完成；后续补 ETA、失败恢复和更细阶段统计。
-- 加速与成本调度：`--speed-mode`、`--concurrency`、`--global-cache-dir`、`--refresh-pages` 已完成；后续补限速、重试、只重跑指定小节。
+- 加速与成本调度：`--speed-mode`、总并发、LLM/Vision/OCR/Figure 细分并发、`--global-cache-dir`、`--refresh-pages` 和临时错误重试已完成；后续补自动限速、只重跑指定小节。
+- SlideNote Studio GUI：基础 Streamlit GUI、上传文件、运行预设、进度预览、成本报告已完成；后续补原页/元素/笔记联动视图、doctor 面板和局部 refresh。
 - 分层生成策略：Lecture-Weave（`--note-strategy lecture-weave`）已是默认策略；后续补质量评分、自动补回遗漏细节。
 - 页面类型检测与处理路由：`page_modalities.json` 已实现；后续补更准的版面分析和 GUI 手动修正。
 - 视觉目标选择：装饰图过滤、figure crop 优先级、图片学习价值排序已实现；后续补内容图分类和更强版面分析。
@@ -1477,7 +1498,7 @@ CLI 对新手不够友好，尤其是多个服务商都要 key。
 - 交互式编辑与对话式微调：局部修订、diff 审阅、用户编辑保护。
 - 学生个人笔记接入，先支持文本型笔记和可选中文字的 PDF。
 - 持续输入与增量更新，先支持新增文件后只处理新 source。
-- GUI 原型。
+- GUI 深化：原页预览、元素覆盖高亮、人工选择 OCR/Vision 页、任务恢复。
 - 按知识结构重排笔记。
 - 覆盖率状态细分。
 - 用户可选页级视觉 refresh。
