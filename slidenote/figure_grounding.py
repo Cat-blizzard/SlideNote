@@ -7,6 +7,7 @@ from typing import Any
 
 from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
+from slidenote.table_understanding import table_text_for_prompt
 
 
 FIGURE_GROUNDING_MODES = {"off", "auto", "vision"}
@@ -189,7 +190,7 @@ def _layout_elements(deck: Deck, page: SlidePage) -> list[dict[str, Any]]:
     for table in page.tables:
         bbox = normalized_element_bbox(deck, page, table)
         order = _order_from_bbox(bbox) if bbox else float(fallback_index)
-        preview = " / ".join(" | ".join(row) for row in table.rows[:2])
+        preview = table_text_for_prompt(table, raw_rows=2)
         elements.append(
             {
                 "id": table.id,
@@ -338,6 +339,8 @@ def _image_record(page: SlidePage, image: ImageAsset, output_root: Path) -> dict
         "crop_source_path": image.crop_source_path,
         "crop_bbox": image.crop_bbox,
         "crop_method": image.crop_method,
+        "crop_quality": image.crop_quality,
+        "crop_warnings": list(image.crop_warnings),
         "confidence": image.confidence,
         "bbox": image.bbox,
         "slide_id": page.slide_id,

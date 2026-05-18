@@ -4,6 +4,8 @@ from slidenote.coverage import analyze_coverage
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.notes import generate_notes, generate_notes_result
 from slidenote.notes.assembly import _postprocess_llm_markdown
+from slidenote.semantic_layout import enrich_deck_with_semantic_layout
+from slidenote.table_understanding import enrich_deck_with_table_understanding
 
 
 def test_local_notes_include_all_element_ids():
@@ -31,6 +33,37 @@ def test_local_notes_include_all_element_ids():
     assert "【对应 PPT" not in notes
     assert "<!-- slidenote-source: p1:s1_t1" in notes
     assert report["missing"] == 0
+
+
+def test_local_notes_use_table_conclusion_before_raw_cells():
+    deck = Deck(
+        source_path="lecture.pptx",
+        source_type="pptx",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                title="Transport",
+                tables=[
+                    TableBlock(
+                        id="s1_tbl1",
+                        rows=[
+                            ["Protocol", "Reliability", "Cost"],
+                            ["TCP", "Reliable ordered delivery", "Higher overhead"],
+                            ["UDP", "Best effort delivery", "Lower overhead"],
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+    enrich_deck_with_table_understanding(deck)
+
+    notes = generate_notes(deck, Path("out"))
+
+    assert "表格结论" in notes
+    assert "关键行" in notes
+    assert "TCP" in notes
+    assert "<!-- slidenote-source: p1:s1_tbl1 -->" in notes
 
 
 def test_composite_figure_source_marker_covers_child_images(tmp_path):
@@ -100,9 +133,27 @@ def test_local_notes_include_ocr_and_visual_fields():
     assert "TCP 三次握手" in notes
     assert "图片视觉解析" in notes
     assert "图中用箭头表示连接建立顺序" in notes
-    assert "图片 OCR 文字" in notes
-    assert "client -> server: SYN" in notes
+    assert "图片 OCR 文字" not in notes
+    assert "client -> server: SYN" not in notes
     assert "s2_img1" in notes
+
+
+def test_local_notes_show_image_ocr_when_no_visual_explanation():
+    deck = Deck(
+        source_path="lecture.pptx",
+        source_type="pptx",
+        pages=[
+            SlidePage(
+                slide_id=2,
+                images=[ImageAsset(id="s2_img1", path="images/code.png", ocr_text="cout << value;")],
+            )
+        ],
+    )
+
+    notes = generate_notes(deck, Path("out"))
+
+    assert "图片 OCR 文字" in notes
+    assert "cout << value;" in notes
 
 
 def test_local_notes_skip_ignored_images_in_coverage():
@@ -430,6 +481,45 @@ def test_llm_prompt_uses_page_visual_summary():
 
     assert "page_visual_summary" in prompt
     assert "三次握手" in prompt
+
+
+def test_llm_prompt_includes_table_understanding_fields():
+    from slidenote.notes import _llm_page_prompt
+
+    table = TableBlock(
+        id="s1_tbl1",
+        rows=[["Protocol", "Feature"], ["TCP", "Reliable"], ["UDP", "Low overhead"]],
+    )
+    page = SlidePage(slide_id=1, tables=[table])
+    enrich_deck_with_table_understanding(Deck(source_path="lecture.pdf", source_type="pdf", pages=[page]))
+
+    prompt = _llm_page_prompt(page)
+
+    assert "table_summary" in prompt
+    assert "table_conclusion" in prompt
+    assert "key_rows" in prompt
+    assert "不要把 rows" in prompt
+
+
+def test_llm_prompt_includes_semantic_layout_groups():
+    from slidenote.notes import _llm_page_prompt
+
+    page = SlidePage(
+        slide_id=1,
+        page_width=1000,
+        page_height=600,
+        text_blocks=[
+            TextBlock(id="s1_t1", type="paragraph", content="cin >> student_number;", bbox=[50, 100, 300, 160]),
+            TextBlock(id="s1_t2", type="paragraph", content="getline 会读取残留换行符，因此需要 cin.ignore();", bbox=[320, 160, 900, 230]),
+        ],
+    )
+    enrich_deck_with_semantic_layout(Deck(source_path="lecture.pdf", source_type="pdf", pages=[page]))
+
+    prompt = _llm_page_prompt(page)
+
+    assert "semantic_layout" in prompt
+    assert "code_causal_explanation" in prompt
+    assert "教学场景" in prompt
 
 
 def test_article_prompt_prefers_study_notes_over_slide_translation():

@@ -1,7 +1,8 @@
 from pathlib import Path
 
-from slidenote.models import Deck, ImageAsset, SlidePage, TextBlock
+from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.source_map import build_source_map
+from slidenote.table_understanding import enrich_deck_with_table_understanding
 
 
 def test_source_map_links_note_blocks_to_elements(tmp_path):
@@ -113,3 +114,16 @@ def test_source_map_includes_figure_crop_metadata(tmp_path):
     assert ref["figure_explanation_status"] == "visual_summary"
     assert source_map["pages"][0]["images"][0]["crop_method"] == "vision_bbox"
     assert source_map["pages"][0]["images"][0]["grounding_confidence"] == 0.82
+
+
+def test_source_map_includes_table_understanding_metadata(tmp_path):
+    table = TableBlock(id="s1_tbl1", rows=[["Protocol", "Feature"], ["TCP", "Reliable"], ["UDP", "Low overhead"]])
+    deck = Deck(source_path="lecture.pdf", source_type="pdf", pages=[SlidePage(slide_id=1, tables=[table])])
+    enrich_deck_with_table_understanding(deck)
+
+    source_map = build_source_map(deck, "表格结论说明 TCP 和 UDP。<!-- slidenote-source: p1:s1_tbl1 -->", tmp_path)
+
+    ref = source_map["note_blocks"][0]["source_refs"][0]
+    assert ref["element_id"] == "s1_tbl1"
+    assert "TCP" in ref["table_conclusion"]
+    assert ref["key_rows"][0]["label"] == "TCP"

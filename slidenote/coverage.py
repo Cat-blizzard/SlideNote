@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from slidenote.content_guard import required_item_ids, structural_slide_ids as guard_structural_slide_ids
 from slidenote.figure_grounding import note_candidate_images
+from slidenote.ir import iter_expected_source_elements
 from slidenote.models import Deck, ImageAsset, SlidePage
 
 
@@ -160,14 +161,23 @@ def _collect_items(deck: Deck, notes_markdown: str, content_guard: dict[str, obj
     structural_slide_ids = guard_structural_slide_ids(content_guard) if content_guard else None
     if structural_slide_ids is None:
         structural_slide_ids = _structural_slide_ids(deck)
-    for page in deck.pages:
-        items.extend(
-            _page_items(
-                page,
-                trace_tokens=trace_tokens,
-                visible_tokens=visible_tokens,
-                structural=page.slide_id in structural_slide_ids,
-                required_ids=required_ids,
+    for element in iter_expected_source_elements(deck):
+        element_id = str(element.get("element_id") or "")
+        if not element_id:
+            continue
+        slide_id = int(element.get("slide_id") or 0)
+        roles = element.get("roles") if isinstance(element.get("roles"), dict) else {}
+        evidence = element.get("evidence") if isinstance(element.get("evidence"), dict) else {}
+        items.append(
+            CoverageItem(
+                id=element_id,
+                slide_id=slide_id,
+                kind=_coverage_kind(element),
+                trace_covered=element_id in trace_tokens,
+                visible_covered=element_id in visible_tokens,
+                preview=_preview(str(evidence.get("preview") or element_id)),
+                structural=slide_id in structural_slide_ids,
+                required=element_id in required_ids or bool(roles.get("required")),
             )
         )
     return items
@@ -230,58 +240,12 @@ def _page_coverage(deck: Deck, items: list[CoverageItem], coverage_attr: str = "
     }
 
 
-def _page_items(
-    page: SlidePage,
-    trace_tokens: set[str],
-    visible_tokens: set[str],
-    structural: bool = False,
-    required_ids: set[str] | None = None,
-) -> list[CoverageItem]:
-    items: list[CoverageItem] = []
-    required_ids = required_ids or set()
-    for block in page.text_blocks:
-        items.append(
-            CoverageItem(
-                id=block.id,
-                slide_id=page.slide_id,
-                kind=f"text:{block.type}",
-                trace_covered=block.id in trace_tokens,
-                visible_covered=block.id in visible_tokens,
-                preview=_preview(block.content),
-                structural=structural,
-                required=block.id in required_ids,
-            )
-        )
-    for table in page.tables:
-        preview = " / ".join(" | ".join(row) for row in table.rows[:2])
-        items.append(
-            CoverageItem(
-                id=table.id,
-                slide_id=page.slide_id,
-                kind="table",
-                trace_covered=table.id in trace_tokens,
-                visible_covered=table.id in visible_tokens,
-                preview=_preview(preview),
-                structural=structural,
-                required=table.id in required_ids,
-            )
-        )
-    for image in page.images:
-        if image.ignored:
-            continue
-        items.append(
-            CoverageItem(
-                id=image.id,
-                slide_id=page.slide_id,
-                kind="image",
-                trace_covered=image.id in trace_tokens,
-                visible_covered=image.id in visible_tokens,
-                preview=image.caption or image.path,
-                structural=structural,
-                required=image.id in required_ids,
-            )
-        )
-    return items
+def _coverage_kind(element: dict[str, object]) -> str:
+    kind = str(element.get("kind") or "element")
+    roles = element.get("roles") if isinstance(element.get("roles"), dict) else {}
+    if kind == "text" and roles.get("text_type"):
+        return f"text:{roles['text_type']}"
+    return kind
 
 
 def _item_record(item: CoverageItem) -> dict[str, object]:

@@ -8,6 +8,7 @@ from typing import Any
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.models import Deck, SlidePage
+from slidenote.table_understanding import table_preview
 
 DECK_BRIEF_PROMPT_VERSION = "deck-brief-v1"
 
@@ -303,9 +304,9 @@ def _page_summary(page: SlidePage, limit: int = 760) -> str:
         parts.append(page.title)
     parts.extend(block.content for block in page.text_blocks[:7] if block.content.strip())
     for table in page.tables[:2]:
-        rows = [" | ".join(cell for cell in row if cell) for row in table.rows[:4]]
-        if rows:
-            parts.append(" / ".join(rows))
+        preview = table_preview(table, limit=320, raw_rows=4)
+        if preview:
+            parts.append(preview)
     if page.page_ocr_text:
         parts.append(page.page_ocr_text[:320])
     if page.page_visual_summary:

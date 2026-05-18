@@ -9,8 +9,11 @@ from typing import Any
 from slidenote.content_guard import learning_items_for_page, page_role_for_slide
 from slidenote.deck_brief import deck_brief_for_prompt
 from slidenote.figure_grounding import ordered_page_elements
+from slidenote.ir import build_page_ir
 from slidenote.llm_cache import sha256_text, stable_json
 from slidenote.models import Deck, SlidePage
+from slidenote.semantic_layout import semantic_layout_for_prompt
+from slidenote.table_understanding import table_preview
 
 from .assembly import _asset_display_path, _should_render_screenshot, _source_marker
 
@@ -108,6 +111,16 @@ def _llm_context_prompt(
         "\u4e0d\u5f97\u628a\u542b\u6709\u72ec\u7acb\u77e5\u8bc6\u589e\u91cf\u7684\u5143\u7d20\u4ec5\u4f5c\u4e3a source marker \u5904\u7406\uff1b"
         "\u53ea\u5141\u8bb8\u7ed3\u6784\u6027\u3001\u91cd\u590d\u6027\u3001\u88c5\u9970\u6027\u548c\u8054\u7cfb\u65b9\u5f0f\u7c7b\u5143\u7d20\u4ec5\u4fdd\u7559\u6765\u6e90\u6807\u8bb0\u3002"
     )
+    table_rule = (
+        "\u5982\u679c\u8868\u683c JSON \u91cc\u6709 table_summary\u3001table_conclusion \u6216 key_rows\uff0c"
+        "\u4f18\u5148\u628a\u8fd9\u4e9b\u8868\u683c\u7ed3\u8bba\u548c\u5173\u952e\u884c\u81ea\u7136\u878d\u5165\u77e5\u8bc6\u8bb2\u89e3\uff1b"
+        "\u4e0d\u8981\u628a rows \u9010\u5355\u5143\u683c\u7ffb\u8bd1\u6210\u6e05\u5355\uff0c\u9664\u975e\u8868\u683c\u672c\u8eab\u5c31\u662f\u9700\u4fdd\u7559\u7684\u5bf9\u7167\u8868\u3002"
+    )
+    semantic_rule = (
+        "\u5982\u679c JSON \u91cc\u6709 semantic_layout.groups/relations\uff0c\u8bf7\u6309\u7ec4\u7ea7\u201c\u6559\u5b66\u573a\u666f\u201d\u8bb2\u89e3\uff1a"
+        "\u628a\u540c\u4e00 group \u91cc\u7684\u4ee3\u7801\u3001\u8fd0\u884c\u7ed3\u679c\u3001\u84dd\u6846\u89e3\u91ca\u3001\u7ea2\u5b57\u6ce8\u91ca\u548c\u7bad\u5934\u56e0\u679c\u5408\u5e76\u6210\u4e00\u6bb5\u81ea\u7136\u8bb2\u89e3\uff1b"
+        "\u4e0d\u8981\u628a\u5c0f\u5757\u5206\u522b\u5199\u6210\u5b64\u7acb\u56fe\u7247\u6216 OCR \u6e05\u5355\u3002"
+    )
     language_rule = _language_prompt_rule(note_language)
     term_rule = _term_policy_prompt_rule(note_language, term_policy)
     depth_rule = _note_depth_rule(note_depth)
@@ -131,13 +144,15 @@ def _llm_context_prompt(
         f"{style_rule}\n"
         f"{style_depth_rule}\n"
         f"{structural_rule}\n"
+        f"{table_rule}\n"
+        f"{semantic_rule}\n"
         f"{language_rule}\n"
         f"{term_rule}\n"
         f"{depth_rule}\n"
         "\u786c\u6027\u8981\u6c42\uff1a\n"
         "1. \u5148\u5224\u65ad\u54ea\u4e9b\u662f\u5b66\u751f\u771f\u6b63\u9700\u8981\u7406\u89e3\u7684\u77e5\u8bc6\u70b9\uff0c\u518d\u8bb2\u6e05\u5b83\u4eec\u7684\u542b\u4e49\u3001\u56e0\u679c\u3001\u4f8b\u5b50\u3001\u516c\u5f0f\u548c\u56fe\u8868\u7ed3\u8bba\u3002\n"
         "   如果 JSON 中有 learning_items，must_explain=true 且 confidence>=required_confidence_threshold 的元素必须进入可见正文；结构性、重复性或装饰性元素只保留 source marker 即可。\n"
-        "2. \u5408\u5e76\u91cd\u590d bullet\u3001\u8868\u683c\u58f3\u3001OCR \u91cd\u590d\u6587\u672c\u548c\u9875\u9762\u5b57\u6bb5\uff1b\u4e0d\u8981\u628a PPT \u5b57\u6bb5\u987a\u5e8f\u6539\u5199\u6210\u4e00\u4e32\u7ffb\u8bd1\u3002\n"
+        "2. \u5408\u5e76\u91cd\u590d bullet\u3001\u8868\u683c\u58f3\u3001OCR \u91cd\u590d\u6587\u672c\u548c\u9875\u9762\u5b57\u6bb5\uff1b\u8868\u683c\u8981\u5148\u8bb2 table_conclusion/key_rows \u80cc\u540e\u7684\u610f\u4e49\uff0c\u4e0d\u8981\u628a PPT \u5b57\u6bb5\u987a\u5e8f\u6539\u5199\u6210\u4e00\u4e32\u7ffb\u8bd1\u3002\n"
         f"3. {source_rule}\n"
         f"4. {image_rule}\n"
         f"5. {banned_rule}\n"
@@ -202,6 +217,15 @@ def _llm_page_lecture_prompt(
         "\u4e0d\u5f97\u628a\u542b\u6709\u72ec\u7acb\u77e5\u8bc6\u589e\u91cf\u7684\u5143\u7d20\u4ec5\u4f5c\u4e3a source marker \u5904\u7406\uff1b"
         "\u53ea\u5141\u8bb8\u7ed3\u6784\u6027\u3001\u91cd\u590d\u6027\u3001\u88c5\u9970\u6027\u548c\u8054\u7cfb\u65b9\u5f0f\u7c7b\u5143\u7d20\u4ec5\u4fdd\u7559\u6765\u6e90\u6807\u8bb0\u3002"
     )
+    table_rule = (
+        "\u8868\u683c\u5df2\u7ecf\u9884\u5904\u7406\u51fa table_summary/table_conclusion/key_rows \u65f6\uff0c"
+        "\u8981\u4ee5\u8fd9\u4e9b\u7ed3\u8bba\u4e3a\u4e3b\u6765\u8bb2\u8868\u683c\u7684\u77e5\u8bc6\u542b\u4e49\uff1b"
+        "\u907f\u514d\u628a rows \u91cc\u7684\u6bcf\u4e2a\u5355\u5143\u683c\u673a\u68b0\u6539\u5199\u6210\u6b63\u6587\u6e05\u5355\u3002"
+    )
+    semantic_rule = (
+        "\u82e5 current_page.semantic_layout \u7ed9\u51fa scene_type/relations\uff0c\u4f18\u5148\u6309 group \u8bb2\u77e5\u8bc6\uff1a"
+        "\u4ee3\u7801\u3001\u8f93\u51fa\u6846\u3001\u56e0\u679c\u89e3\u91ca\u548c\u4fee\u590d\u63d0\u793a\u5e94\u5408\u5e76\u4e3a\u540c\u4e00\u6559\u5b66\u573a\u666f\uff0c\u4e0d\u8981\u9010\u4e2a\u5c0f\u5757\u63cf\u8ff0\u7248\u9762\u3002"
+    )
     return (
         "\u8bf7\u53ea\u8bb2\u89e3 JSON \u4e2d\u7684 current_page \u5305\u542b\u7684\u77e5\u8bc6\u5185\u5bb9\uff0c\u4e0d\u8981\u66ff\u5176\u4ed6\u9875\u9762\u5199\u6b63\u6587\u3002\n"
         "nearby_pages \u53ea\u7528\u4e8e\u7406\u89e3\u524d\u540e\u903b\u8f91\u548c\u51cf\u5c11\u91cd\u590d\uff0c\u4e0d\u80fd\u628a\u90bb\u8fd1\u9875\u5185\u5bb9\u5f53\u4f5c current_page \u7684\u5185\u5bb9\u5c55\u5f00\u3002\n"
@@ -209,11 +233,13 @@ def _llm_page_lecture_prompt(
         f"{style_rule}\n"
         f"{style_depth_rule}\n"
         f"{structural_rule}\n"
+        f"{table_rule}\n"
+        f"{semantic_rule}\n"
         f"{language_rule}\n"
         f"{term_rule}\n"
         f"{depth_rule}\n"
         "\u786c\u6027\u8981\u6c42\uff1a\n"
-        "1. \u91cd\u8981\u5b9a\u4e49\u3001\u6761\u4ef6\u3001\u4f8b\u5b50\u3001\u516c\u5f0f\u3001\u8868\u683c\u3001\u56fe\u7247\u3001OCR \u548c\u89c6\u89c9\u6458\u8981\u82e5\u652f\u6491\u5f53\u524d\u77e5\u8bc6\u70b9\uff0c\u8981\u878d\u5165\u8bb2\u89e3\uff1b\u7ed3\u6784\u6027\u6216\u91cd\u590d\u5143\u7d20\u53ea\u9700\u6eaf\u6e90\u6807\u8bb0\u3002\n"
+        "1. \u91cd\u8981\u5b9a\u4e49\u3001\u6761\u4ef6\u3001\u4f8b\u5b50\u3001\u516c\u5f0f\u3001\u8868\u683c\u7ed3\u8bba\u3001\u56fe\u7247\u3001OCR \u548c\u89c6\u89c9\u6458\u8981\u82e5\u652f\u6491\u5f53\u524d\u77e5\u8bc6\u70b9\uff0c\u8981\u878d\u5165\u8bb2\u89e3\uff1b\u7ed3\u6784\u6027\u6216\u91cd\u590d\u5143\u7d20\u53ea\u9700\u6eaf\u6e90\u6807\u8bb0\u3002\n"
         "   current_page.learning_items 中 must_explain=true 且 confidence>=content_guard.required_confidence_threshold 的元素，必须有可见正文解释，不能只出现在 HTML source marker 里。\n"
         "2. \u4e25\u7981\u4f7f\u7528\u201c\u8fd9\u4e00\u9875\u201d\u3001\u201c\u672c\u9875\u201d\u3001\u201c\u5e7b\u706f\u7247\u201d\u3001\u201c\u4e0a\u4e00\u9875\u201d\u3001\u201c\u4e0b\u4e00\u9875\u201d\u3001\u201c\u8fd9\u5f20\u5e7b\u706f\u7247\u201d\u3001\u201c\u6b64\u9875\u201d\u3001\u201c\u8fd9\u9875\u201d\u7b49 PPT \u7ed3\u6784\u8868\u8ff0\uff1b\u76f4\u63a5\u8bb2\u77e5\u8bc6\uff0c\u4e0d\u8981\u63cf\u8ff0\u201c\u5e7b\u706f\u7247\u4e0a\u5c55\u793a\u4e86\u4ec0\u4e48\u201d\u6216\u201c\u8fd9\u4e00\u9875\u5728\u4e0a\u4e00\u9875\u7684\u57fa\u7840\u4e0a\u201d\u3002\n"
         "3. current_page.ordered_elements \u5df2\u6309\u7248\u9762\u987a\u5e8f\u7ed9\u51fa\uff1b\u56fe\u7247\u82e5\u5e26 anchor_element_ids\uff0c\u8981\u653e\u5728\u5bf9\u5e94\u6982\u5ff5\u9644\u8fd1\uff0c\u5e76\u7528 figure_explanation \u89e3\u91ca\u5b83\u8865\u5145\u4e86\u4ec0\u4e48\uff0c\u907f\u514d\u91cd\u590d\u6b63\u6587\u5b9a\u4e49\u3002\n"
@@ -382,6 +408,12 @@ def _page_payload_for_prompt(
     content_guard: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     page_payload = asdict(page)
+    semantic_payload = semantic_layout_for_prompt(page)
+    page_payload.pop("semantic_blocks", None)
+    page_payload.pop("semantic_groups", None)
+    page_payload.pop("semantic_relations", None)
+    if semantic_payload:
+        page_payload["semantic_layout"] = semantic_payload
     if page_payload.get("page_screenshot") and _should_render_screenshot(page, screenshot_policy):
         page_payload["page_screenshot"] = _asset_display_path(page_payload["page_screenshot"], asset_map)
     else:
@@ -404,6 +436,7 @@ def _page_payload_for_prompt(
                 else "image pixels are not attached to this note-writing call; use only supplied OCR/visual_summary"
             )
     prompt_deck = Deck(source_path="", source_type=source_type, pages=[page])
+    page_payload["element_ir"] = build_page_ir(prompt_deck, page)
     page_payload["ordered_elements"] = ordered_page_elements(prompt_deck, page, asset_map=asset_map)
     if content_guard:
         page_payload["page_role"] = page_role_for_slide(content_guard, page.slide_id)
@@ -459,6 +492,10 @@ def _page_brief(page: SlidePage, limit: int = 260) -> str:
     if page.title:
         parts.append(page.title)
     parts.extend(block.content for block in page.text_blocks[:3] if block.content.strip())
+    for table in page.tables[:2]:
+        preview = table_preview(table, limit=220)
+        if preview:
+            parts.append(preview)
     if page.page_visual_summary:
         parts.append(page.page_visual_summary)
     text = re.sub(r"\s+", " ", " ".join(parts)).strip()

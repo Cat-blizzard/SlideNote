@@ -18,6 +18,9 @@ class TableBlock:
     id: str
     rows: list[list[str]]
     bbox: list[float] | None = None
+    table_summary: str | None = None
+    table_conclusion: str | None = None
+    key_rows: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -40,6 +43,8 @@ class ImageAsset:
     crop_source_path: str | None = None
     crop_bbox: list[float] | None = None
     crop_method: str | None = None
+    crop_quality: str | None = None
+    crop_warnings: list[str] = field(default_factory=list)
     confidence: float | None = None
     importance_score: float | None = None
     importance_rank: int | None = None
@@ -74,6 +79,9 @@ class SlidePage:
     modality_confidence: float | None = None
     modality_reasons: list[str] = field(default_factory=list)
     processing_hints: list[str] = field(default_factory=list)
+    semantic_blocks: list[dict[str, Any]] = field(default_factory=list)
+    semantic_groups: list[dict[str, Any]] = field(default_factory=list)
+    semantic_relations: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)

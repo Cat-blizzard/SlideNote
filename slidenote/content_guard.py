@@ -9,6 +9,7 @@ from typing import Any
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
+from slidenote.table_understanding import table_preview
 
 
 CONTENT_GUARD_MODES = {"auto", "off"}
@@ -321,7 +322,7 @@ def _text_candidate(page: SlidePage, block: TextBlock) -> GuardCandidate | None:
 
 
 def _table_candidate(page: SlidePage, table: TableBlock) -> GuardCandidate | None:
-    preview = " / ".join(" | ".join(row) for row in table.rows[:3])
+    preview = table_preview(table, raw_rows=3)
     if not preview.strip():
         return None
     return GuardCandidate(table.id, page.slide_id, "table", _preview(preview), "table_conclusion", True, 0.82, "table")

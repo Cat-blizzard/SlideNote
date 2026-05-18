@@ -216,6 +216,9 @@ python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --
 outputs/lecture/
   content.json
   page_modalities.json
+  table_understanding.json
+  semantic_layout.json
+  element_ir.json
   image_importance.json
   sections.json
   deck_brief.md
@@ -261,6 +264,12 @@ outputs/lecture/
 - `decorative`：低优先级页面，除非用户显式刷新或需要保留。
 
 `image_importance.json` 会记录每张图片的学习价值分数、排序和原因。`--vision auto` 会优先选择排序靠前的局部裁剪图或嵌入图，再回退到整页截图。
+
+`table_understanding.json` 会记录表格的本地摘要、表格结论和关键行。后续笔记优先使用这些学习信号，解释“表格说明了什么”，而不是机械覆盖每个单元格文本。
+
+`semantic_layout.json` 会记录页面级语义块、语义组和关系，尤其用于代码示例、运行输出、原因/修复标注、多块组合图等需要作为一个学习单元讲解的场景。
+
+`element_ir.json` 是统一的 Page IR / Element IR，供 prompt、coverage 和 source map 共同读取。每个元素都有稳定的 `element_id`、`kind`、`bbox`、`roles`、`evidence` 和 `source_ids`，方便后续 GUI、局部 revise 和块级溯源使用同一种格式，而不是到处读取 dataclass 字段。
 
 `composite_figures.json` 会记录本地识别出的组合图：当流程图、结构图由多个嵌入小图片拼成时，SlideNote 会从整页截图裁出整体 `composite_figure`，把零散小图标成 `composite_child`，并把它们的 ID 写入隐藏来源标记，而不是作为独立图片插入笔记。
 
@@ -778,6 +787,8 @@ PPT/PDF -> 结构化解析 -> 内容清单 -> 笔记生成 -> 覆盖率校验 ->
 ```
 
 本地规则草稿只负责把结构化内容“保底写出来”，方便调试解析和覆盖率。正式笔记建议使用 `--use-llm`，但覆盖率检查仍然依靠元素 ID 做硬校验，避免模型把细节悄悄总结掉。
+
+内部实现正在逐步整理成显式 Pipeline Stage：每个阶段声明名称、依赖和产物，`run_summary.json` 会汇总 artifact registry；`element_ir.json` 则作为 prompt payload、coverage、`source_map.json` 的共享结构契约。这样默认 CLI 行为保持稳定，同时为后续 GUI、局部重写和交互式编辑降低耦合。
 
 ## 参考文档
 

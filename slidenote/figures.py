@@ -14,6 +14,8 @@ from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.modality import page_has_hint
 from slidenote.models import Deck, ImageAsset, SlidePage, normalize_rel_path
+from slidenote.semantic_layout import semantic_context_for_page
+from slidenote.table_understanding import table_preview
 
 FIGURE_PROMPT_VERSION = "figure-crop-v1"
 
@@ -21,6 +23,8 @@ FIGURE_SYSTEM_PROMPT = (
     "你是课程幻灯片版面分析助手。请只返回 JSON。任务是找出页面中适合单独放入笔记的局部图，"
     "例如流程图、架构图、示意图、截图、公式图、图表和带标注的视觉区域。不要返回整页区域、纯标题、普通正文段落或页码。"
 )
+
+CODE_CROP_MIN_CONFIDENCE = 0.85
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +40,15 @@ class NormalizedFigure:
     label: str
     content_type: str
     confidence: float
+
+
+@dataclass(frozen=True, slots=True)
+class CropRefinement:
+    figure: NormalizedFigure
+    original_bbox: list[float]
+    quality: str
+    warnings: list[str]
+    blocking_reason: str | None = None
 
 
 def enrich_deck_with_figures(
@@ -297,14 +310,41 @@ def _crop_figures(
         with Image.open(source_path) as image:
             width, height = image.width, image.height
             image = image.convert("RGB")
+            normalized_candidates: list[tuple[dict[str, Any], NormalizedFigure]] = []
             for candidate in figures:
                 normalized = _normalize_candidate(candidate, width=width, height=height)
                 if normalized is None:
                     skipped.append({"reason": "invalid_bbox", "candidate": candidate})
                     continue
+                normalized_candidates.append((candidate, normalized))
+            all_figures = [normalized for _, normalized in normalized_candidates]
+            for candidate, normalized in normalized_candidates:
+                refinement = _refine_crop_candidate(image, normalized, all_figures, width=width, height=height)
+                if refinement.blocking_reason:
+                    skipped.append(
+                        {
+                            "reason": refinement.blocking_reason,
+                            "candidate": candidate,
+                            "bbox": refinement.figure.bbox,
+                            "original_bbox": refinement.original_bbox,
+                            "crop_quality": refinement.quality,
+                            "crop_warnings": refinement.warnings,
+                        }
+                    )
+                    continue
+                normalized = refinement.figure
                 reason = _skip_reason(normalized, accepted, width=width, height=height, min_confidence=min_confidence, min_area=min_area)
                 if reason:
-                    skipped.append({"reason": reason, "candidate": candidate, "bbox": normalized.bbox})
+                    skipped.append(
+                        {
+                            "reason": reason,
+                            "candidate": candidate,
+                            "bbox": normalized.bbox,
+                            "original_bbox": refinement.original_bbox,
+                            "crop_quality": refinement.quality,
+                            "crop_warnings": refinement.warnings,
+                        }
+                    )
                     continue
                 crop_index = max(1, start_index) + len(crops)
                 pixel_box = _pixel_box(normalized.bbox, width, height)
@@ -325,7 +365,9 @@ def _crop_figures(
                     ignored=False,
                     crop_source_path=target.path,
                     crop_bbox=normalized.bbox,
-                    crop_method="vision_bbox",
+                    crop_method="vision_bbox_refined" if normalized.bbox != refinement.original_bbox else "vision_bbox",
+                    crop_quality=refinement.quality,
+                    crop_warnings=list(refinement.warnings),
                     confidence=normalized.confidence,
                 )
                 crops.append(image_asset)
@@ -335,10 +377,13 @@ def _crop_figures(
                         "id": image_asset.id,
                         "path": image_asset.path,
                         "bbox": normalized.bbox,
+                        "original_bbox": refinement.original_bbox,
                         "pixel_bbox": [float(value) for value in pixel_box],
                         "label": normalized.label,
                         "content_type": normalized.content_type,
                         "confidence": normalized.confidence,
+                        "crop_quality": refinement.quality,
+                        "crop_warnings": refinement.warnings,
                     }
                 )
                 if len(crops) >= max_crops_per_page:
@@ -372,6 +417,215 @@ def _normalize_candidate(candidate: dict[str, Any], width: int, height: int) -> 
     label = str(candidate.get("label") or candidate.get("caption") or "").strip()
     content_type = str(candidate.get("content_type") or candidate.get("type") or "unknown").strip() or "unknown"
     return NormalizedFigure(bbox=[x1, y1, x2, y2], label=label, content_type=content_type, confidence=confidence)
+
+
+def _refine_crop_candidate(
+    image: Image.Image,
+    figure: NormalizedFigure,
+    all_figures: list[NormalizedFigure],
+    width: int,
+    height: int,
+) -> CropRefinement:
+    original_bbox = _round_bbox(figure.bbox)
+    warnings: list[str] = []
+    quality = "ok"
+    x1, y1, x2, y2 = figure.bbox
+    if (x2 - x1) * (y2 - y1) > 0.85:
+        return CropRefinement(figure=figure, original_bbox=original_bbox, quality=quality, warnings=warnings)
+
+    if _is_code_content(figure.content_type) and figure.confidence < CODE_CROP_MIN_CONFIDENCE:
+        return CropRefinement(
+            figure=figure,
+            original_bbox=original_bbox,
+            quality="code_deferred_to_ocr",
+            warnings=["code_crop_requires_high_confidence"],
+            blocking_reason="code_crop_deferred_to_ocr",
+        )
+
+    bbox = _limit_bbox_before_next_candidate(figure, all_figures, height=height)
+    if bbox != figure.bbox:
+        warnings.append("trimmed_before_next_candidate")
+        quality = "trimmed_neighbor_overlap"
+
+    crop = image.crop(_pixel_box(bbox, width, height))
+    bands = _foreground_row_bands(crop)
+    trim_bottom = _bottom_trim_from_bands(bands, crop.height)
+    if trim_bottom is not None:
+        pixel_box = _pixel_box(bbox, width, height)
+        new_bottom = max(pixel_box[1] + 1, min(pixel_box[3], pixel_box[1] + trim_bottom))
+        bbox = _round_bbox([bbox[0], bbox[1], bbox[2], new_bottom / height])
+        warnings.append("trimmed_bottom_contamination")
+        quality = "trimmed_bottom_contamination"
+        crop = image.crop(_pixel_box(bbox, width, height))
+        bands = _foreground_row_bands(crop)
+    elif _looks_bottom_contaminated(bands, crop.height):
+        return CropRefinement(
+            figure=NormalizedFigure(bbox=_round_bbox(bbox), label=figure.label, content_type=figure.content_type, confidence=figure.confidence),
+            original_bbox=original_bbox,
+            quality="contaminated_unresolved",
+            warnings=warnings + ["multiple_separated_foreground_bands"],
+            blocking_reason="contaminated_crop",
+        )
+
+    if _is_code_content(figure.content_type) and _foreground_touches_vertical_edge(bands, crop.height):
+        return CropRefinement(
+            figure=NormalizedFigure(bbox=_round_bbox(bbox), label=figure.label, content_type=figure.content_type, confidence=figure.confidence),
+            original_bbox=original_bbox,
+            quality="code_edge_clipped",
+            warnings=warnings + ["code_foreground_touches_crop_edge"],
+            blocking_reason="code_crop_unstable",
+        )
+
+    refined = NormalizedFigure(bbox=_round_bbox(bbox), label=figure.label, content_type=figure.content_type, confidence=figure.confidence)
+    return CropRefinement(figure=refined, original_bbox=original_bbox, quality=quality, warnings=warnings)
+
+
+def _limit_bbox_before_next_candidate(figure: NormalizedFigure, all_figures: list[NormalizedFigure], height: int) -> list[float]:
+    x1, y1, x2, y2 = figure.bbox
+    margin = max(0.006, 8 / max(1, height))
+    next_tops = [
+        other.bbox[1]
+        for other in all_figures
+        if other is not figure
+        and other.bbox[1] > y1 + margin
+        and _horizontal_overlap_ratio(figure.bbox, other.bbox) >= 0.25
+    ]
+    if not next_tops:
+        return list(figure.bbox)
+    limited_y2 = min(y2, min(next_tops) - margin)
+    if limited_y2 <= y1 + 0.04:
+        return list(figure.bbox)
+    return _round_bbox([x1, y1, x2, limited_y2])
+
+
+def _foreground_row_bands(crop: Image.Image) -> list[tuple[int, int, float]]:
+    width, height = crop.width, crop.height
+    if width <= 1 or height <= 1:
+        return []
+    background = _estimate_background(crop)
+    x_step = max(1, width // 650)
+    samples_per_row = max(1, (width + x_step - 1) // x_step)
+    densities: list[float] = []
+    pixels = crop.load()
+    for y in range(height):
+        foreground = 0
+        for x in range(0, width, x_step):
+            if _is_foreground_pixel(pixels[x, y], background):
+                foreground += 1
+        densities.append(foreground / samples_per_row)
+    max_density = max(densities) if densities else 0.0
+    if max_density < 0.006:
+        return []
+    threshold = max(0.01, min(0.08, max_density * 0.16))
+    active = [density >= threshold for density in densities]
+    raw_bands: list[tuple[int, int, float]] = []
+    start: int | None = None
+    mass = 0.0
+    for index, is_active in enumerate(active):
+        if is_active:
+            if start is None:
+                start = index
+                mass = 0.0
+            mass += densities[index]
+        elif start is not None:
+            raw_bands.append((start, index, mass))
+            start = None
+            mass = 0.0
+    if start is not None:
+        raw_bands.append((start, height, mass))
+    return _merge_row_bands(raw_bands, height)
+
+
+def _merge_row_bands(bands: list[tuple[int, int, float]], height: int) -> list[tuple[int, int, float]]:
+    if not bands:
+        return []
+    max_gap = max(4, int(round(height * 0.015)))
+    merged: list[tuple[int, int, float]] = []
+    current_start, current_end, current_mass = bands[0]
+    for start, end, mass in bands[1:]:
+        if start - current_end <= max_gap:
+            current_end = end
+            current_mass += mass
+            continue
+        merged.append((current_start, current_end, current_mass))
+        current_start, current_end, current_mass = start, end, mass
+    merged.append((current_start, current_end, current_mass))
+    min_mass = max(0.08, height * 0.001)
+    return [(start, end, mass) for start, end, mass in merged if end - start >= 2 and mass >= min_mass]
+
+
+def _bottom_trim_from_bands(bands: list[tuple[int, int, float]], height: int) -> int | None:
+    if len(bands) < 2:
+        return None
+    total_mass = sum(mass for _, _, mass in bands)
+    if total_mass <= 0:
+        return None
+    min_gap = max(12, int(round(height * 0.045)))
+    pad = max(4, int(round(height * 0.018)))
+    preceding_mass = 0.0
+    for index, band in enumerate(bands[:-1]):
+        preceding_mass += band[2]
+        next_band = bands[index + 1]
+        gap = next_band[0] - band[1]
+        trailing_mass = total_mass - preceding_mass
+        if gap >= min_gap and next_band[0] >= height * 0.45 and preceding_mass >= total_mass * 0.35 and trailing_mass <= total_mass * 0.7:
+            return min(height, band[1] + pad)
+    return None
+
+
+def _looks_bottom_contaminated(bands: list[tuple[int, int, float]], height: int) -> bool:
+    if len(bands) < 2:
+        return False
+    min_gap = max(18, int(round(height * 0.08)))
+    return any((bands[index + 1][0] - bands[index][1]) >= min_gap and bands[index + 1][0] >= height * 0.5 for index in range(len(bands) - 1))
+
+
+def _foreground_touches_vertical_edge(bands: list[tuple[int, int, float]], height: int) -> bool:
+    if not bands:
+        return False
+    margin = max(3, int(round(height * 0.018)))
+    return bands[0][0] <= margin or bands[-1][1] >= height - margin
+
+
+def _estimate_background(crop: Image.Image) -> tuple[int, int, int]:
+    width, height = crop.width, crop.height
+    coords = [
+        (0, 0),
+        (width - 1, 0),
+        (0, height - 1),
+        (width - 1, height - 1),
+        (width // 2, 0),
+        (width // 2, height - 1),
+        (0, height // 2),
+        (width - 1, height // 2),
+    ]
+    pixels = crop.load()
+    samples = [pixels[x, y][:3] for x, y in coords]
+    return tuple(sorted(channel)[len(channel) // 2] for channel in zip(*samples))
+
+
+def _is_foreground_pixel(pixel: tuple[int, ...], background: tuple[int, int, int]) -> bool:
+    red, green, blue = pixel[:3]
+    distance = abs(red - background[0]) + abs(green - background[1]) + abs(blue - background[2])
+    brightness = (red + green + blue) / 3
+    background_brightness = sum(background) / 3
+    if distance >= 55:
+        return True
+    return background_brightness >= 235 and brightness <= 235 and distance >= 24
+
+
+def _is_code_content(content_type: str) -> bool:
+    return content_type.strip().lower() in {"code", "source_code"}
+
+
+def _horizontal_overlap_ratio(left: list[float], right: list[float]) -> float:
+    overlap = max(0.0, min(left[2], right[2]) - max(left[0], right[0]))
+    denom = max(0.0001, min(left[2] - left[0], right[2] - right[0]))
+    return overlap / denom
+
+
+def _round_bbox(bbox: list[float]) -> list[float]:
+    return [round(max(0.0, min(1.0, float(value))), 4) for value in bbox]
 
 
 def _skip_reason(
@@ -437,6 +691,8 @@ def _figure_prompt(target: FigureTarget, page: SlidePage | None) -> str:
         "请分析这张完整幻灯片截图，找出适合单独裁剪放进课程笔记的局部图。输出严格 JSON，不要输出 Markdown。\n"
         "JSON 格式：{\"figures\":[{\"bbox\":[x1,y1,x2,y2],\"label\":\"...\",\"content_type\":\"diagram/chart/table/formula/code/screenshot/photo/mixed/unknown\",\"confidence\":0.0}]}\n"
         "bbox 必须使用 0 到 1 的归一化坐标，表示左上角和右下角。不要返回整页、纯标题、普通正文段落、页码、logo 或背景装饰。\n"
+        "纯代码区域通常不要作为图片返回；代码应优先由 OCR/文本提取进入笔记，除非它是必须保留版式的完整代码截图。\n"
+        "bbox 不能包含目标图下方或旁边的相邻图形；如果两个区域之间有明显空白，请拆成独立候选或只返回核心目标。\n"
         "优先返回最能承载课程知识的 1-3 个区域。若没有适合裁剪的局部图，返回空数组。\n"
         f"本页文字上下文：{_page_context(page)}\n"
         f"元数据：slide_id={target.slide_id}, path={target.path}, reason={target.reason}。"
@@ -452,8 +708,11 @@ def _page_context(page: SlidePage | None, limit: int = 1000) -> str:
     for block in page.text_blocks[:8]:
         pieces.append(f"{block.id}({block.type})：{block.content}")
     for table in page.tables[:2]:
-        preview = " / ".join(" | ".join(row) for row in table.rows[:3])
+        preview = table_preview(table, limit=260, raw_rows=3)
         pieces.append(f"{table.id}(table)：{preview}")
+    semantic_context = semantic_context_for_page(page, limit=420)
+    if semantic_context:
+        pieces.append(f"semantic_layout：{semantic_context}")
     text = "\n".join(piece for piece in pieces if piece.strip())
     if len(text) > limit:
         return text[: limit - 1] + "…"

@@ -14,6 +14,7 @@ from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.modality import page_has_hint
 from slidenote.models import Deck, ImageAsset, SlidePage
+from slidenote.table_understanding import table_preview
 
 VISION_PROMPT_VERSION = "vision-extract-v1"
 
@@ -386,7 +387,7 @@ def _page_context(page: SlidePage | None, limit: int = 1200) -> str:
     for block in page.text_blocks[:8]:
         pieces.append(f"{block.id}({block.type})：{block.content}")
     for table in page.tables[:2]:
-        preview = " / ".join(" | ".join(row) for row in table.rows[:3])
+        preview = table_preview(table, limit=260, raw_rows=3)
         pieces.append(f"{table.id}(table)：{preview}")
     if page.page_ocr_text and page.page_ocr_status:
         pieces.append(f"page_ocr_text：{page.page_ocr_text[:600]}")

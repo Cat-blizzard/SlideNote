@@ -203,15 +203,23 @@ def _render_image(page: SlidePage, image: ImageAsset, asset_map: dict[str, str],
     if explanation:
         label = "\u56fe\u793a\u8bf4\u660e" if image.figure_explanation else "\u56fe\u7247\u89c6\u89c9\u89e3\u6790"
         lines.append(f"{label}\uff1a{_ensure_sentence(explanation)}")
-    if image.ocr_text and image.figure_explanation_status != "ocr_text":
+    if _should_render_image_ocr(image, explanation):
         if explanation:
             lines.append("")
         lines.append("\u56fe\u7247 OCR \u6587\u5b57\uff1a")
         lines.extend(_quote_multiline(image.ocr_text))
-    if explanation or (image.ocr_text and image.figure_explanation_status != "ocr_text"):
+    if explanation or _should_render_image_ocr(image, explanation):
         lines.append("")
     lines.append(f"![{caption}]({_asset_display_path(image.path, asset_map)})")
     return lines
+
+
+def _should_render_image_ocr(image: ImageAsset, explanation: str | None) -> bool:
+    if not image.ocr_text:
+        return False
+    if image.figure_explanation_status == "ocr_text":
+        return False
+    return not bool(explanation)
 
 
 def _ensure_sentence(text: str) -> str:

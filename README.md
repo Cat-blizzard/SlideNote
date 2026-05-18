@@ -216,6 +216,9 @@ Output structure:
 outputs/lecture/
   content.json
   page_modalities.json
+  table_understanding.json
+  semantic_layout.json
+  element_ir.json
   image_importance.json
   sections.json
   deck_brief.md
@@ -261,6 +264,12 @@ By default, `notes.md` references bundled image copies under `notes.assets/`. If
 - `decorative`: low priority unless the user explicitly refreshes it.
 
 `image_importance.json` records per-image study-value scores and reasons. Vision `auto` uses that ranking to choose the best local figure crop or embedded image before falling back to a full-page screenshot.
+
+`table_understanding.json` records local table summaries, conclusions, and key rows. Note generation uses these fields as the primary study signal, so tables are explained by what they mean rather than by mechanically repeating every cell.
+
+`semantic_layout.json` records local page-level semantic blocks, groups, and relations. It is especially useful for code examples, console output, cause/fix annotations, and multi-part visual scenes that should be explained as one learning unit.
+
+`element_ir.json` is the normalized Page IR / Element IR consumed by prompts, coverage, and source maps. Each element has a stable `element_id`, `kind`, `bbox`, `roles`, `evidence`, and `source_ids`, so later GUI editing, local revise flows, and block-level source tracing can read one format instead of many dataclass-specific fields.
 
 `composite_figures.json` records local detections where a diagram was assembled from multiple embedded picture pieces. SlideNote crops the whole visual region as one `composite_figure`, marks the small pieces as `composite_child`, and keeps their IDs in hidden source refs instead of inserting them separately.
 
@@ -774,6 +783,8 @@ PPT/PDF -> structured extraction -> source inventory -> note generation -> cover
 ```
 
 The local rule-based draft is only a baseline for debugging extraction and coverage. Production notes should use `--use-llm`, while coverage checks still rely on element IDs so the model cannot silently summarize away details.
+
+Internally, the build is being organized around explicit pipeline stages with named dependencies and artifacts. `run_summary.json` includes the registered artifact map, while `element_ir.json` is the shared contract for prompt payloads, coverage, and `source_map.json`. This keeps the current CLI behavior stable while making future GUI and partial-revise work less brittle.
 
 ## References
 

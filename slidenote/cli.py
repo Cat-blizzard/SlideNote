@@ -5,25 +5,28 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from slidenote.composite_figures import enrich_deck_with_composite_figures
 from slidenote.content_guard import build_content_guard, content_guard_warnings, record_required_coverage
 from slidenote.coverage import analyze_coverage, render_coverage_markdown
 from slidenote.deck_brief import build_deck_brief, render_deck_brief_markdown
 from slidenote.doctor import render_doctor_report, run_doctor
 from slidenote.exporting import build_export_artifacts, export_blocking_failures, export_warnings, parse_export_formats
 from slidenote.extractors import extract_deck
-from slidenote.figure_grounding import enrich_deck_with_figure_grounding
-from slidenote.figures import enrich_deck_with_figures
 from slidenote.image_ranking import rank_deck_images
+from slidenote.ir import build_deck_ir
 from slidenote.llm import get_provider_spec, supported_provider_names
 from slidenote.modality import enrich_deck_with_modalities
 from slidenote.notes import estimate_note_generation_steps, generate_notes_result
 from slidenote.ocr import enrich_deck_with_ocr
+from slidenote.pipeline import ArtifactRegistry, BuildContext, FunctionStage, StageResult, run_stage
 from slidenote.progress import ProgressReporter
 from slidenote.sections import build_section_plan
 from slidenote.source_map import build_source_map
+from slidenote.table_understanding import enrich_deck_with_table_understanding
 from slidenote.utils import ensure_clean_dir, write_json, write_text
-from slidenote.vision import enrich_deck_with_vision
+from slidenote.visual.crop import enrich_deck_with_composite_figures, enrich_deck_with_figures
+from slidenote.visual.grounding import enrich_deck_with_figure_grounding
+from slidenote.visual.semantic_layout import enrich_deck_with_semantic_layout
+from slidenote.visual.vision import enrich_deck_with_vision
 
 
 class UserFacingConfigError(RuntimeError):
@@ -323,16 +326,58 @@ def _build(args: argparse.Namespace) -> int:
     refresh_slide_ids = _parse_slide_ranges(args.refresh_pages)
     concurrency = max(1, args.concurrency)
     cache_dirs = _resolve_cache_dirs(args, output_root)
+    artifacts = ArtifactRegistry(output_root)
+    artifacts.register("progress", progress.path)
+    build_context = BuildContext(
+        args=args,
+        input_path=input_path,
+        output_root=output_root,
+        progress=progress,
+        cache_dirs=cache_dirs,
+        refresh_slide_ids=refresh_slide_ids,
+        concurrency=concurrency,
+        artifacts=artifacts,
+    )
 
     try:
         progress.start_stage("parse", message=f"Parsing {input_path.name}")
         deck = extract_deck(input_path, output_root)
         progress.finish_stage(f"Parsed {len(deck.pages)} pages")
 
-        progress.start_stage("modality", message="Classifying page modalities")
-        modality_report = enrich_deck_with_modalities(deck)
-        write_json(output_root / "page_modalities.json", modality_report)
-        progress.finish_stage("Page modality classification complete")
+        modality_report = _run_json_stage(
+            deck,
+            build_context,
+            name="modality",
+            artifact_name="page_modalities",
+            artifact_path="page_modalities.json",
+            message="Classifying page modalities",
+            complete_message="Page modality classification complete",
+            runner=lambda stage_deck: enrich_deck_with_modalities(stage_deck),
+        )
+
+        table_understanding_report = _run_json_stage(
+            deck,
+            build_context,
+            name="table_understanding",
+            dependencies=["modality"],
+            artifact_name="table_understanding",
+            artifact_path="table_understanding.json",
+            message="Summarizing table conclusions",
+            complete_message="Table understanding complete",
+            runner=lambda stage_deck: enrich_deck_with_table_understanding(stage_deck),
+        )
+
+        semantic_layout_report = _run_json_stage(
+            deck,
+            build_context,
+            name="semantic_layout",
+            dependencies=["table_understanding"],
+            artifact_name="semantic_layout",
+            artifact_path="semantic_layout.json",
+            message="Building semantic page blocks",
+            complete_message="Semantic layout complete",
+            runner=lambda stage_deck: enrich_deck_with_semantic_layout(stage_deck),
+        )
 
         composite_figure_report = None
         if args.composite_figures != "off":
@@ -342,7 +387,7 @@ def _build(args: argparse.Namespace) -> int:
                 output_root=output_root,
                 mode=args.composite_figures,
             )
-            write_json(output_root / "composite_figures.json", composite_figure_report)
+            artifacts.write_json("composite_figures", "composite_figures.json", composite_figure_report)
             progress.finish_stage("Composite figure detection complete")
 
         figure_report = None
@@ -443,7 +488,7 @@ def _build(args: argparse.Namespace) -> int:
                 placement=args.figure_placement,
                 audit=args.figure_audit,
             )
-            write_json(output_root / "figure_grounding.json", figure_grounding_report)
+            artifacts.write_json("figure_grounding", "figure_grounding.json", figure_grounding_report)
             progress.finish_stage("Figure grounding complete")
 
         progress.start_stage("sections", message="Detecting note sections")
@@ -461,7 +506,7 @@ def _build(args: argparse.Namespace) -> int:
             max_output_tokens=min(args.max_output_tokens or 1800, 2500),
             temperature=0.0,
         )
-        write_json(output_root / "sections.json", section_report)
+        artifacts.write_json("sections", "sections.json", section_report)
         progress.finish_stage("Section detection complete")
 
         deck_brief_report = None
@@ -480,8 +525,8 @@ def _build(args: argparse.Namespace) -> int:
                 max_output_tokens=min(args.max_output_tokens or 3000, 5000),
                 temperature=0.0,
             )
-            write_json(output_root / "deck_brief.json", deck_brief_report)
-            write_text(output_root / "deck_brief.md", render_deck_brief_markdown(deck_brief_report))
+            artifacts.write_json("deck_brief", "deck_brief.json", deck_brief_report)
+            artifacts.write_text("deck_brief_markdown", "deck_brief.md", render_deck_brief_markdown(deck_brief_report))
             progress.finish_stage("Deck brief complete")
 
         content_guard_report = None
@@ -502,22 +547,24 @@ def _build(args: argparse.Namespace) -> int:
                 temperature=0.0,
             )
             if content_guard_report is not None:
-                write_json(output_root / "content_guard.json", content_guard_report)
+                artifacts.write_json("content_guard", "content_guard.json", content_guard_report)
             progress.finish_stage("Content guard complete")
 
         progress.start_stage("export_content", message="Writing structured content")
-        write_json(output_root / "content.json", deck.to_dict())
+        artifacts.write_json("content", "content.json", deck.to_dict())
+        element_ir = build_deck_ir(deck)
+        artifacts.write_json("element_ir", "element_ir.json", element_ir)
         if image_importance_report is not None:
-            write_json(output_root / "image_importance.json", image_importance_report)
+            artifacts.write_json("image_importance", "image_importance.json", image_importance_report)
         if figure_report is not None:
-            write_json(output_root / "figures.json", _build_figures_export(deck, figure_report))
-            write_json(output_root / "figure_usage.json", figure_report)
+            artifacts.write_json("figures", "figures.json", _build_figures_export(deck, figure_report))
+            artifacts.write_json("figure_usage", "figure_usage.json", figure_report)
         if ocr_report is not None:
-            write_json(output_root / "ocr.json", _build_ocr_export(deck, ocr_report))
-            write_json(output_root / "ocr_usage.json", ocr_report)
+            artifacts.write_json("ocr", "ocr.json", _build_ocr_export(deck, ocr_report))
+            artifacts.write_json("ocr_usage", "ocr_usage.json", ocr_report)
         if vision_report is not None:
-            write_json(output_root / "visuals.json", _build_visuals_export(deck, vision_report))
-            write_json(output_root / "vision_usage.json", vision_report)
+            artifacts.write_json("visuals", "visuals.json", _build_visuals_export(deck, vision_report))
+            artifacts.write_json("vision_usage", "vision_usage.json", vision_report)
         progress.finish_stage("Structured content written")
 
         note_total = estimate_note_generation_steps(deck, args.note_context, args.note_strategy, section_plan=section_report) if args.use_llm else None
@@ -554,15 +601,17 @@ def _build(args: argparse.Namespace) -> int:
             content_guard=content_guard_report,
         )
         notes_markdown = notes_result.markdown
-        write_text(output_root / "notes.md", notes_markdown)
+        artifacts.write_text("notes", "notes.md", notes_markdown)
+        if args.asset_mode == "bundle":
+            artifacts.register("note_assets", output_root / "notes.assets")
         if notes_result.llm_usage is not None:
-            write_json(output_root / "llm_usage.json", notes_result.llm_usage)
+            artifacts.write_json("llm_usage", "llm_usage.json", notes_result.llm_usage)
         if notes_result.page_notes is not None:
-            write_json(output_root / "page_notes.json", notes_result.page_notes)
+            artifacts.write_json("page_notes", "page_notes.json", notes_result.page_notes)
         if notes_result.page_notes_markdown is not None:
-            write_text(output_root / "page_notes.md", notes_result.page_notes_markdown)
+            artifacts.write_text("page_notes_markdown", "page_notes.md", notes_result.page_notes_markdown)
         if notes_result.weave_report is not None:
-            write_json(output_root / "weave_report.json", notes_result.weave_report)
+            artifacts.write_json("weave_report", "weave_report.json", notes_result.weave_report)
         if not args.use_llm:
             progress.advance(message="Local notes generated")
         progress.finish_stage("Notes generated")
@@ -571,11 +620,11 @@ def _build(args: argparse.Namespace) -> int:
         coverage_report = analyze_coverage(deck, notes_markdown, content_guard=content_guard_report)
         if content_guard_report is not None:
             record_required_coverage(content_guard_report, coverage_report, stage="final")
-            write_json(output_root / "content_guard.json", content_guard_report)
-        write_json(output_root / "coverage.json", coverage_report)
-        write_text(output_root / "coverage.md", render_coverage_markdown(coverage_report))
+            artifacts.write_json("content_guard", "content_guard.json", content_guard_report)
+        artifacts.write_json("coverage_json", "coverage.json", coverage_report)
+        artifacts.write_text("coverage", "coverage.md", render_coverage_markdown(coverage_report))
         source_map = build_source_map(deck, notes_markdown, output_root)
-        write_json(output_root / "source_map.json", source_map)
+        artifacts.write_json("source_map", "source_map.json", source_map)
         progress.finish_stage("Coverage complete")
 
         export_report = None
@@ -584,18 +633,22 @@ def _build(args: argparse.Namespace) -> int:
             progress.start_stage("export", message="Exporting requested note formats")
             export_report = build_export_artifacts(notes_markdown, output_root, export_formats, export_toc=args.export_toc)
             if export_report is not None:
-                write_json(output_root / "export_report.json", export_report)
+                artifacts.write_json("export_report", "export_report.json", export_report)
+                _register_export_artifacts(artifacts, export_report)
                 if export_blocking_failures(export_report):
                     export_exit_code = 1
             progress.finish_stage("Export stage complete")
 
         progress.complete("Build complete")
+        artifacts.register("run_summary", output_root / "run_summary.json")
         run_summary = _build_run_summary(
             args=args,
             input_path=input_path,
             output_root=output_root,
             deck=deck,
             modality_report=modality_report,
+            table_understanding_report=table_understanding_report,
+            semantic_layout_report=semantic_layout_report,
             image_importance_report=image_importance_report,
             section_report=section_report,
             deck_brief_report=deck_brief_report,
@@ -613,8 +666,9 @@ def _build(args: argparse.Namespace) -> int:
             progress=progress,
             note_asset_warnings=notes_result.asset_warnings or [],
             export_report=export_report,
+            artifact_registry=artifacts,
         )
-        write_json(output_root / "run_summary.json", run_summary)
+        artifacts.write_json("run_summary", "run_summary.json", run_summary)
     except Exception as exc:
         friendly_message = _friendly_build_error(exc, args)
         if friendly_message:
@@ -629,7 +683,10 @@ def _build(args: argparse.Namespace) -> int:
         print(f"- notes:    {output_root / 'notes.md'}")
         print(f"- coverage: {output_root / 'coverage.md'}")
         print(f"- sources:  {output_root / 'source_map.json'}")
+        print(f"- element IR: {output_root / 'element_ir.json'}")
         print(f"- modalities: {output_root / 'page_modalities.json'}")
+        print(f"- tables:   {output_root / 'table_understanding.json'}")
+        print(f"- semantic: {output_root / 'semantic_layout.json'}")
         print(f"- sections: {output_root / 'sections.json'}")
         if deck_brief_report is not None:
             print(f"- deck brief: {output_root / 'deck_brief.json'}")
@@ -662,6 +719,59 @@ def _build(args: argparse.Namespace) -> int:
         if export_report is not None:
             print(f"- exports:  {output_root / 'export_report.json'}")
     return export_exit_code
+
+
+def _run_json_stage(
+    deck,
+    context: BuildContext,
+    *,
+    name: str,
+    artifact_name: str,
+    artifact_path: str,
+    message: str,
+    complete_message: str,
+    runner,
+    dependencies: list[str] | None = None,
+) -> dict[str, Any]:
+    progress = context.progress
+    progress.start_stage(name, message=message)
+
+    def stage_runner(stage_deck, stage_context: BuildContext) -> StageResult:
+        report = runner(stage_deck)
+        artifacts: dict[str, str] = {}
+        if stage_context.artifacts is not None:
+            stage_context.artifacts.write_json(artifact_name, artifact_path, report)
+            registered = stage_context.artifacts.relative_path(artifact_name)
+            if registered:
+                artifacts[artifact_name] = registered
+        return StageResult(name=name, report=report, artifacts=artifacts)
+
+    stage = FunctionStage(
+        name=name,
+        dependencies=dependencies or [],
+        artifacts=[artifact_name],
+        runner=stage_runner,
+    )
+    result = run_stage(deck, context, stage)
+    progress.finish_stage(complete_message)
+    return result.report or {}
+
+
+def _register_export_artifacts(artifacts: ArtifactRegistry, export_report: dict[str, Any]) -> None:
+    results = export_report.get("results")
+    if not isinstance(results, list):
+        return
+    for result in results:
+        if not isinstance(result, dict) or result.get("status") != "ok":
+            continue
+        path = result.get("path")
+        fmt = str(result.get("format") or "").replace("-", "_")
+        if not path or not fmt:
+            continue
+        resolved = Path(path)
+        if not resolved.is_absolute():
+            resolved = artifacts.output_root / resolved
+        artifacts.register(f"notes_{fmt}", resolved)
 
 
 def _friendly_build_error(exc: Exception, args: argparse.Namespace) -> str | None:
@@ -862,6 +972,8 @@ def _build_run_summary(
     output_root: Path,
     deck,
     modality_report: dict[str, Any],
+    table_understanding_report: dict[str, Any],
+    semantic_layout_report: dict[str, Any],
     image_importance_report: dict[str, Any] | None,
     section_report: dict[str, Any],
     deck_brief_report: dict[str, Any] | None,
@@ -879,6 +991,7 @@ def _build_run_summary(
     progress: ProgressReporter,
     note_asset_warnings: list[str],
     export_report: dict[str, Any] | None = None,
+    artifact_registry: ArtifactRegistry | None = None,
 ) -> dict[str, Any]:
     pages = deck.pages
     images_count = sum(len(page.images) for page in pages)
@@ -928,6 +1041,8 @@ def _build_run_summary(
         "figure_crop": figure_report.get("summary") if figure_report else None,
         "figure_grounding": figure_grounding_report.get("summary") if figure_grounding_report else None,
         "page_modalities": modality_report.get("summary") if modality_report else None,
+        "table_understanding": table_understanding_report.get("summary") if table_understanding_report else None,
+        "semantic_layout": semantic_layout_report.get("summary") if semantic_layout_report else None,
         "image_importance": image_importance_report.get("summary") if image_importance_report else None,
         "sections": section_report.get("summary") if section_report else None,
         "deck_brief": deck_brief_report.get("summary") if deck_brief_report else None,
@@ -958,6 +1073,7 @@ def _build_run_summary(
         },
         "artifacts": {
             "content": "content.json",
+            "element_ir": "element_ir.json",
             "notes": "notes.md",
             "note_assets": "notes.assets" if args.asset_mode == "bundle" else None,
             "coverage": "coverage.md",
@@ -965,6 +1081,8 @@ def _build_run_summary(
             "progress": _display_path(progress.path, output_root),
             "run_summary": "run_summary.json",
             "page_modalities": "page_modalities.json",
+            "table_understanding": "table_understanding.json",
+            "semantic_layout": "semantic_layout.json",
             "image_importance": "image_importance.json" if image_importance_report else None,
             "composite_figures": "composite_figures.json" if composite_figure_report else None,
             "sections": "sections.json",
@@ -985,6 +1103,7 @@ def _build_run_summary(
             "weave_report": "weave_report.json" if getattr(args, "note_strategy", "direct") == "lecture-weave" and llm_usage else None,
             "ocr_usage": "ocr_usage.json" if ocr_report else None,
             "vision_usage": "vision_usage.json" if vision_report else None,
+            "registered": artifact_registry.as_summary() if artifact_registry else {},
         },
         "progress": progress.snapshot(),
     }
@@ -1059,6 +1178,8 @@ def _build_figures_export(deck, figure_report):
                         "crop_source_path": image.crop_source_path,
                         "crop_bbox": image.crop_bbox,
                         "crop_method": image.crop_method,
+                        "crop_quality": image.crop_quality,
+                        "crop_warnings": list(image.crop_warnings),
                         "confidence": image.confidence,
                         "width": image.width,
                         "height": image.height,

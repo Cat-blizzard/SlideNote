@@ -1,11 +1,12 @@
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from slidenote.composite_figures import enrich_deck_with_composite_figures
-from slidenote.figures import _crop_figures, enrich_deck_with_figures, select_figure_targets
+from slidenote.figures import _crop_figures, _figure_prompt, enrich_deck_with_figures, select_figure_targets
 from slidenote.modality import enrich_deck_with_modalities
 from slidenote.models import Deck, ImageAsset, SlidePage, TextBlock
+from slidenote.semantic_layout import enrich_deck_with_semantic_layout
 
 
 def test_figure_crop_creates_image_asset_from_normalized_bbox(tmp_path):
@@ -68,6 +69,83 @@ def test_figure_crop_filters_low_quality_candidates(tmp_path):
 
     assert len(crops) == 1
     assert {item["reason"] for item in skipped} >= {"low_confidence", "full_page_like", "small_area", "overlap_duplicate"}
+
+
+def test_figure_crop_trims_bottom_contamination(tmp_path):
+    screenshot = tmp_path / "screenshots" / "slide3.png"
+    screenshot.parent.mkdir()
+    image = Image.new("RGB", (1000, 600), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((120, 110, 850, 210), fill="navy")
+    draw.rectangle((120, 350, 850, 385), fill="red")
+    image.save(screenshot)
+    target = select_figure_targets(
+        Deck(source_path="lecture.pdf", source_type="pdf", pages=[SlidePage(slide_id=3, page_screenshot="screenshots/slide3.png")])
+    )[0]
+
+    crops, records, skipped = _crop_figures(
+        source_path=screenshot,
+        output_root=tmp_path,
+        figures_dir=tmp_path / "figures",
+        target=target,
+        figures=[{"bbox": [0.1, 0.1, 0.9, 0.72], "label": "数组图", "content_type": "diagram", "confidence": 0.9}],
+        max_crops_per_page=3,
+        min_confidence=0.45,
+        min_area=40_000,
+    )
+
+    assert skipped == []
+    assert len(crops) == 1
+    assert crops[0].crop_quality == "trimmed_bottom_contamination"
+    assert "trimmed_bottom_contamination" in crops[0].crop_warnings
+    assert crops[0].crop_bbox[3] < 0.45
+    assert records[0]["original_bbox"] == [0.1, 0.1, 0.9, 0.72]
+
+
+def test_figure_crop_skips_unstable_code_candidates(tmp_path):
+    screenshot = tmp_path / "screenshots" / "slide4.png"
+    screenshot.parent.mkdir()
+    Image.new("RGB", (1000, 600), "white").save(screenshot)
+    target = select_figure_targets(
+        Deck(source_path="lecture.pdf", source_type="pdf", pages=[SlidePage(slide_id=4, page_screenshot="screenshots/slide4.png")])
+    )[0]
+
+    crops, _, skipped = _crop_figures(
+        source_path=screenshot,
+        output_root=tmp_path,
+        figures_dir=tmp_path / "figures",
+        target=target,
+        figures=[{"bbox": [0.1, 0.1, 0.8, 0.6], "label": "代码", "content_type": "code", "confidence": 0.7}],
+        max_crops_per_page=3,
+        min_confidence=0.45,
+        min_area=40_000,
+    )
+
+    assert crops == []
+    assert skipped[0]["reason"] == "code_crop_deferred_to_ocr"
+    assert skipped[0]["crop_quality"] == "code_deferred_to_ocr"
+
+
+def test_figure_prompt_includes_semantic_layout_context(tmp_path):
+    page = SlidePage(
+        slide_id=5,
+        page_screenshot="screenshots/slide5.png",
+        page_width=1000,
+        page_height=600,
+        text_blocks=[
+            TextBlock(id="s5_t1", type="paragraph", content="cin >> student_number;", bbox=[50, 100, 300, 160]),
+            TextBlock(id="s5_t2", type="paragraph", content="getline 会读取残留换行符，因此需要 cin.ignore();", bbox=[320, 160, 900, 230]),
+        ],
+    )
+    deck = Deck(source_path="lecture.pdf", source_type="pdf", pages=[page])
+    enrich_deck_with_semantic_layout(deck)
+    target = select_figure_targets(deck)[0]
+
+    prompt = _figure_prompt(target, page)
+
+    assert "semantic_layout" in prompt
+    assert "code_causal_explanation" in prompt
+    assert "prefer_structured_text_then_group_image" in prompt
 
 
 def test_figure_enrichment_uses_vision_model_and_cache(tmp_path, monkeypatch):

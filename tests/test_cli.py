@@ -47,6 +47,9 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     run_summary = json.loads((out / "run_summary.json").read_text(encoding="utf-8"))
     source_map = json.loads((out / "source_map.json").read_text(encoding="utf-8"))
     page_modalities = json.loads((out / "page_modalities.json").read_text(encoding="utf-8"))
+    table_understanding = json.loads((out / "table_understanding.json").read_text(encoding="utf-8"))
+    semantic_layout = json.loads((out / "semantic_layout.json").read_text(encoding="utf-8"))
+    element_ir = json.loads((out / "element_ir.json").read_text(encoding="utf-8"))
     sections = json.loads((out / "sections.json").read_text(encoding="utf-8"))
     image_importance = json.loads((out / "image_importance.json").read_text(encoding="utf-8"))
     composite_figures = json.loads((out / "composite_figures.json").read_text(encoding="utf-8"))
@@ -56,6 +59,10 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["artifacts"]["progress"] == "progress.json"
     assert run_summary["artifacts"]["source_map"] == "source_map.json"
     assert run_summary["artifacts"]["page_modalities"] == "page_modalities.json"
+    assert run_summary["artifacts"]["table_understanding"] == "table_understanding.json"
+    assert run_summary["artifacts"]["semantic_layout"] == "semantic_layout.json"
+    assert run_summary["artifacts"]["element_ir"] == "element_ir.json"
+    assert run_summary["artifacts"]["registered"]["element_ir"] == "element_ir.json"
     assert run_summary["artifacts"]["sections"] == "sections.json"
     assert run_summary["artifacts"]["deck_brief"] is None
     assert run_summary["artifacts"]["image_importance"] == "image_importance.json"
@@ -63,6 +70,12 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["artifacts"]["figure_grounding"] == "figure_grounding.json"
     assert run_summary["artifacts"]["export_report"] is None
     assert page_modalities["summary"]["pages_total"] == 1
+    assert table_understanding["summary"]["tables_total"] == 0
+    assert run_summary["table_understanding"]["tables_total"] == 0
+    assert semantic_layout["summary"]["pages_total"] == 1
+    assert element_ir["schema_version"] == 1
+    assert element_ir["pages"][0]["slide_id"] == 1
+    assert run_summary["semantic_layout"]["pages_total"] == 1
     assert sections["summary"]["sections_total"] == 1
     assert image_importance["summary"]["images_total"] == 0
     assert composite_figures["summary"]["composites_created"] == 0

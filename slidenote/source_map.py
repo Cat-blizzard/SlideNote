@@ -5,8 +5,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+from slidenote.ir import build_page_ir, element_index_from_ir
 from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
+from slidenote.table_understanding import table_preview
 
 
 ELEMENT_PATTERN = re.compile(r"\bs\d+_(?:t|tbl|img|fig)\d+\b")
@@ -205,15 +207,7 @@ def _strip_html_comments(text: str) -> str:
 
 
 def _element_index(deck: Deck) -> dict[str, dict[str, Any]]:
-    index: dict[str, dict[str, Any]] = {}
-    for page in deck.pages:
-        for block in page.text_blocks:
-            index[block.id] = _text_ref(deck, page, block)
-        for table in page.tables:
-            index[table.id] = _table_ref(deck, page, table)
-        for image in page.images:
-            index[image.id] = _image_ref(deck, page, image)
-    return index
+    return element_index_from_ir(deck)
 
 
 def _page_sources(page: SlidePage) -> dict[str, Any]:
@@ -252,6 +246,9 @@ def _page_sources(page: SlidePage) -> dict[str, Any]:
             }
             for image in page.images
         ],
+        "semantic_groups": page.semantic_groups,
+        "semantic_relations": page.semantic_relations,
+        "element_ir": build_page_ir(Deck(source_path="", source_type="", pages=[page]), page),
     }
 
 
@@ -267,13 +264,15 @@ def _text_ref(deck: Deck, page: SlidePage, block: TextBlock) -> dict[str, Any]:
 
 
 def _table_ref(deck: Deck, page: SlidePage, table: TableBlock) -> dict[str, Any]:
-    preview = " / ".join(" | ".join(row) for row in table.rows[:2])
     return {
         "type": "table",
         "source_path": deck.source_path,
         "slide_id": page.slide_id,
         "element_id": table.id,
-        "preview": _preview(preview),
+        "preview": table_preview(table),
+        "table_summary": table.table_summary,
+        "table_conclusion": table.table_conclusion,
+        "key_rows": table.key_rows,
     }
 
 
@@ -290,6 +289,8 @@ def _image_ref(deck: Deck, page: SlidePage, image: ImageAsset) -> dict[str, Any]
         "crop_source_path": image.crop_source_path,
         "crop_bbox": image.crop_bbox,
         "crop_method": image.crop_method,
+        "crop_quality": image.crop_quality,
+        "crop_warnings": list(image.crop_warnings),
         "confidence": image.confidence,
         "importance_score": image.importance_score,
         "importance_rank": image.importance_rank,

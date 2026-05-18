@@ -239,7 +239,14 @@ def _plain_block_text(block: TextBlock) -> str:
 
 
 def _render_table(page: SlidePage, table: TableBlock, source_display: str) -> list[str]:
-    lines = [f"\u4e0b\u8868\u6574\u7406\u4e86\u7b2c {page.slide_id} \u9875\u4e2d\u7684\u8868\u683c\u5185\u5bb9\u3002", _source_marker(page.slide_id, [table.id], source_display), ""]
+    table_lead = table.table_conclusion or table.table_summary or f"\u4e0b\u8868\u6574\u7406\u4e86\u7b2c {page.slide_id} \u9875\u4e2d\u7684\u8868\u683c\u5185\u5bb9\u3002"
+    prefix = "\u8868\u683c\u7ed3\u8bba" if table.table_conclusion else "\u8868\u683c\u8bf4\u660e"
+    lines = [f"{prefix}\uff1a{_ensure_sentence(table_lead)}", _source_marker(page.slide_id, [table.id], source_display), ""]
+    if table.key_rows:
+        lines.append("\u5173\u952e\u884c\uff1a")
+        for key_row in table.key_rows[:3]:
+            lines.append(f"- {_format_key_row(key_row)}")
+        lines.append("")
     if not table.rows:
         return lines
     width = max(len(row) for row in table.rows)
@@ -250,6 +257,26 @@ def _render_table(page: SlidePage, table: TableBlock, source_display: str) -> li
     for row in padded[1:] or [[""] * width]:
         lines.append("| " + " | ".join(_escape_md(cell) or " " for cell in row) + " |")
     return lines
+
+
+def _format_key_row(row: dict[str, Any]) -> str:
+    label = str(row.get("label") or f"\u7b2c {row.get('row_index', '?')} \u884c")
+    values = row.get("values")
+    if not isinstance(values, list):
+        return label
+    parts: list[str] = []
+    for value in values[:4]:
+        if not isinstance(value, dict):
+            continue
+        column = str(value.get("column") or "").strip()
+        cell = str(value.get("value") or "").strip()
+        if not cell or cell == label:
+            continue
+        parts.append(f"{column}={cell}" if column else cell)
+    if not parts:
+        return label
+    separator = "\uff1b"
+    return f"{label}\uff1a{separator.join(parts)}"
 
 
 def _escape_md(value: str) -> str:
