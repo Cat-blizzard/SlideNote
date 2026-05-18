@@ -1,0 +1,85 @@
+import subprocess
+
+from slidenote.exporting import add_table_of_contents, build_export_artifacts, clean_markdown_for_export, parse_export_formats
+
+
+def test_parse_export_formats_expands_all_and_deduplicates():
+    assert parse_export_formats("markdown-toc,docx,docx") == ["markdown-toc", "docx"]
+    assert parse_export_formats("all") == ["markdown-toc", "docx", "pdf", "latex"]
+
+
+def test_markdown_toc_inserts_after_h1_with_stable_slugs():
+    markdown = """# Lecture
+
+Intro paragraph.
+
+## TCP Basics
+
+### 拥塞控制
+
+## TCP Basics
+"""
+
+    result = add_table_of_contents(markdown)
+
+    assert result.startswith("# Lecture\n\n## 目录\n\n- [TCP Basics](#tcp-basics)\n  - [拥塞控制](#拥塞控制)\n- [TCP Basics](#tcp-basics-2)")
+    assert result.index("## 目录") < result.index("Intro paragraph.")
+
+
+def test_markdown_toc_ignores_hidden_source_markers():
+    markdown = """# Lecture <!-- slidenote-source: p1:s1_t1 -->
+
+## Definition <!-- slidenote-source: p2:s2_t1 -->
+
+Consistency keeps reads predictable. <!-- slidenote-source: p2:s2_t1 -->
+"""
+
+    result = add_table_of_contents(markdown)
+
+    assert "<!--" not in result
+    assert "- [Definition](#definition)" in result
+    assert "s2_t1" not in result
+
+
+def test_clean_markdown_for_export_removes_hidden_markers():
+    result = clean_markdown_for_export("Text <!-- slidenote-source: p1:s1_t1 -->\n")
+
+    assert result == "Text\n"
+
+
+def test_markdown_toc_export_does_not_need_pandoc(tmp_path, monkeypatch):
+    monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: None)
+
+    report = build_export_artifacts("# Lecture\n\n## Topic\n", tmp_path, ["markdown-toc"])
+
+    assert report["summary"]["succeeded"] == 1
+    assert (tmp_path / "notes.toc.md").exists()
+    assert not (tmp_path / "notes.docx").exists()
+
+
+def test_pandoc_exports_record_success(tmp_path, monkeypatch):
+    def fake_run(command, cwd=None, text=None, stdout=None, stderr=None, check=None):
+        output = tmp_path / command[command.index("-o") + 1]
+        output.write_bytes(b"exported")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: "pandoc")
+    monkeypatch.setattr("slidenote.exporting.subprocess.run", fake_run)
+
+    report = build_export_artifacts("# Lecture\n\n## Topic\n", tmp_path, ["docx", "pdf", "latex"])
+
+    assert report["summary"]["succeeded"] == 3
+    assert {result["path"] for result in report["results"]} == {"notes.docx", "notes.pdf", "notes.tex"}
+    assert (tmp_path / "notes.docx").exists()
+    assert (tmp_path / "notes.pdf").exists()
+    assert (tmp_path / "notes.tex").exists()
+
+
+def test_pandoc_missing_marks_requested_formats_failed(tmp_path, monkeypatch):
+    monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: None)
+
+    report = build_export_artifacts("# Lecture\n\n## Topic\n", tmp_path, ["docx", "pdf"])
+
+    assert report["summary"]["failed"] == 2
+    assert report["summary"]["blocking_failures"] == 2
+    assert all(result["reason"] == "pandoc_not_found" for result in report["results"])

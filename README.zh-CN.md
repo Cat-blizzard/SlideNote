@@ -75,6 +75,7 @@ python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --
 - 生成 `content.json` 作为原始内容清单。
 - 生成 `notes.md`，默认隐藏来源标记，也可选择显示简洁页码或详细元素 ID。
 - 生成 `coverage.json` / `coverage.md`，检查哪些元素没有出现在笔记中。
+- 可选导出 `notes.toc.md`、`notes.docx`、`notes.pdf` 和 `notes.tex`；Word/PDF/LaTeX 需要安装 Pandoc。
 - 支持多家 LLM：ChatGPT/OpenAI、DeepSeek、通义千问、豆包、GLM、Gemini、Claude。
 - 支持 `lecture-weave` 高质量笔记策略：先逐页深讲，再按章节编织成连贯笔记。
 - 支持控制笔记输出语言和术语策略：英文课件可以生成中文或英文笔记，中文笔记可保留英文专业术语。
@@ -236,6 +237,11 @@ outputs/lecture/
   coverage.json
   coverage.md
   source_map.json
+  export_report.json
+  notes.toc.md
+  notes.docx
+  notes.pdf
+  notes.tex
   progress.json
   run_summary.json
   notes.assets/
@@ -266,6 +272,8 @@ outputs/lecture/
 
 `content_guard.json` 默认由 `--content-guard auto` 生成。不开 `--use-llm` 时，它只记录本地启发式审查；开启 `--use-llm` 后，SlideNote 会先本地预筛表格、公式、定义、条件、OCR 关键文本、视觉摘要和非装饰图片，再让文本模型判断页面角色和元素级学习角色。只有高置信 `must_explain` 元素会进入 `required_visible_coverage` 并触发最多一次自然修复；低置信元素只保留在审查报告里。
 
+额外导出默认关闭。`--export markdown-toc` 不需要 Pandoc，会写出带目录的 `notes.toc.md`。`--export docx,pdf,latex` 会调用 Pandoc 生成 `notes.docx`、`notes.pdf` 和 `notes.tex`；转换结果和错误摘要会写入 `export_report.json`。
+
 ## 环境检测
 
 如果不确定本机缺什么，可以先运行：
@@ -279,7 +287,7 @@ python -m slidenote doctor
 - Python 版本。
 - 核心依赖：PyMuPDF、python-pptx、Pillow。
 - 可选依赖：OpenAI SDK、pywin32。
-- 外部软件：LibreOffice / `soffice`。
+- 外部软件：LibreOffice / `soffice`、Pandoc。
 - 常见 LLM/OCR API key 环境变量。
 - 每个检查项的影响范围、修复建议和 GUI 可读取的 readiness 状态。
 

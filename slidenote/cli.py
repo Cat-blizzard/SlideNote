@@ -10,6 +10,7 @@ from slidenote.content_guard import build_content_guard, content_guard_warnings,
 from slidenote.coverage import analyze_coverage, render_coverage_markdown
 from slidenote.deck_brief import build_deck_brief, render_deck_brief_markdown
 from slidenote.doctor import render_doctor_report, run_doctor
+from slidenote.exporting import build_export_artifacts, export_blocking_failures, export_warnings, parse_export_formats
 from slidenote.extractors import extract_deck
 from slidenote.figure_grounding import enrich_deck_with_figure_grounding
 from slidenote.figures import enrich_deck_with_figures
@@ -82,6 +83,17 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["auto", "off"],
         default="auto",
         help="Classify high-value learning content before note generation. auto uses the text LLM when --use-llm is enabled; off disables it.",
+    )
+    build.add_argument(
+        "--export",
+        default=None,
+        help="Comma-separated extra export formats: markdown-toc, docx, pdf, latex, or all.",
+    )
+    build.add_argument(
+        "--export-toc",
+        choices=["auto", "off"],
+        default="auto",
+        help="Whether markdown-toc export inserts a table of contents.",
     )
     build.add_argument(
         "--asset-mode",
@@ -297,6 +309,10 @@ def _doctor(args: argparse.Namespace) -> int:
 
 def _build(args: argparse.Namespace) -> int:
     _apply_speed_mode_defaults(args)
+    try:
+        export_formats = parse_export_formats(args.export)
+    except ValueError as exc:
+        raise UserFacingConfigError(str(exc)) from exc
     input_path = args.input.resolve()
     output_root = args.out.resolve()
     if not input_path.exists():
@@ -562,6 +578,17 @@ def _build(args: argparse.Namespace) -> int:
         write_json(output_root / "source_map.json", source_map)
         progress.finish_stage("Coverage complete")
 
+        export_report = None
+        export_exit_code = 0
+        if export_formats:
+            progress.start_stage("export", message="Exporting requested note formats")
+            export_report = build_export_artifacts(notes_markdown, output_root, export_formats, export_toc=args.export_toc)
+            if export_report is not None:
+                write_json(output_root / "export_report.json", export_report)
+                if export_blocking_failures(export_report):
+                    export_exit_code = 1
+            progress.finish_stage("Export stage complete")
+
         progress.complete("Build complete")
         run_summary = _build_run_summary(
             args=args,
@@ -585,6 +612,7 @@ def _build(args: argparse.Namespace) -> int:
             refresh_slide_ids=refresh_slide_ids,
             progress=progress,
             note_asset_warnings=notes_result.asset_warnings or [],
+            export_report=export_report,
         )
         write_json(output_root / "run_summary.json", run_summary)
     except Exception as exc:
@@ -631,7 +659,9 @@ def _build(args: argparse.Namespace) -> int:
         if vision_report is not None:
             print(f"- visuals:  {output_root / 'visuals.json'}")
             print(f"- vision:   {output_root / 'vision_usage.json'}")
-    return 0
+        if export_report is not None:
+            print(f"- exports:  {output_root / 'export_report.json'}")
+    return export_exit_code
 
 
 def _friendly_build_error(exc: Exception, args: argparse.Namespace) -> str | None:
@@ -848,6 +878,7 @@ def _build_run_summary(
     refresh_slide_ids: set[int],
     progress: ProgressReporter,
     note_asset_warnings: list[str],
+    export_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     pages = deck.pages
     images_count = sum(len(page.images) for page in pages)
@@ -871,6 +902,8 @@ def _build_run_summary(
             "note_depth": args.note_depth,
             "deck_brief": args.deck_brief,
             "content_guard": args.content_guard,
+            "export": parse_export_formats(args.export),
+            "export_toc": args.export_toc,
             "weave_dedup": args.weave_dedup,
             "page_neighborhood": args.page_neighborhood,
             "section_detection": args.section_detection,
@@ -921,6 +954,7 @@ def _build_run_summary(
         "warnings": {
             "note_assets": note_asset_warnings,
             "content_guard": content_guard_warnings(content_guard_report),
+            "export": export_warnings(export_report),
         },
         "artifacts": {
             "content": "content.json",
@@ -937,6 +971,11 @@ def _build_run_summary(
             "deck_brief": "deck_brief.json" if deck_brief_report else None,
             "deck_brief_markdown": "deck_brief.md" if deck_brief_report else None,
             "content_guard": "content_guard.json" if content_guard_report else None,
+            "export_report": "export_report.json" if export_report else None,
+            "notes_toc": _export_artifact_path(export_report, "markdown-toc"),
+            "notes_docx": _export_artifact_path(export_report, "docx"),
+            "notes_pdf": _export_artifact_path(export_report, "pdf"),
+            "notes_latex": _export_artifact_path(export_report, "latex"),
             "figures": "figures.json" if figure_report else None,
             "figure_usage": "figure_usage.json" if figure_report else None,
             "figure_grounding": "figure_grounding.json" if figure_grounding_report else None,
@@ -949,6 +988,21 @@ def _build_run_summary(
         },
         "progress": progress.snapshot(),
     }
+
+
+def _export_artifact_path(export_report: dict[str, Any] | None, fmt: str) -> str | None:
+    if not export_report:
+        return None
+    results = export_report.get("results")
+    if not isinstance(results, list):
+        return None
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        if result.get("format") == fmt and result.get("status") == "ok":
+            path = result.get("path")
+            return str(path) if path else None
+    return None
 
 
 def _display_path(path: Path, output_root: Path) -> str:

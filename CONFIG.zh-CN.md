@@ -63,6 +63,8 @@ python -m slidenote build lecture.pdf `
 | `--refresh-pages` | 无 | `3,5-8` | 指定页绕过本地缓存重新生成。 |
 | `--progress-json` | `<out>/progress.json` | 路径 | 进度 JSON 路径。 |
 | `--quiet` | 关闭 | flag | 不打印实时进度，但仍写 `progress.json`。 |
+| `--export` | 无 | `markdown-toc` / `docx` / `pdf` / `latex` / `all`，逗号分隔 | 额外导出格式。Markdown 目录不需要 Pandoc；Word/PDF/LaTeX 需要 Pandoc。 |
+| `--export-toc` | `auto` | `auto` / `off` | `markdown-toc` 导出是否插入目录。 |
 
 ## Speed Mode 预设
 
@@ -202,6 +204,24 @@ Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主
 
 `lecture-weave` 会分开缓存逐页深讲和章节编织。局部 `--refresh-pages` 会刷新指定页的 page note，以及包含该页的 weave context。
 
+## 导出格式
+
+`notes.md` 始终是原始最终笔记。额外导出由 `--export` 显式开启：
+
+| 格式 | 输出 | 依赖 |
+| --- | --- | --- |
+| `markdown-toc` | `notes.toc.md` | 无 |
+| `docx` | `notes.docx` | Pandoc |
+| `pdf` | `notes.pdf` | Pandoc 和本机 PDF 引擎；默认使用 `xelatex` |
+| `latex` | `notes.tex` | Pandoc |
+| `all` | 以上全部 | Pandoc 用于 docx/pdf/latex |
+
+```powershell
+python -m slidenote build lecture.pdf --out outputs\lecture --export markdown-toc,docx
+```
+
+`export_report.json` 会记录每个格式的状态、输出路径、Pandoc 命令、失败原因和 warning。请求 `docx`、`pdf` 或 `latex` 但未安装 Pandoc 时，构建仍会保留 `notes.md` 和其它基础产物，但命令返回非 0，避免误认为导出文件已经生成。
+
 ## OCR
 
 | 参数 | 默认值 | 可选值 / 格式 | 说明 |
@@ -283,6 +303,11 @@ llm_usage.json
 coverage.json
 coverage.md
 source_map.json
+export_report.json
+notes.toc.md
+notes.docx
+notes.pdf
+notes.tex
 progress.json
 run_summary.json
 notes.assets/

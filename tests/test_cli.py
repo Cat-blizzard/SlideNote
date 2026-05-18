@@ -61,6 +61,7 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["artifacts"]["image_importance"] == "image_importance.json"
     assert run_summary["artifacts"]["composite_figures"] == "composite_figures.json"
     assert run_summary["artifacts"]["figure_grounding"] == "figure_grounding.json"
+    assert run_summary["artifacts"]["export_report"] is None
     assert page_modalities["summary"]["pages_total"] == 1
     assert sections["summary"]["sections_total"] == 1
     assert image_importance["summary"]["images_total"] == 0
@@ -71,6 +72,7 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["run"]["note_language"] == "zh"
     assert run_summary["run"]["term_policy"] == "bilingual"
     assert run_summary["run"]["deck_brief"] == "auto"
+    assert not (out / "export_report.json").exists()
 
 
 def test_auto_figure_crop_with_vision_off_does_not_call_api(tmp_path):
@@ -145,6 +147,8 @@ def test_quality_first_defaults_are_exposed_by_parser():
     assert args.figure_placement == "inline"
     assert args.figure_audit == "local"
     assert args.content_guard == "auto"
+    assert args.export is None
+    assert args.export_toc == "auto"
 
 
 def test_doctor_command_writes_json(tmp_path):
@@ -160,6 +164,8 @@ def test_doctor_command_writes_json(tmp_path):
     assert "gui" in report
     assert all("category" in check and "impact" in check for check in report["checks"])
     assert isinstance(report["gui"]["ready_for_local_parse"], bool)
+    assert isinstance(report["gui"]["ready_for_exports"], bool)
+    assert any(check["name"] == "Pandoc" and check["required"] is False for check in report["checks"])
 
 
 def test_doctor_reports_pywin32_missing_when_parent_package_is_absent(monkeypatch):
@@ -179,6 +185,50 @@ def test_doctor_reports_pywin32_missing_when_parent_package_is_absent(monkeypatc
     pywin32_check = next(check for check in report["checks"] if check["name"] == "pywin32")
     assert pywin32_check["status"] == "warn"
     assert pywin32_check["required"] is False
+
+
+def test_build_can_export_markdown_with_toc_without_pandoc(tmp_path, monkeypatch):
+    monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: None)
+    source = tmp_path / "lecture.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Transport Layer")
+    doc.save(source)
+    doc.close()
+    out = tmp_path / "out"
+
+    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--vision", "off", "--export", "markdown-toc"])
+
+    assert exit_code == 0
+    toc_markdown = (out / "notes.toc.md").read_text(encoding="utf-8")
+    export_report = json.loads((out / "export_report.json").read_text(encoding="utf-8"))
+    run_summary = json.loads((out / "run_summary.json").read_text(encoding="utf-8"))
+    assert "## 目录" in toc_markdown
+    assert export_report["summary"]["succeeded"] == 1
+    assert run_summary["artifacts"]["notes_toc"] == "notes.toc.md"
+    assert run_summary["warnings"]["export"] == []
+    assert not (out / "notes.docx").exists()
+
+
+def test_build_returns_nonzero_when_requested_pandoc_export_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: None)
+    source = tmp_path / "lecture.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Transport Layer")
+    doc.save(source)
+    doc.close()
+    out = tmp_path / "out"
+
+    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--vision", "off", "--export", "docx"])
+
+    assert exit_code == 1
+    assert (out / "notes.md").exists()
+    export_report = json.loads((out / "export_report.json").read_text(encoding="utf-8"))
+    run_summary = json.loads((out / "run_summary.json").read_text(encoding="utf-8"))
+    assert export_report["summary"]["blocking_failures"] == 1
+    assert export_report["results"][0]["reason"] == "pandoc_not_found"
+    assert "Pandoc was not found" in run_summary["warnings"]["export"][0]
 
 
 def test_deck_brief_auto_runs_before_lecture_weave(tmp_path, monkeypatch):

@@ -41,6 +41,13 @@ def run_doctor() -> dict[str, Any]:
             "Install LibreOffice and add its program directory to PATH.",
             "https://www.libreoffice.org/download/download-libreoffice/",
         ),
+        _executable_check(
+            "Pandoc",
+            ("pandoc",),
+            "Install Pandoc and add it to PATH if you want Word, PDF, or LaTeX exports.",
+            "https://pandoc.org/installing.html",
+            impact="Needed only for optional docx/pdf/latex note exports.",
+        ),
         _env_check("OPENAI_API_KEY", "OpenAI text and vision providers."),
         _env_check("DEEPSEEK_API_KEY", "DeepSeek text rewriting."),
         _env_check("DASHSCOPE_API_KEY", "Qwen text and vision providers."),
@@ -79,6 +86,7 @@ def run_doctor() -> dict[str, Any]:
             ),
             "ready_for_ocr": any(check.name in {"Baidu OCR", "Mathpix OCR", "GOOGLE_VISION_API_KEY"} and check.status == "ok" for check in checks),
             "ready_for_ppt_screenshots": any(check.name in {"LibreOffice soffice", "pywin32"} and check.status == "ok" for check in checks),
+            "ready_for_exports": any(check.name == "Pandoc" and check.status == "ok" for check in checks),
         },
     }
 
@@ -150,17 +158,17 @@ def _module_available(module: str) -> bool:
         return False
 
 
-def _executable_check(name: str, executables: tuple[str, ...], hint: str, docs: str | None = None) -> Check:
+def _executable_check(name: str, executables: tuple[str, ...], hint: str, docs: str | None = None, impact: str | None = None) -> Check:
     for executable in executables:
         found = shutil.which(executable)
         if found:
-            return Check(name, "ok", found, "external_tool", "Needed for .ppt conversion and reliable PPTX page screenshots.")
+            return Check(name, "ok", found, "external_tool", impact or "Needed for .ppt conversion and reliable PPTX page screenshots.")
     return Check(
         name,
         "warn",
         "not found on PATH",
         "external_tool",
-        "PPT/PPTX screenshot export may be unavailable; PDF and structural PPTX parsing can still work.",
+        impact or "PPT/PPTX screenshot export may be unavailable; PDF and structural PPTX parsing can still work.",
         hint=hint,
         docs=docs,
     )
@@ -197,7 +205,7 @@ def _recommended_actions(checks: list[Check]) -> list[dict[str, str | None]]:
     for check in checks:
         if check.status == "ok":
             continue
-        if check.required or check.name in {"LibreOffice soffice", "openai SDK", "pywin32"}:
+        if check.required or check.name in {"LibreOffice soffice", "Pandoc", "openai SDK", "pywin32"}:
             actions.append({"title": check.name, "detail": check.hint or check.detail, "fix": check.fix, "docs": check.docs})
     if not any(check.category == "api_key" and check.status == "ok" for check in checks):
         actions.append(
