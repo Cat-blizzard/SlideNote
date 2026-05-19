@@ -3,6 +3,9 @@ __pycache__/
 .venv/
 *.egg-info/
 build/
+!slidenote/build/
+!slidenote/build/*.py
+slidenote/build/__pycache__/
 dist/
 outputs/
 materials/
