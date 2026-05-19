@@ -294,7 +294,7 @@ def test_llm_result_auto_inserts_missing_grounded_image(tmp_path, monkeypatch):
 
             return Result()
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct")
 
@@ -330,7 +330,7 @@ def test_llm_result_adds_source_marker_to_existing_image(tmp_path, monkeypatch):
 
             return Result()
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct")
 
@@ -379,7 +379,7 @@ def test_llm_existing_image_is_repositioned_to_anchor(tmp_path, monkeypatch):
 
             return Result()
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct")
 
@@ -434,7 +434,7 @@ def test_llm_generation_uses_local_cache(tmp_path, monkeypatch):
 
             return Result()
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     first = generate_notes_result(
         deck,
@@ -458,7 +458,7 @@ def test_llm_generation_uses_local_cache(tmp_path, monkeypatch):
         def __init__(self, **kwargs):
             raise AssertionError("cache hit should not instantiate an LLM client")
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FailingClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FailingClient)
 
     second = generate_notes_result(
         deck,
@@ -597,7 +597,7 @@ def test_llm_auto_context_uses_document_for_short_deck(tmp_path, monkeypatch):
 
             return Result()
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct", note_context="auto")
 
@@ -630,7 +630,7 @@ def test_llm_auto_context_uses_sections_for_large_deck(tmp_path, monkeypatch):
 
             return Result()
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct", note_context="auto")
 
@@ -669,7 +669,7 @@ def test_llm_context_uses_supplied_section_plan(tmp_path, monkeypatch):
 
             return Result()
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     result = generate_notes_result(
         deck,
@@ -729,7 +729,7 @@ def test_lecture_weave_generates_page_notes_then_weaves_sections(tmp_path, monke
                 )
             return result
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     result = generate_notes_result(
         deck,
@@ -812,7 +812,7 @@ def test_lecture_weave_prompt_uses_deck_brief_as_guarded_navigation(tmp_path, mo
                 result.text = "Replica then quorum. <!-- slidenote-source: p1:s1_t1,s2_t1 -->"
             return result
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     result = generate_notes_result(
         deck,
@@ -891,7 +891,7 @@ def test_content_guard_learning_items_are_injected_into_page_prompt(tmp_path, mo
 
             return Result()
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     result = generate_notes_result(
         deck,
@@ -957,7 +957,7 @@ def test_content_guard_repairs_marker_only_required_content(tmp_path, monkeypatc
                 result.text = "<!-- slidenote-source: p1:s1_t1 -->"
             return result
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     result = generate_notes_result(
         deck,
@@ -1010,7 +1010,7 @@ def test_section_context_notes_use_numbered_outline_headings(tmp_path, monkeypat
                 result.text = "## 数据为中心的一致性模型\n\n一致性模型描述读写可见性。<!-- slidenote-source: p2:s2_t1 -->"
             return result
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     result = generate_notes_result(
         deck,
@@ -1099,7 +1099,7 @@ def test_section_notes_hide_leading_frontmatter_and_number_subsections(tmp_path,
 
             return Result()
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     result = generate_notes_result(
         deck,
@@ -1194,7 +1194,7 @@ def test_lecture_weave_article_style_compresses_structural_pages(tmp_path, monke
                 )
             return result
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
 
     result = generate_notes_result(
         deck,
@@ -1259,7 +1259,7 @@ def test_lecture_weave_cache_and_refresh_are_split_by_page_and_weave(tmp_path, m
                 result.text = "A detail. <!-- slidenote-source: p1:s1_t1 -->\n\nB detail. <!-- slidenote-source: p2:s2_t1 -->"
             return result
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FirstClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FirstClient)
     generate_notes_result(
         deck,
         tmp_path,
@@ -1275,7 +1275,7 @@ def test_lecture_weave_cache_and_refresh_are_split_by_page_and_weave(tmp_path, m
         def __init__(self, **kwargs):
             raise AssertionError("cache hit should not call the LLM")
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FailingClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FailingClient)
     cached = generate_notes_result(
         deck,
         tmp_path,
@@ -1295,7 +1295,7 @@ def test_lecture_weave_cache_and_refresh_are_split_by_page_and_weave(tmp_path, m
             calls.append(prompt)
             return super().generate_with_usage(prompt)
 
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", RefreshClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", RefreshClient)
     refreshed = generate_notes_result(
         deck,
         tmp_path,
