@@ -1,18 +1,30 @@
 from __future__ import annotations
 
+import json
 import math
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from slidenote.llm import LLMClient, resolve_provider_runtime
+from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text
 from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_text_for_prompt
+from slidenote.vision import _cleanup_temp_image, _file_sha256, _prepare_image_for_api
 
 
 FIGURE_GROUNDING_MODES = {"off", "auto", "vision"}
 FIGURE_PLACEMENT_MODES = {"inline", "page-end"}
 FIGURE_AUDIT_MODES = {"off", "local", "llm"}
+FIGURE_GROUNDING_PROMPT_VERSION = "figure-grounding-vision-v1"
+FIGURE_GROUNDING_MIN_CONFIDENCE = 0.55
+
+FIGURE_GROUNDING_SYSTEM_PROMPT = (
+    "You are a course slide figure grounding analyst. Return strict JSON only. "
+    "Use only ids that appear in the provided candidates, layout elements, or semantic groups."
+)
 
 
 def enrich_deck_with_figure_grounding(
@@ -21,6 +33,18 @@ def enrich_deck_with_figure_grounding(
     mode: str = "auto",
     placement: str = "inline",
     audit: str = "local",
+    provider: str = "openai",
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    cache_mode: str = "on",
+    cache_dir: Path | None = None,
+    max_output_tokens: int = 1200,
+    temperature: float | None = 0.0,
+    detail: str = "low",
+    max_edge: int = 1400,
+    concurrency: int = 1,
+    refresh_slide_ids: set[int] | None = None,
 ) -> dict[str, Any]:
     """Attach layout anchors and explanation metadata to study-value figures.
 
@@ -36,27 +60,83 @@ def enrich_deck_with_figure_grounding(
     if audit not in FIGURE_AUDIT_MODES:
         raise ValueError(f"figure audit must be one of: {', '.join(sorted(FIGURE_AUDIT_MODES))}")
 
+    output_root = Path(output_root)
+    runtime: dict[str, Any] | None = None
+    cache: LLMCache | None = None
+    resolved_cache_dir: Path | None = None
+    if mode == "vision":
+        runtime = resolve_provider_runtime(provider, model=model, base_url=base_url, for_vision=True)
+        if not runtime["supports_image_input"]:
+            raise RuntimeError(f"Figure grounding provider `{runtime['provider']}` does not support image input.")
+        resolved_cache_dir = (cache_dir or (output_root / ".cache" / "vision")).resolve()
+        cache = LLMCache(resolved_cache_dir, mode=cache_mode)
+
     page_entries: list[dict[str, Any]] = []
     candidate_count = 0
     anchored_count = 0
     explained_count = 0
     needs_review_count = 0
     auto_insertable_count = 0
+    vision_records_by_slide: dict[int, dict[str, Any]] = {}
+    local_context_by_slide: dict[int, dict[str, Any]] = {}
 
     for page in deck.pages:
         layout_elements = _layout_elements(deck, page)
-        page_records: list[dict[str, Any]] = []
-        for image in note_candidate_images(page):
+        candidates = note_candidate_images(page)
+        local_context_by_slide[page.slide_id] = {"layout_elements": layout_elements, "candidate_ids": [image.id for image in candidates]}
+        for image in candidates:
             candidate_count += 1
             anchor = _anchor_image(deck, page, image, layout_elements)
             image.layout_order = anchor["layout_order"]
             image.anchor_element_ids = anchor["anchor_element_ids"]
+            image.anchor_group_id = _local_anchor_group_id(page, image.anchor_element_ids)
             image.anchor_reason = anchor["anchor_reason"]
             image.grounding_confidence = anchor["grounding_confidence"]
             explanation, status = _figure_explanation(image)
             image.figure_explanation = explanation
             image.figure_explanation_status = status
             image.figure_audit_status = _local_audit_status(image) if audit != "off" else None
+
+    if mode == "vision" and runtime is not None and cache is not None:
+        pages_with_candidates = [page for page in deck.pages if local_context_by_slide.get(page.slide_id, {}).get("candidate_ids")]
+        refresh_ids = refresh_slide_ids or set()
+        workers = max(1, int(concurrency or 1))
+
+        def process(index: int, page: SlidePage) -> tuple[int, int, dict[str, Any]]:
+            record = _process_figure_grounding_vision_page(
+                deck=deck,
+                page=page,
+                layout_elements=local_context_by_slide[page.slide_id]["layout_elements"],
+                output_root=output_root,
+                runtime=runtime,
+                cache=cache,
+                cache_mode=cache_mode,
+                api_key=api_key,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+                detail=detail,
+                max_edge=max_edge,
+                audit=audit,
+                force_refresh=page.slide_id in refresh_ids,
+            )
+            return index, page.slide_id, record
+
+        results: list[tuple[int, int, dict[str, Any]]] = []
+        if workers == 1:
+            for index, page in enumerate(pages_with_candidates):
+                results.append(process(index, page))
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(process, index, page): index for index, page in enumerate(pages_with_candidates)}
+                for future in as_completed(futures):
+                    results.append(future.result())
+        for _, slide_id, record in sorted(results, key=lambda item: item[0]):
+            vision_records_by_slide[slide_id] = record
+
+    for page in deck.pages:
+        layout_elements = local_context_by_slide.get(page.slide_id, {}).get("layout_elements") or _layout_elements(deck, page)
+        page_records: list[dict[str, Any]] = []
+        for image in note_candidate_images(page):
 
             if image.anchor_element_ids:
                 anchored_count += 1
@@ -87,10 +167,12 @@ def enrich_deck_with_figure_grounding(
                     }
                     for element in layout_elements
                 ],
+                "vision_grounding": _page_vision_grounding_summary(vision_records_by_slide.get(page.slide_id), mode),
                 "images": page_records,
             }
         )
 
+    vision_records = list(vision_records_by_slide.values())
     return {
         "schema_version": 1,
         "generated_at": utc_now_iso(),
@@ -99,6 +181,13 @@ def enrich_deck_with_figure_grounding(
         "mode": mode,
         "placement": placement,
         "audit": audit,
+        "vision_grounding": {
+            "provider": runtime.get("provider") if runtime else None,
+            "model": runtime.get("model") if runtime else None,
+            "base_url": runtime.get("base_url") if runtime else None,
+            "cache": {"mode": cache_mode, "dir": _display_path(resolved_cache_dir, output_root) if resolved_cache_dir else None},
+            "prompt_version": FIGURE_GROUNDING_PROMPT_VERSION if runtime else None,
+        },
         "summary": {
             "pages_total": len(deck.pages),
             "candidate_images": candidate_count,
@@ -106,6 +195,16 @@ def enrich_deck_with_figure_grounding(
             "explained_images": explained_count,
             "auto_insertable_images": auto_insertable_count,
             "needs_review": needs_review_count,
+            "vision_candidate_pages": len(vision_records),
+            "vision_calls": sum(1 for record in vision_records if record.get("llm_call")),
+            "vision_cache_hits": sum(1 for record in vision_records if record.get("cache_status") == "local_hit"),
+            "vision_applied_images": sum(int(record.get("applied_images") or 0) for record in vision_records),
+            "vision_fallback_images": sum(int(record.get("fallback_images") or 0) for record in vision_records),
+            "vision_fallback_pages": sum(1 for record in vision_records if record.get("status") != "applied"),
+            "input_tokens": _sum_int(record.get("input_tokens") for record in vision_records),
+            "output_tokens": _sum_int(record.get("output_tokens") for record in vision_records),
+            "total_tokens": _sum_int(record.get("total_tokens") for record in vision_records),
+            "provider_cached_input_tokens": _sum_int(record.get("provider_cached_input_tokens") for record in vision_records),
         },
         "pages": page_entries,
     }
@@ -146,6 +245,7 @@ def ordered_page_elements(
                 "path": asset_map.get(image.path, image.path),
                 "caption": image.caption,
                 "anchor_element_ids": list(image.anchor_element_ids),
+                "anchor_group_id": image.anchor_group_id,
                 "anchor_reason": image.anchor_reason,
                 "grounding_confidence": image.grounding_confidence,
                 "figure_explanation": image.figure_explanation,
@@ -204,6 +304,387 @@ def _layout_elements(deck: Deck, page: SlidePage) -> list[dict[str, Any]]:
         )
         fallback_index += 1
     return sorted(elements, key=lambda element: (float(element["layout_order"]), str(element["id"])))
+
+
+def _process_figure_grounding_vision_page(
+    deck: Deck,
+    page: SlidePage,
+    layout_elements: list[dict[str, Any]],
+    output_root: Path,
+    runtime: dict[str, Any],
+    cache: LLMCache,
+    cache_mode: str,
+    api_key: str | None,
+    max_output_tokens: int,
+    temperature: float | None,
+    detail: str,
+    max_edge: int,
+    audit: str,
+    force_refresh: bool,
+) -> dict[str, Any]:
+    candidates = note_candidate_images(page)
+    if not candidates:
+        return {"status": "skipped", "reason": "no_candidate_images", "llm_call": False, "cache_status": "skipped"}
+    if not page.page_screenshot:
+        return {
+            "status": "fallback",
+            "reason": "missing_page_screenshot",
+            "llm_call": False,
+            "cache_status": "skipped",
+            "fallback_images": len(candidates),
+            "warnings": ["missing_page_screenshot"],
+        }
+    source_path = (output_root / page.page_screenshot).resolve()
+    if not source_path.exists():
+        return {
+            "status": "fallback",
+            "reason": "missing_page_screenshot_file",
+            "llm_call": False,
+            "cache_status": "skipped",
+            "fallback_images": len(candidates),
+            "warnings": ["missing_page_screenshot_file"],
+        }
+    prepared = _prepare_image_for_api(source_path, max_edge=max_edge)
+    if prepared is None:
+        return {
+            "status": "fallback",
+            "reason": "unsupported_or_unreadable_image",
+            "llm_call": False,
+            "cache_status": "skipped",
+            "fallback_images": len(candidates),
+            "warnings": ["unsupported_or_unreadable_image"],
+        }
+
+    prepared_path, image_meta = prepared
+    try:
+        prompt = _figure_grounding_prompt(deck, page, layout_elements, candidates)
+        cache_key_payload = {
+            "schema_version": LLM_CACHE_SCHEMA_VERSION,
+            "prompt_version": FIGURE_GROUNDING_PROMPT_VERSION,
+            "provider": runtime["provider"],
+            "model": runtime["model"],
+            "base_url": runtime["base_url"],
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+            "detail": detail,
+            "max_edge": max_edge,
+            "source_path": page.page_screenshot,
+            "source_image_hash": _file_sha256(source_path),
+            "prompt_hash": sha256_text(prompt),
+        }
+        cache_key = make_cache_key(cache_key_payload)
+        cache_path = cache.path_for(cache_key)
+        cached = None if force_refresh else cache.read(cache_key)
+        record: dict[str, Any] = {
+            "status": "fallback",
+            "slide_id": page.slide_id,
+            "cache_key": cache_key,
+            "cache_file": _display_path(cache_path, output_root),
+            "image_meta": image_meta,
+            "warnings": [],
+            "invalid_references": [],
+            "applied_images": 0,
+            "fallback_images": len(candidates),
+        }
+        if cached:
+            result_json = cached["output_text"]
+            response_usage = cached.get("response_usage") or {}
+            record.update(
+                {
+                    "cache_status": "local_hit",
+                    "llm_call": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "provider_cached_input_tokens": 0,
+                    "cached_entry_usage": response_usage,
+                    "cached_at": cached.get("created_at"),
+                }
+            )
+        else:
+            client = LLMClient(
+                provider=str(runtime["provider"]),
+                model=str(runtime["model"]),
+                api_key=api_key,
+                base_url=runtime["base_url"],
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+            )
+            llm_result = client.generate_image_with_usage(
+                prepared_path,
+                prompt,
+                system_prompt=FIGURE_GROUNDING_SYSTEM_PROMPT,
+                image_detail=detail,
+            )
+            result_json = llm_result.text
+            response_usage = llm_result.usage or {}
+            cache_status = "disabled" if cache_mode == "off" else "refresh" if cache_mode == "refresh" or force_refresh else "miss"
+            written_path = cache.write(
+                cache_key,
+                {
+                    "provider": runtime["provider"],
+                    "model": runtime["model"],
+                    "base_url": runtime["base_url"],
+                    "prompt_version": FIGURE_GROUNDING_PROMPT_VERSION,
+                    "slide_id": page.slide_id,
+                    "image_meta": image_meta,
+                    "output_text": result_json,
+                    "response_usage": response_usage,
+                },
+            )
+            if written_path is not None:
+                cache_path = written_path
+            record.update(
+                {
+                    "cache_status": cache_status,
+                    "cache_file": _display_path(cache_path, output_root),
+                    "llm_call": True,
+                    "api_retries": response_usage.get("retries", 0),
+                    "input_tokens": response_usage.get("input_tokens"),
+                    "output_tokens": response_usage.get("output_tokens"),
+                    "total_tokens": response_usage.get("total_tokens"),
+                    "provider_cached_input_tokens": response_usage.get("provider_cached_input_tokens"),
+                    "provider_usage": response_usage,
+                }
+            )
+
+        parsed = _parse_json_object(result_json)
+        if parsed is None:
+            record["reason"] = "model_output_not_json"
+            record["warnings"].append("model_output_not_json")
+            return record
+        applied, fallback, validation = _apply_vision_grounding(page, candidates, layout_elements, parsed, audit=audit)
+        record["warnings"].extend(validation["warnings"])
+        record["invalid_references"] = validation["invalid_references"]
+        record["result"] = parsed
+        record["applied_images"] = applied
+        record["fallback_images"] = fallback
+        record["status"] = "applied" if applied else "fallback"
+        if not applied:
+            record["reason"] = validation["fallback_reason"] or "no_vision_grounding_applied"
+        return record
+    except Exception as exc:
+        return {
+            "status": "fallback",
+            "reason": "vision_call_failed",
+            "llm_call": False,
+            "cache_status": "error",
+            "applied_images": 0,
+            "fallback_images": len(candidates),
+            "warnings": [f"vision_call_failed:{type(exc).__name__}"],
+        }
+    finally:
+        _cleanup_temp_image(prepared_path)
+
+
+def _figure_grounding_prompt(
+    deck: Deck,
+    page: SlidePage,
+    layout_elements: list[dict[str, Any]],
+    candidates: list[ImageAsset],
+) -> str:
+    payload = {
+        "task": "figure_grounding",
+        "instructions": [
+            "Return JSON only.",
+            "For each candidate figure, choose nearby text/table anchors and optionally one semantic group.",
+            "Use only ids listed in candidate_images, layout_elements, and semantic_groups.",
+            "Prefer anchors that explain what the figure teaches, not just the nearest visual object.",
+            "For code/output/blue-box/red-causal-annotation teaching scenes, anchor to the complete semantic group.",
+        ],
+        "output_schema": {
+            "figures": [
+                {
+                    "image_id": "candidate image id",
+                    "anchor_element_ids": ["text/table ids"],
+                    "anchor_group_id": "semantic group id or null",
+                    "figure_explanation": "short explanation grounded in visible evidence",
+                    "grounding_confidence": 0.0,
+                    "anchor_reason": "why these anchors explain the figure",
+                    "audit_status": "ok/needs_review",
+                }
+            ],
+            "warnings": [],
+        },
+        "slide": {
+            "slide_id": page.slide_id,
+            "title": page.title,
+            "page_modality": page.page_modality,
+            "source_type": deck.source_type,
+            "page_size": {"width": page.page_width, "height": page.page_height},
+            "page_ocr_text": _preview(page.page_ocr_text or "", 700),
+            "page_visual_summary": _preview(page.page_visual_summary or "", 500),
+        },
+        "layout_elements": [
+            {
+                "id": element.get("id"),
+                "kind": element.get("kind"),
+                "type": element.get("type"),
+                "bbox": element.get("bbox"),
+                "layout_order": element.get("layout_order"),
+                "preview": element.get("preview"),
+            }
+            for element in layout_elements
+        ],
+        "semantic_groups": [
+            {
+                "group_id": group.get("group_id"),
+                "scene_type": group.get("scene_type"),
+                "learning_goal": group.get("learning_goal"),
+                "block_ids": group.get("block_ids"),
+                "crop_policy": group.get("crop_policy"),
+            }
+            for group in page.semantic_groups
+        ],
+        "semantic_relations": page.semantic_relations[:12],
+        "candidate_images": [
+            {
+                "image_id": image.id,
+                "path": image.path,
+                "role": image.role,
+                "bbox": normalized_image_bbox(deck, page, image),
+                "caption": image.caption,
+                "ocr_text": _preview(image.ocr_text or "", 500),
+                "visual_summary": _preview(image.visual_summary or "", 500),
+                "local_anchor_element_ids": list(image.anchor_element_ids),
+                "local_anchor_group_id": image.anchor_group_id,
+                "local_anchor_reason": image.anchor_reason,
+                "local_grounding_confidence": image.grounding_confidence,
+                "source_element_ids": list(image.source_element_ids),
+            }
+            for image in candidates
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _apply_vision_grounding(
+    page: SlidePage,
+    candidates: list[ImageAsset],
+    layout_elements: list[dict[str, Any]],
+    parsed: dict[str, Any],
+    audit: str,
+) -> tuple[int, int, dict[str, Any]]:
+    warnings = [str(item) for item in parsed.get("warnings", []) if isinstance(item, (str, int, float))]
+    invalid_refs: list[dict[str, Any]] = []
+    candidate_by_id = {image.id: image for image in candidates}
+    valid_element_ids = {str(element.get("id")) for element in layout_elements if element.get("id")}
+    valid_group_ids = {str(group.get("group_id")) for group in page.semantic_groups if group.get("group_id")}
+    raw_items = parsed.get("figures") or parsed.get("images") or []
+    if not isinstance(raw_items, list):
+        return 0, len(candidates), {
+            "warnings": warnings + ["missing_figures_array"],
+            "invalid_references": invalid_refs,
+            "fallback_reason": "missing_figures_array",
+        }
+
+    applied = 0
+    seen: set[str] = set()
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        image_id = str(item.get("image_id") or item.get("id") or "")
+        image = candidate_by_id.get(image_id)
+        if image is None:
+            invalid_refs.append({"kind": "image_id", "id": image_id})
+            continue
+        seen.add(image_id)
+        confidence = round(max(0.0, min(1.0, _as_float(item.get("grounding_confidence") or item.get("confidence"), 0.0))), 3)
+        if confidence < FIGURE_GROUNDING_MIN_CONFIDENCE:
+            warnings.append(f"low_confidence_grounding:{image_id}")
+            continue
+        raw_anchor_ids = item.get("anchor_element_ids") or item.get("anchor_ids") or []
+        if not isinstance(raw_anchor_ids, list):
+            raw_anchor_ids = []
+        anchor_ids: list[str] = []
+        for raw_id in raw_anchor_ids:
+            anchor_id = str(raw_id)
+            if anchor_id in valid_element_ids and anchor_id not in anchor_ids:
+                anchor_ids.append(anchor_id)
+            else:
+                invalid_refs.append({"kind": "anchor_element_id", "id": anchor_id, "image_id": image_id})
+        group_id = item.get("anchor_group_id")
+        group_id = str(group_id) if group_id else None
+        if group_id and group_id not in valid_group_ids:
+            invalid_refs.append({"kind": "anchor_group_id", "id": group_id, "image_id": image_id})
+            group_id = None
+        if not anchor_ids and group_id:
+            anchor_ids = _group_anchor_element_ids(page, group_id, valid_element_ids)
+        if not anchor_ids:
+            warnings.append(f"discarded_grounding_without_valid_anchor:{image_id}")
+            continue
+        image.anchor_element_ids = anchor_ids
+        image.anchor_group_id = group_id
+        image.anchor_reason = str(item.get("anchor_reason") or "vision_grounding")
+        image.grounding_confidence = confidence
+        explanation = str(item.get("figure_explanation") or "").strip()
+        if explanation:
+            image.figure_explanation = _preview(explanation, limit=420)
+            image.figure_explanation_status = "vision_grounding"
+        elif not image.figure_explanation:
+            explanation, status = _figure_explanation(image)
+            image.figure_explanation = explanation
+            image.figure_explanation_status = status
+        if audit != "off":
+            audit_status = str(item.get("audit_status") or "").strip()
+            image.figure_audit_status = audit_status if audit_status in {"ok", "needs_review"} else _local_audit_status(image)
+        applied += 1
+
+    if invalid_refs:
+        warnings.append("discarded_invalid_model_references")
+    fallback = len(candidates) - applied
+    fallback_reason = None if applied else "no_valid_vision_grounding"
+    if not seen and raw_items:
+        fallback_reason = "no_candidate_ids_matched"
+    return applied, fallback, {"warnings": warnings, "invalid_references": invalid_refs, "fallback_reason": fallback_reason}
+
+
+def _group_anchor_element_ids(page: SlidePage, group_id: str, valid_element_ids: set[str]) -> list[str]:
+    group = next((item for item in page.semantic_groups if str(item.get("group_id")) == group_id), None)
+    if not group:
+        return []
+    result: list[str] = []
+    for block_id in group.get("block_ids") or []:
+        block_id = str(block_id)
+        if block_id in valid_element_ids and block_id not in result:
+            result.append(block_id)
+    return result
+
+
+def _local_anchor_group_id(page: SlidePage, anchor_element_ids: list[str]) -> str | None:
+    if not anchor_element_ids:
+        return None
+    anchor_set = set(anchor_element_ids)
+    for group in page.semantic_groups:
+        if anchor_set.intersection(str(block_id) for block_id in (group.get("block_ids") or [])):
+            return str(group.get("group_id"))
+    return None
+
+
+def _page_vision_grounding_summary(record: dict[str, Any] | None, mode: str) -> dict[str, Any]:
+    if record is None:
+        return {"status": "disabled" if mode != "vision" else "not_selected", "llm_call": False}
+    return {
+        key: value
+        for key, value in record.items()
+        if key
+        in {
+            "status",
+            "reason",
+            "llm_call",
+            "cache_status",
+            "cache_file",
+            "applied_images",
+            "fallback_images",
+            "warnings",
+            "invalid_references",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "provider_cached_input_tokens",
+            "api_retries",
+        }
+    }
 
 
 def _anchor_image(deck: Deck, page: SlidePage, image: ImageAsset, layout_elements: list[dict[str, Any]]) -> dict[str, Any]:
@@ -327,6 +808,7 @@ def _image_record(page: SlidePage, image: ImageAsset, output_root: Path) -> dict
         "ignore_reason": image.ignore_reason,
         "layout_order": image.layout_order,
         "anchor_element_ids": list(image.anchor_element_ids),
+        "anchor_group_id": image.anchor_group_id,
         "source_element_ids": list(image.source_element_ids),
         "anchor_reason": image.anchor_reason,
         "grounding_confidence": image.grounding_confidence,
@@ -415,6 +897,41 @@ def _tokens(text: str) -> set[str]:
     words = {word.lower() for word in re.findall(r"[A-Za-z0-9_]{2,}", text)}
     cjk = {char for char in text if "\u4e00" <= char <= "\u9fff"}
     return words.union(cjk)
+
+
+def _parse_json_object(text: str) -> dict[str, Any] | None:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _as_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _display_path(path: Path, output_root: Path) -> str:
+    try:
+        return path.resolve().relative_to(output_root.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _sum_int(values: object) -> int:
+    total = 0
+    for value in values:
+        if isinstance(value, int):
+            total += value
+    return total
 
 
 def _preview(text: str, limit: int = 160) -> str:

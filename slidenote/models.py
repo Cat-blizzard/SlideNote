@@ -52,6 +52,7 @@ class ImageAsset:
     layout_order: float | None = None
     source_element_ids: list[str] = field(default_factory=list)
     anchor_element_ids: list[str] = field(default_factory=list)
+    anchor_group_id: str | None = None
     anchor_reason: str | None = None
     grounding_confidence: float | None = None
     figure_explanation: str | None = None

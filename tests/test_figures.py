@@ -146,6 +146,7 @@ def test_figure_prompt_includes_semantic_layout_context(tmp_path):
     assert "semantic_layout" in prompt
     assert "code_causal_explanation" in prompt
     assert "prefer_structured_text_then_group_image" in prompt
+    assert "semantic_layout_json" in prompt
 
 
 def test_figure_enrichment_uses_vision_model_and_cache(tmp_path, monkeypatch):

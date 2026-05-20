@@ -68,6 +68,7 @@ def _build_run_summary(
             "weave_dedup": args.weave_dedup,
             "page_neighborhood": args.page_neighborhood,
             "section_detection": args.section_detection,
+            "semantic_layout": args.semantic_layout,
             "image_ranking": args.image_ranking,
             "composite_figures": args.composite_figures,
             "figure_crop": args.figure_crop,

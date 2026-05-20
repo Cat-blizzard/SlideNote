@@ -165,6 +165,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="How SlideNote detects section boundaries. auto uses LLM section detection when LLM notes are enabled, otherwise local rules.",
     )
     build.add_argument(
+        "--semantic-layout",
+        choices=["auto", "local", "vision"],
+        default="auto",
+        help="How semantic page blocks are built. auto uses local rules and vision-enhances selected pages when vision is enabled.",
+    )
+    build.add_argument(
         "--section-cache",
         choices=["on", "off", "refresh"],
         default="on",

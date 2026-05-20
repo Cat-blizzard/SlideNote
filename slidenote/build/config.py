@@ -30,6 +30,8 @@ def _friendly_build_error(exc: Exception, args: argparse.Namespace) -> str | Non
                 features.append("vision")
             if args.figure_crop == "vision" or (args.figure_crop == "auto" and args.vision != "off"):
                 features.append("figure-crop")
+            if args.semantic_layout == "vision" or (args.semantic_layout == "auto" and args.vision != "off"):
+                features.append("semantic-layout")
             if args.figure_grounding == "vision":
                 features.append("figure-grounding")
             feature_text = "/".join(features) or "vision"
@@ -69,6 +71,8 @@ def _provider_from_missing_key_error(message: str) -> str | None:
 def _vision_features_enabled(args: argparse.Namespace) -> bool:
     return (
         args.vision != "off"
+        or args.semantic_layout == "vision"
+        or (args.semantic_layout == "auto" and args.vision != "off")
         or args.figure_grounding == "vision"
         or args.figure_crop == "vision"
         or (args.figure_crop == "auto" and args.vision != "off")

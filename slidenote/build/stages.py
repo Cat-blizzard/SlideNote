@@ -69,6 +69,7 @@ def _stage_table_understanding(state: BuildState) -> None:
 
 
 def _stage_semantic_layout(state: BuildState) -> None:
+    args = state.args
     deck = _require_deck(state)
     state.semantic_layout_report = _run_json_stage(
         deck,
@@ -79,7 +80,23 @@ def _stage_semantic_layout(state: BuildState) -> None:
         artifact_path="semantic_layout.json",
         message="Building semantic page blocks",
         complete_message="Semantic layout complete",
-        runner=lambda stage_deck: enrich_deck_with_semantic_layout(stage_deck),
+        runner=lambda stage_deck: enrich_deck_with_semantic_layout(
+            stage_deck,
+            output_root=state.output_root,
+            mode=args.semantic_layout,
+            provider=args.vision_provider,
+            model=args.vision_model,
+            api_key=args.vision_api_key,
+            base_url=args.vision_base_url,
+            cache_mode=args.vision_cache,
+            cache_dir=state.cache_dirs["vision"],
+            max_output_tokens=min(args.vision_max_output_tokens or 1000, 1400),
+            temperature=args.vision_temperature,
+            detail=args.vision_detail or "low",
+            max_edge=args.vision_max_edge,
+            concurrency=state.api_concurrency["vision"],
+            refresh_slide_ids=state.refresh_slide_ids,
+        ),
     )
 
 
@@ -213,6 +230,18 @@ def _stage_figure_grounding(state: BuildState) -> None:
         mode=args.figure_grounding,
         placement=args.figure_placement,
         audit=args.figure_audit,
+        provider=args.vision_provider,
+        model=args.vision_model,
+        api_key=args.vision_api_key,
+        base_url=args.vision_base_url,
+        cache_mode=args.vision_cache,
+        cache_dir=state.cache_dirs["vision"],
+        max_output_tokens=min(args.vision_max_output_tokens or 1000, 1400),
+        temperature=args.vision_temperature,
+        detail=args.vision_detail or "low",
+        max_edge=args.vision_max_edge,
+        concurrency=state.api_concurrency["vision"],
+        refresh_slide_ids=state.refresh_slide_ids,
     )
     state.artifacts.write_json("figure_grounding", "figure_grounding.json", state.figure_grounding_report)
     state.progress.finish_stage("Figure grounding complete")

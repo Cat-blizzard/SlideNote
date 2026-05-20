@@ -110,6 +110,7 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["run"]["note_language"] == "zh"
     assert run_summary["run"]["term_policy"] == "bilingual"
     assert run_summary["run"]["deck_brief"] == "auto"
+    assert run_summary["run"]["semantic_layout"] == "auto"
     assert run_summary["run"]["api_concurrency"] == {"llm": 1, "vision": 1, "ocr": 1, "figure": 1}
     assert "slowest_stages" in run_summary["stage_timings"]
     assert not (out / "export_report.json").exists()
@@ -252,6 +253,7 @@ def test_quality_first_defaults_are_exposed_by_parser():
     assert args.note_language == "zh"
     assert args.term_policy == "bilingual"
     assert args.section_detection == "auto"
+    assert args.semantic_layout == "auto"
     assert args.image_ranking == "local"
     assert args.composite_figures == "auto"
     assert args.figure_grounding == "auto"

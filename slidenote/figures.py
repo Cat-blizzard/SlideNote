@@ -14,7 +14,7 @@ from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.modality import page_has_hint
 from slidenote.models import Deck, ImageAsset, SlidePage, normalize_rel_path
-from slidenote.semantic_layout import semantic_context_for_page
+from slidenote.semantic_layout import semantic_context_for_page, semantic_layout_for_prompt
 from slidenote.table_understanding import table_preview
 
 FIGURE_PROMPT_VERSION = "figure-crop-v1"
@@ -718,6 +718,27 @@ def _page_context(page: SlidePage | None, limit: int = 1000) -> str:
     if len(text) > limit:
         return text[: limit - 1] + "…"
     return text
+
+
+def _semantic_layout_json_for_prompt(page: SlidePage | None) -> str:
+    if page is None:
+        return "{}"
+    data = semantic_layout_for_prompt(page, limit=8)
+    return json.dumps(data or {}, ensure_ascii=False, separators=(",", ":"))
+
+
+def _figure_prompt(target: FigureTarget, page: SlidePage | None) -> str:
+    return (
+        "Analyze this full slide screenshot and return strict JSON only.\n"
+        'JSON schema: {"figures":[{"bbox":[x1,y1,x2,y2],"label":"...","content_type":"diagram/chart/table/formula/code/screenshot/photo/mixed/unknown","confidence":0.0}]}\n'
+        "bbox must use normalized 0..1 coordinates for top-left and bottom-right corners. Do not return the whole page, pure titles, body paragraphs, page numbers, logos, or decorative backgrounds.\n"
+        "Pure code regions should usually stay as OCR/text unless the complete visual layout must be preserved.\n"
+        "When semantic_layout describes a complete teaching scene, crop the whole semantic group rather than an isolated small part. Prioritize code plus runtime output, blue explanation boxes, red causal annotations, arrows, labels, and nearby explanations as one coherent crop when they explain each other.\n"
+        "Keep crop boxes tight and avoid neighboring figures below or beside the intended target. Return the 1-3 regions that carry the most course knowledge, or an empty array.\n"
+        f"page_context: {_page_context(page)}\n"
+        f"semantic_layout_json: {_semantic_layout_json_for_prompt(page)}\n"
+        f"metadata: slide_id={target.slide_id}, path={target.path}, reason={target.reason}."
+    )
 
 
 def _parse_figure_json(text: str) -> dict[str, Any]:

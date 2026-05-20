@@ -1,22 +1,153 @@
 from __future__ import annotations
 
+import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any
 
-from slidenote.llm_cache import utc_now_iso
+from slidenote.llm import LLMClient, resolve_provider_runtime
+from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, utc_now_iso
+from slidenote.modality import page_has_hint
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_preview
+from slidenote.vision import _cleanup_temp_image, _file_sha256, _prepare_image_for_api
 
 
-def enrich_deck_with_semantic_layout(deck: Deck) -> dict[str, Any]:
+SEMANTIC_LAYOUT_MODES = {"auto", "local", "vision"}
+SEMANTIC_LAYOUT_PROMPT_VERSION = "semantic-layout-vision-v1"
+
+SEMANTIC_LAYOUT_SYSTEM_PROMPT = (
+    "You are a course slide multimodal layout analyst. Return strict JSON only. "
+    "Use only element ids that appear in the provided input. Do not invent text or image ids."
+)
+
+
+def enrich_deck_with_semantic_layout(
+    deck: Deck,
+    output_root: Path | str | None = None,
+    mode: str = "auto",
+    provider: str = "openai",
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    cache_mode: str = "on",
+    cache_dir: Path | None = None,
+    max_output_tokens: int = 1200,
+    temperature: float | None = 0.0,
+    detail: str = "low",
+    max_edge: int = 1400,
+    concurrency: int = 1,
+    refresh_slide_ids: set[int] | None = None,
+) -> dict[str, Any]:
+    if mode not in SEMANTIC_LAYOUT_MODES:
+        raise ValueError(f"semantic layout mode must be one of: {', '.join(sorted(SEMANTIC_LAYOUT_MODES))}")
+
+    resolved_output_root = Path(output_root).resolve() if output_root is not None else None
+    runtime: dict[str, Any] | None = None
+    cache: LLMCache | None = None
+    resolved_cache_dir: Path | None = None
+    if mode != "local" and resolved_output_root is not None:
+        runtime = resolve_provider_runtime(provider, model=model, base_url=base_url, for_vision=True)
+        if not runtime["supports_image_input"]:
+            raise RuntimeError(f"Semantic layout provider `{runtime['provider']}` does not support image input.")
+        resolved_cache_dir = (cache_dir or (resolved_output_root / ".cache" / "vision")).resolve()
+        cache = LLMCache(resolved_cache_dir, mode=cache_mode)
+
+    local_results: dict[int, dict[str, Any]] = {}
+    candidate_reasons: dict[int, str] = {}
+    for page in deck.pages:
+        result = analyze_page_semantic_layout(deck, page)
+        local_results[page.slide_id] = result
+        if mode == "vision":
+            candidate_reasons[page.slide_id] = "forced_vision"
+        elif mode == "auto" and runtime is not None and _page_needs_vision_enhancement(page, result):
+            candidate_reasons[page.slide_id] = _vision_candidate_reason(page, result)
+
+    vision_results: dict[int, dict[str, Any]] = {}
+    targets = [page for page in deck.pages if page.slide_id in candidate_reasons]
+    if targets and runtime is not None and cache is not None and resolved_output_root is not None:
+        refresh_ids = refresh_slide_ids or set()
+        workers = max(1, int(concurrency or 1))
+
+        def process(index: int, page: SlidePage) -> tuple[int, int, dict[str, Any]]:
+            record = _process_semantic_layout_vision_page(
+                deck=deck,
+                page=page,
+                local_result=local_results[page.slide_id],
+                reason=candidate_reasons[page.slide_id],
+                output_root=resolved_output_root,
+                runtime=runtime,
+                cache=cache,
+                cache_mode=cache_mode,
+                api_key=api_key,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+                detail=detail,
+                max_edge=max_edge,
+                force_refresh=page.slide_id in refresh_ids,
+            )
+            return index, page.slide_id, record
+
+        results: list[tuple[int, int, dict[str, Any]]] = []
+        if workers == 1:
+            for index, page in enumerate(targets):
+                results.append(process(index, page))
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(process, index, page): index for index, page in enumerate(targets)}
+                for future in as_completed(futures):
+                    results.append(future.result())
+        for _, slide_id, record in sorted(results, key=lambda item: item[0]):
+            vision_results[slide_id] = record
+
     pages: list[dict[str, Any]] = []
     blocks_total = 0
     groups_total = 0
     relations_total = 0
     must_explain_total = 0
+    vision_pages = 0
+    fallback_pages = 0
+    warning_count = 0
 
     for page in deck.pages:
-        result = analyze_page_semantic_layout(deck, page)
+        result = local_results[page.slide_id]
+        vision_record = vision_results.get(page.slide_id)
+        page_method = "local_rules_v1"
+        page_reason = candidate_reasons.get(page.slide_id, "local_rules")
+        page_warnings: list[str] = []
+        confidence = _layout_confidence(page, result)
+        vision_enhancement = _local_vision_status(page, mode, page_reason)
+        if vision_record:
+            page_warnings.extend(str(item) for item in vision_record.get("warnings", []) if item)
+            warning_count += len(page_warnings)
+            if vision_record.get("status") == "applied":
+                result = vision_record["result"]
+                page_method = "vision_enhanced_v1"
+                confidence = float(vision_record.get("confidence") or confidence)
+                vision_pages += 1
+            else:
+                fallback_pages += 1
+            vision_enhancement = {
+                key: value
+                for key, value in vision_record.items()
+                if key
+                in {
+                    "status",
+                    "reason",
+                    "llm_call",
+                    "cache_status",
+                    "cache_file",
+                    "input_tokens",
+                    "output_tokens",
+                    "total_tokens",
+                    "provider_cached_input_tokens",
+                    "api_retries",
+                    "invalid_references",
+                    "warnings",
+                    "fallback_reason",
+                }
+            }
         page.semantic_blocks = result["blocks"]
         page.semantic_groups = result["groups"]
         page.semantic_relations = result["relations"]
@@ -29,25 +160,49 @@ def enrich_deck_with_semantic_layout(deck: Deck) -> dict[str, Any]:
                 "slide_id": page.slide_id,
                 "title": page.title,
                 "page_modality": page.page_modality,
+                "method": page_method,
+                "vision_enhancement": vision_enhancement,
+                "confidence": round(confidence, 3),
+                "reason": page_reason,
+                "warnings": page_warnings,
                 "blocks": page.semantic_blocks,
                 "groups": page.semantic_groups,
                 "relations": page.semantic_relations,
             }
         )
 
+    vision_records = list(vision_results.values())
     return {
         "schema_version": 1,
         "generated_at": utc_now_iso(),
         "source_path": deck.source_path,
         "source_type": deck.source_type,
-        "method": "local_rules_v1",
-        "llm_enhancement": "reserved_for_multimodal_v2",
+        "mode": mode,
+        "method": "hybrid_local_vision_v1" if vision_pages else "local_rules_v1",
+        "vision_enhancement": {
+            "provider": runtime.get("provider") if runtime else None,
+            "model": runtime.get("model") if runtime else None,
+            "base_url": runtime.get("base_url") if runtime else None,
+            "cache": {"mode": cache_mode, "dir": _display_path(resolved_cache_dir, resolved_output_root) if resolved_cache_dir and resolved_output_root else None},
+            "prompt_version": SEMANTIC_LAYOUT_PROMPT_VERSION if runtime else None,
+        },
         "summary": {
             "pages_total": len(deck.pages),
             "blocks_total": blocks_total,
             "groups_total": groups_total,
             "relations_total": relations_total,
             "must_explain_blocks": must_explain_total,
+            "vision_candidate_pages": len(targets),
+            "vision_enhanced_pages": vision_pages,
+            "vision_calls": sum(1 for record in vision_records if record.get("llm_call")),
+            "vision_cache_hits": sum(1 for record in vision_records if record.get("cache_status") == "local_hit"),
+            "vision_fallback_pages": fallback_pages,
+            "vision_skipped_pages": sum(1 for record in vision_records if record.get("status") == "skipped"),
+            "vision_warnings": warning_count,
+            "input_tokens": _sum_int(record.get("input_tokens") for record in vision_records),
+            "output_tokens": _sum_int(record.get("output_tokens") for record in vision_records),
+            "total_tokens": _sum_int(record.get("total_tokens") for record in vision_records),
+            "provider_cached_input_tokens": _sum_int(record.get("provider_cached_input_tokens") for record in vision_records),
         },
         "pages": pages,
     }
@@ -67,6 +222,412 @@ def analyze_page_semantic_layout(deck: Deck, page: SlidePage) -> dict[str, Any]:
     groups = _semantic_groups(page, blocks)
     relations = _semantic_relations(blocks, groups)
     return {"blocks": blocks, "groups": groups, "relations": relations}
+
+
+def _process_semantic_layout_vision_page(
+    deck: Deck,
+    page: SlidePage,
+    local_result: dict[str, Any],
+    reason: str,
+    output_root: Path,
+    runtime: dict[str, Any],
+    cache: LLMCache,
+    cache_mode: str,
+    api_key: str | None,
+    max_output_tokens: int,
+    temperature: float | None,
+    detail: str,
+    max_edge: int,
+    force_refresh: bool,
+) -> dict[str, Any]:
+    if not page.page_screenshot:
+        return {
+            "status": "skipped",
+            "reason": reason,
+            "fallback_reason": "missing_page_screenshot",
+            "llm_call": False,
+            "cache_status": "skipped",
+            "warnings": ["missing_page_screenshot"],
+        }
+    source_path = (output_root / page.page_screenshot).resolve()
+    if not source_path.exists():
+        return {
+            "status": "skipped",
+            "reason": reason,
+            "fallback_reason": "missing_file",
+            "llm_call": False,
+            "cache_status": "skipped",
+            "warnings": ["missing_page_screenshot_file"],
+        }
+    prepared = _prepare_image_for_api(source_path, max_edge=max_edge)
+    if prepared is None:
+        return {
+            "status": "skipped",
+            "reason": reason,
+            "fallback_reason": "unsupported_or_unreadable_image",
+            "llm_call": False,
+            "cache_status": "skipped",
+            "warnings": ["unsupported_or_unreadable_image"],
+        }
+
+    prepared_path, image_meta = prepared
+    try:
+        prompt = _semantic_layout_vision_prompt(deck, page, local_result, reason)
+        cache_key_payload = {
+            "schema_version": LLM_CACHE_SCHEMA_VERSION,
+            "prompt_version": SEMANTIC_LAYOUT_PROMPT_VERSION,
+            "provider": runtime["provider"],
+            "model": runtime["model"],
+            "base_url": runtime["base_url"],
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+            "detail": detail,
+            "max_edge": max_edge,
+            "source_path": page.page_screenshot,
+            "source_image_hash": _file_sha256(source_path),
+            "prompt_hash": sha256_text(prompt),
+        }
+        cache_key = make_cache_key(cache_key_payload)
+        cache_path = cache.path_for(cache_key)
+        cached = None if force_refresh else cache.read(cache_key)
+        record: dict[str, Any] = {
+            "status": "fallback",
+            "reason": reason,
+            "cache_key": cache_key,
+            "cache_file": _display_path(cache_path, output_root),
+            "image_meta": image_meta,
+            "warnings": [],
+            "invalid_references": [],
+        }
+        if cached:
+            result_json = cached["output_text"]
+            response_usage = cached.get("response_usage") or {}
+            record.update(
+                {
+                    "cache_status": "local_hit",
+                    "llm_call": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "provider_cached_input_tokens": 0,
+                    "cached_entry_usage": response_usage,
+                    "cached_at": cached.get("created_at"),
+                }
+            )
+        else:
+            client = LLMClient(
+                provider=str(runtime["provider"]),
+                model=str(runtime["model"]),
+                api_key=api_key,
+                base_url=runtime["base_url"],
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+            )
+            llm_result = client.generate_image_with_usage(
+                prepared_path,
+                prompt,
+                system_prompt=SEMANTIC_LAYOUT_SYSTEM_PROMPT,
+                image_detail=detail,
+            )
+            result_json = llm_result.text
+            response_usage = llm_result.usage or {}
+            cache_status = "disabled" if cache_mode == "off" else "refresh" if cache_mode == "refresh" or force_refresh else "miss"
+            written_path = cache.write(
+                cache_key,
+                {
+                    "provider": runtime["provider"],
+                    "model": runtime["model"],
+                    "base_url": runtime["base_url"],
+                    "prompt_version": SEMANTIC_LAYOUT_PROMPT_VERSION,
+                    "slide_id": page.slide_id,
+                    "reason": reason,
+                    "image_meta": image_meta,
+                    "output_text": result_json,
+                    "response_usage": response_usage,
+                },
+            )
+            if written_path is not None:
+                cache_path = written_path
+            record.update(
+                {
+                    "cache_status": cache_status,
+                    "cache_file": _display_path(cache_path, output_root),
+                    "llm_call": True,
+                    "api_retries": response_usage.get("retries", 0),
+                    "input_tokens": response_usage.get("input_tokens"),
+                    "output_tokens": response_usage.get("output_tokens"),
+                    "total_tokens": response_usage.get("total_tokens"),
+                    "provider_cached_input_tokens": response_usage.get("provider_cached_input_tokens"),
+                    "provider_usage": response_usage,
+                }
+            )
+
+        parsed = _parse_json_object(result_json)
+        if parsed is None:
+            record["fallback_reason"] = "model_output_not_json"
+            record["warnings"].append("model_output_not_json")
+            return record
+        enhanced, validation = _validated_vision_layout(page, local_result, parsed)
+        record["warnings"].extend(validation["warnings"])
+        record["invalid_references"] = validation["invalid_references"]
+        if enhanced is None:
+            record["fallback_reason"] = validation["fallback_reason"]
+            return record
+        record.update(
+            {
+                "status": "applied",
+                "result": enhanced,
+                "confidence": _as_float(parsed.get("confidence"), _layout_confidence(page, enhanced)),
+                "model_reason": str(parsed.get("reason") or "").strip(),
+            }
+        )
+        return record
+    except Exception as exc:
+        return {
+            "status": "fallback",
+            "reason": reason,
+            "fallback_reason": "vision_call_failed",
+            "llm_call": False,
+            "cache_status": "error",
+            "warnings": [f"vision_call_failed:{type(exc).__name__}"],
+        }
+    finally:
+        _cleanup_temp_image(prepared_path)
+
+
+def _semantic_layout_vision_prompt(deck: Deck, page: SlidePage, local_result: dict[str, Any], reason: str) -> str:
+    payload = {
+        "task": "semantic_layout_vision_enhancement",
+        "instructions": [
+            "Return JSON only.",
+            "Keep the existing blocks/groups/relations shape.",
+            "Use only ids from local.blocks[].id when creating groups and relations.",
+            "Group complete teaching scenes: code plus output, blue callout boxes, red causal annotations, arrows, tables, and nearby explanations.",
+            "Prefer full semantic groups over isolated tiny visual fragments.",
+        ],
+        "output_schema": {
+            "confidence": 0.0,
+            "reason": "short reason",
+            "warnings": [],
+            "blocks": [
+                {
+                    "id": "existing block id",
+                    "block_type": "title/code/output/cause_explanation/fix/annotation/table/figure/image/explanation",
+                    "learning_role": "structural/code_example/runtime_output/cause/fix/visual_annotation/visual_evidence/concept",
+                    "must_explain": True,
+                    "importance_score": 0.0,
+                    "crop_policy": "text_or_group_scene/use_existing_image/text_only/skip_crop",
+                }
+            ],
+            "groups": [
+                {
+                    "group_id": "optional existing-or-new id",
+                    "scene_type": "code_causal_explanation/code_example_with_output/table_explanation/visual_explanation/concept_explanation",
+                    "learning_goal": "what this group teaches",
+                    "block_ids": ["existing block ids"],
+                    "crop_policy": "prefer_structured_text_then_group_image/group_image_near_explanation/no_individual_crop",
+                    "must_explain": True,
+                    "importance_score": 0.0,
+                }
+            ],
+            "relations": [
+                {
+                    "from": "existing block id",
+                    "to": "existing block id",
+                    "relation": "demonstrates/explained_by/fixes/leads_to_fix/annotates/anchors",
+                    "reason": "visible or semantic cue",
+                    "confidence": 0.0,
+                }
+            ],
+        },
+        "slide": {
+            "slide_id": page.slide_id,
+            "title": page.title,
+            "page_modality": page.page_modality,
+            "candidate_reason": reason,
+            "page_size": {"width": page.page_width, "height": page.page_height},
+            "page_ocr_text": _preview(page.page_ocr_text or "", 700),
+            "page_visual_summary": _preview(page.page_visual_summary or "", 500),
+        },
+        "local": local_result,
+        "element_ids": [str(block.get("id")) for block in local_result.get("blocks", [])],
+        "source_type": deck.source_type,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _validated_vision_layout(
+    page: SlidePage,
+    local_result: dict[str, Any],
+    parsed: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    warnings = [str(item) for item in parsed.get("warnings", []) if isinstance(item, (str, int, float))]
+    invalid_refs: list[dict[str, Any]] = []
+    local_blocks = [dict(block) for block in local_result.get("blocks", []) if isinstance(block, dict)]
+    block_by_id = {str(block.get("id")): block for block in local_blocks if block.get("id") is not None}
+    valid_ids = set(block_by_id)
+    if not valid_ids:
+        return None, {"warnings": warnings + ["no_local_blocks"], "invalid_references": invalid_refs, "fallback_reason": "no_local_blocks"}
+
+    for update in parsed.get("blocks") or []:
+        if not isinstance(update, dict):
+            continue
+        block_id = str(update.get("id") or "")
+        if block_id not in block_by_id:
+            invalid_refs.append({"kind": "block", "id": block_id})
+            continue
+        block = block_by_id[block_id]
+        for key in ("block_type", "learning_role", "crop_policy", "preview"):
+            if isinstance(update.get(key), str) and update.get(key):
+                block[key] = update[key]
+        if "must_explain" in update:
+            block["must_explain"] = bool(update.get("must_explain"))
+        if "importance_score" in update:
+            block["importance_score"] = round(max(0.0, min(1.0, _as_float(update.get("importance_score"), block.get("importance_score") or 0.0))), 3)
+
+    groups: list[dict[str, Any]] = []
+    for index, group in enumerate(parsed.get("groups") or [], start=1):
+        if not isinstance(group, dict):
+            continue
+        raw_ids = group.get("block_ids") or group.get("element_ids") or []
+        if not isinstance(raw_ids, list):
+            raw_ids = []
+        block_ids: list[str] = []
+        for raw_id in raw_ids:
+            block_id = str(raw_id)
+            if block_id in valid_ids and block_id not in block_ids:
+                block_ids.append(block_id)
+            else:
+                invalid_refs.append({"kind": "group_block", "id": block_id, "group_id": group.get("group_id")})
+        if not block_ids:
+            warnings.append("discarded_group_without_valid_block_ids")
+            continue
+        group_id = str(group.get("group_id") or f"p{page.slide_id}_vsg{index}")
+        record = {
+            "group_id": group_id,
+            "slide_id": page.slide_id,
+            "scene_type": str(group.get("scene_type") or "visual_explanation"),
+            "learning_goal": str(group.get("learning_goal") or _preview(" ".join(str(block_by_id[item].get("preview") or "") for item in block_ids), 180)),
+            "block_ids": block_ids,
+            "source_element_ids": _unique_ids(source_id for item in block_ids for source_id in block_by_id[item].get("source_element_ids", [])),
+            "must_explain": bool(group.get("must_explain", True)),
+            "crop_policy": str(group.get("crop_policy") or "group_image_near_explanation"),
+            "importance_score": round(max(0.0, min(1.0, _as_float(group.get("importance_score"), 0.7))), 3),
+            "method": "vision_enhanced_v1",
+        }
+        groups.append(record)
+
+    if not groups and parsed.get("groups"):
+        return None, {
+            "warnings": warnings + ["no_valid_vision_groups"],
+            "invalid_references": invalid_refs,
+            "fallback_reason": "no_valid_vision_groups",
+        }
+    if not groups:
+        groups = [dict(group) for group in local_result.get("groups", []) if isinstance(group, dict)]
+
+    for block in local_blocks:
+        block["group_id"] = None
+    for group in groups:
+        for block_id in group.get("block_ids") or []:
+            if block_id in block_by_id:
+                block_by_id[block_id]["group_id"] = group.get("group_id")
+
+    relations: list[dict[str, Any]] = []
+    for relation in parsed.get("relations") or []:
+        if not isinstance(relation, dict):
+            continue
+        source_id = str(relation.get("from") or relation.get("source") or "")
+        target_id = str(relation.get("to") or relation.get("target") or "")
+        invalid = False
+        if source_id not in valid_ids:
+            invalid_refs.append({"kind": "relation_from", "id": source_id})
+            invalid = True
+        if target_id not in valid_ids:
+            invalid_refs.append({"kind": "relation_to", "id": target_id})
+            invalid = True
+        if invalid:
+            continue
+        relations.append(
+            {
+                "from": source_id,
+                "to": target_id,
+                "relation": str(relation.get("relation") or "related_to"),
+                "reason": str(relation.get("reason") or "vision_semantic_layout"),
+                "confidence": round(max(0.0, min(1.0, _as_float(relation.get("confidence"), 0.65))), 3),
+                "method": "vision_enhanced_v1",
+            }
+        )
+    if not relations:
+        relations = [dict(relation) for relation in local_result.get("relations", []) if isinstance(relation, dict)]
+
+    if invalid_refs:
+        warnings.append("discarded_invalid_model_references")
+    return {"blocks": local_blocks, "groups": groups, "relations": relations}, {
+        "warnings": warnings,
+        "invalid_references": invalid_refs,
+        "fallback_reason": None,
+    }
+
+
+def _page_needs_vision_enhancement(page: SlidePage, local_result: dict[str, Any]) -> bool:
+    if not page.page_screenshot:
+        return False
+    if page_has_hint(page, "vision_page_screenshot") or page_has_hint(page, "crop_figures_from_screenshot"):
+        return True
+    if page.page_modality in {"mixed", "image_only", "shape_diagram"}:
+        return True
+    has_images = any(not image.ignored for image in page.images)
+    has_text_or_tables = bool(page.text_blocks or page.tables)
+    if has_images and has_text_or_tables:
+        return True
+    block_types = {str(block.get("block_type")) for block in local_result.get("blocks", [])}
+    roles = {str(block.get("learning_role")) for block in local_result.get("blocks", [])}
+    if {"code", "output"} & block_types or {"cause", "fix", "causal_annotation", "visual_annotation"} & roles:
+        return True
+    return _layout_confidence(page, local_result) < 0.68
+
+
+def _vision_candidate_reason(page: SlidePage, local_result: dict[str, Any]) -> str:
+    if page_has_hint(page, "vision_page_screenshot"):
+        return "page_modality_hint"
+    if page.page_modality in {"mixed", "image_only", "shape_diagram"}:
+        return f"{page.page_modality}_page"
+    if any(not image.ignored for image in page.images) and (page.text_blocks or page.tables):
+        return "image_text_mixed_page"
+    block_types = {str(block.get("block_type")) for block in local_result.get("blocks", [])}
+    roles = {str(block.get("learning_role")) for block in local_result.get("blocks", [])}
+    if {"code", "output"} & block_types:
+        return "code_or_output_page"
+    if {"cause", "fix", "causal_annotation", "visual_annotation"} & roles:
+        return "causal_annotation_page"
+    return "low_confidence_layout"
+
+
+def _layout_confidence(page: SlidePage, result: dict[str, Any]) -> float:
+    blocks = result.get("blocks") or []
+    groups = result.get("groups") or []
+    must_blocks = [block for block in blocks if block.get("must_explain")]
+    if not blocks:
+        return 0.35 if page.page_screenshot else 0.2
+    if must_blocks and not groups:
+        return 0.52
+    if groups:
+        covered = {str(block_id) for group in groups for block_id in (group.get("block_ids") or [])}
+        must_ids = {str(block.get("id")) for block in must_blocks}
+        coverage = len(covered & must_ids) / max(1, len(must_ids))
+        return round(0.62 + min(0.28, coverage * 0.28), 3)
+    return 0.76
+
+
+def _local_vision_status(page: SlidePage, mode: str, reason: str) -> dict[str, Any]:
+    if mode == "local":
+        status = "disabled"
+    elif not page.page_screenshot:
+        status = "local_only"
+    else:
+        status = "not_selected"
+    return {"status": status, "reason": reason, "llm_call": False, "cache_status": None, "warnings": []}
 
 
 def semantic_layout_for_prompt(page: SlidePage, limit: int = 6) -> dict[str, Any] | None:
@@ -466,6 +1027,45 @@ def _unique_ids(values) -> list[str]:
             result.append(text)
             seen.add(text)
     return result
+
+
+def _parse_json_object(text: str) -> dict[str, Any] | None:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _as_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _display_path(path: Path | None, output_root: Path | None) -> str | None:
+    if path is None:
+        return None
+    if output_root is None:
+        return str(path)
+    try:
+        return path.resolve().relative_to(output_root.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _sum_int(values: object) -> int:
+    total = 0
+    for value in values:
+        if isinstance(value, int):
+            total += value
+    return total
 
 
 def _preview(text: str, limit: int = 180) -> str:
