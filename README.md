@@ -28,7 +28,8 @@
   <a href="README.md">English</a> |
   <a href="README.zh-CN.md">中文</a> |
   <a href="CONFIG.zh-CN.md">Config</a> |
-  <a href="ROADMAP.zh-CN.md">Roadmap</a>
+  <a href="ROADMAP.zh-CN.md">Roadmap</a> |
+  <a href="CLAUDE_BACKEND.zh-CN.md">Claude Backend</a>
 </p>
 
 ---
@@ -60,6 +61,41 @@ python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --
 ```
 
 Open `outputs\lecture\notes.md`. Images are bundled under `outputs\lecture\notes.assets\`.
+
+## Experimental Claude Code Backend
+
+This branch contains an experimental Claude Code backend. The stable `slidenote build` pipeline is intentionally unchanged. The new path keeps SlideNote responsible for parsing, image extraction, source IDs, coverage, source maps, and file writes, while Claude Code writes and repairs section notes from a bounded agent pack.
+
+The experiment is CLI-only and stdout-only:
+
+- The official `claude` executable must be available on your PATH (or passed with `--claude-command`) and authenticated in your local environment.
+- Claude Code is called through the official `claude -p --bare --output-format json` command.
+- Claude Code returns JSON on stdout and never writes repository or output files directly.
+- SlideNote validates JSON, validates asset references, writes section notes, merges `notes.md`, and reruns coverage.
+- One repair pass is enabled by default for trace missing, required visible missing, missing figures, and unexplained figures.
+
+Minimal flow:
+
+```powershell
+python -m slidenote agent-pack path\to\lecture.pdf --out outputs\agent
+python -m slidenote agent-run outputs\agent\agent_pack --out outputs\agent_run
+```
+
+End-to-end:
+
+```powershell
+python -m slidenote agent-build path\to\lecture.pdf --out outputs\agent_build
+```
+
+Compare the legacy pipeline against the Claude backend:
+
+```powershell
+python -m slidenote agent-eval path\to\lecture.pdf --out outputs\agent_eval
+```
+
+`agent-eval` writes `baseline_build/`, `agent_build/`, `eval_report.json`, and `eval_report.md`, including coverage deltas, required visible missing, figure missing/unexplained counts, repair status, and a review checklist.
+
+See [CLAUDE_BACKEND.zh-CN.md](CLAUDE_BACKEND.zh-CN.md) for the detailed design and [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) for the branch roadmap.
 
 ## Optional GUI
 
@@ -97,6 +133,7 @@ See [gui/README_GUI.md](gui/README_GUI.md) for details.
 - Produces `content.json` as the source inventory.
 - Produces `notes.md` with hidden source markers by default, plus optional visible page references.
 - Produces `coverage.json` / `coverage.md` to flag elements that may be missing from the notes.
+- Experimental Claude Code backend can export agent packs, run stdout-only section generation/repair, and compare old/new pipelines with `agent-eval`.
 - Optional exports can generate `notes.toc.md`, `notes.docx`, `notes.pdf`, and `notes.tex`; Word/LaTeX require Pandoc. PDF requires Pandoc plus LibreOffice because it is converted from notes.docx for better CJK layout.
 - Optional vision extraction writes OCR text and visual summaries back into the structured content.
 - Optional LLM generation supports OpenAI/ChatGPT, DeepSeek, Qwen, Doubao/Volcengine Ark, GLM, Gemini, and Claude.

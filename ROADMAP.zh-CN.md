@@ -1,10 +1,81 @@
-# SlideNote 后续扩展路线图
+# SlideNote Claude Backend 实验路线图
 
-这个文档记录当前项目里“已经讨论过、但尚未完整实现或仍需增强”的功能方向，方便以后继续开发时快速恢复上下文、排优先级和拆任务。
+这个文档记录 `experiment/claude-backend` 分支的开发路线。它和 `main` 分支的稳定路线不同：当前分支的核心问题不是“继续从零实现更强的讲义生成器”，而是验证 SlideNote 能否把高层写作、图文组织和局部修订交给 Claude Code，同时保留自身在解析、资产、coverage、source map 和可追溯落盘上的确定性优势。
 
-SlideNote 当前的核心定位仍然是：
+当前实验定位是：
 
-> 保真型课程笔记生成器：不是简单总结 PPT/PDF，而是先解析、再生成、再检查覆盖率。
+> SlideNote 做可检查的课件理解与质量控制；Claude Code 做讲义生成和 repair；最终用 coverage 与 agent-eval 判断哪些旧能力可以被替换。
+
+详细设计见 [CLAUDE_BACKEND.zh-CN.md](CLAUDE_BACKEND.zh-CN.md)。
+
+## 当前分支已经完成的 Claude 实验能力
+
+- `agent-pack`：把现有解析、图片、OCR/Vision/section/content guard 相关阶段导出为 agent pack。
+- `agent-run`：调用官方 Claude Code CLI，以 stdout-only JSON 方式生成 section notes。
+- `agent-build`：组合 pack + run，形成端到端 Claude backend 实验闭环。
+- `agent-eval`：同时跑旧 `build` 和新 `agent-build`，生成 `eval_report.json` / `eval_report.md` 对比质量。
+- 默认一轮 coverage repair：trace missing、required visible missing 会回传给 Claude 重写整节。
+- 图文 repair：缺图、图片插入但未解释、需要 review 的重要图片会进入 repair prompt。
+- SlideNote 保持文件写入权：Claude 不直接写文件、不改仓库。
+- `slidenote build` 保持不变，作为稳定入口和 baseline。
+
+## Claude Backend 分工原则
+
+Claude Code 应该优先接管：
+
+- section 讲义写作。
+- 图文并茂的 Markdown 组织。
+- 图片、表格、公式、OCR 文本的自然解释。
+- 根据缺失清单重写某一节。
+- 对长上下文做局部篇章整合。
+
+SlideNote 必须保留：
+
+- PPT/PDF 解析和资产抽取。
+- source id、Element IR、section plan、content guard。
+- 图片路径白名单和资产拷贝。
+- coverage、figure audit、source map。
+- JSON 校验、诊断报告和所有输出文件写入。
+- `agent-eval` 对比评测。
+
+## 近期迁移路线
+
+### P0：让实验可评测
+
+- 用真实小课件跑 `agent-eval`，建立 baseline vs Claude backend 样例。
+- 把 `eval_report.md` 调整成适合人工快速审阅的格式。
+- 记录 repair 前后 coverage、figure missing、figure unexplained、required visible missing 的变化。
+- 对失败样例保留 `agent_diagnostics.json` 和 Claude stderr 摘要。
+- 确认 stdout-only 约束下所有失败都能被 SlideNote 捕捉。
+
+### P1：让 Claude 更好地接管高层写作
+
+- 精简 agent pack，减少无关字段，提升 Claude 输入的信息密度。
+- 强化 section prompt：图、表、公式、代码/输出、流程图应有不同写法要求。
+- 改进 repair prompt，让 Claude 更稳定地返回整节 revised markdown。
+- 增加图文 audit：图片位置是否贴近概念、caption 是否解释图的学习意义。
+- 让 `agent-eval` 能保存多次样例结果，便于比较不同 prompt 版本。
+
+### P2：决定哪些旧能力降级
+
+- 根据 `agent-eval` 结果判断旧 Lecture-Weave 的哪些写作逻辑可以在实验分支降级。
+- 保留旧 build 作为 baseline，暂不改成 Claude-first。
+- 如果 Claude backend 在多个真实课件上稳定胜出，再考虑新增可选 note strategy，而不是直接覆盖默认 build。
+- GUI 暂缓接入，等 CLI 质量闭环稳定后再做。
+
+## 不做清单
+
+- 不接入 `claw-code` 或泄露复写版。
+- 不接入 opencode。
+- 不让 Claude 直接写文件。
+- 不让 Claude 直接读写整个仓库。
+- 不删除 `main` 分支中的旧 pipeline。
+- 不把 `slidenote build` 直接改成 Claude-first。
+- 不做无限多轮 repair。
+
+## 稳定 pipeline 能力参考
+
+下面保留原有路线图内容，作为稳定 pipeline 和长期功能池的参考。后续如果某项能力已经被 Claude backend 更好地覆盖，再从实验分支逐步降级对应旧实现。
 
 ## 当前已经具备的基础
 
@@ -1473,58 +1544,46 @@ CLI 对新手不够友好，尤其是多个服务商都要 key。
 
 ## 建议优先级
 
-### P0：近期最值得做
+### P0：Claude backend 质量闭环
 
-已完成或已具备基础可用能力：
+- 用 3-5 个真实小课件跑 `agent-eval`，保存 baseline vs agent 的报告样例。
+- 根据样例改进 `eval_report.md`，让人工能快速看到 Claude 版是否真的更好。
+- 优化 agent pack 信息密度：减少重复字段，突出图、表、公式、代码/输出、OCR 和 visual summary。
+- 强化 repair prompt：缺失项必须补进正文，而不是只补隐藏 source marker。
+- 扩展 mock 测试：非法图片路径、repair 后仍缺图、Claude 返回 markdown 为空、coverage 无法映射 section。
+- 记录 Claude 调用次数、repair 触发原因和失败诊断，方便估算成本和稳定性。
 
-- `slidenote doctor` 环境检测：已实现完整命令行诊断；SlideNote Studio 已补 GUI Doctor 面板，可在页面内查看 Python、核心依赖、可选导出工具、LLM/OCR/Vision API key readiness，并给出基础修复建议。
-- 运行进度系统：CLI 实时进度、`progress.json`、`run_summary.json` 已完成；SlideNote Studio 已补 live run 状态、elapsed、ETA 估算、运行日志和结果预览。
-- 加速与成本调度：`--speed-mode`、总并发、LLM/Vision/OCR/Figure 细分并发、`--global-cache-dir`、`--refresh-pages` 和临时错误重试已完成；SlideNote Studio 已暴露 speed mode、总并发、细分并发、cache、refresh pages、OCR/Vision target 限制和 token/cost dashboard。
-- SlideNote Studio GUI：已支持 Streamlit GUI、上传文件、运行预设、页面内 API key 配置、进度预览、成本报告、自定义保存目录、完整结果 ZIP 下载、Doctor 面板、Quality 面板、Page explorer 原页/元素/笔记联动视图，以及 page modality 手动修正 manifest。
-- 分层生成策略：Lecture-Weave（`--note-strategy lecture-weave`）已是默认策略；GUI 已暴露 note strategy、note depth、note context、section detection、deck brief、content guard 等控制项，并在 Quality 面板中展示 coverage score、missing elements 和 repair queue。
-- 页面类型检测与处理路由：`page_modalities.json` 已实现；GUI 已支持查看每页 modality，并可保存 `page_modalities.overrides.json` 作为人工修正清单。
-- 视觉目标选择：装饰图过滤、figure crop 优先级、图片学习价值排序已实现；GUI 已暴露 Vision/OCR/Figure 相关 target、detail、edge、crop 设置，并可结合 Page explorer 查看页面截图与解析元素。
+### P1：逐步把 Claude 做得更好的功能挪过去
 
-仍待实现或进一步增强：
+- 图文讲义生成：优先让 Claude 决定图片插入位置和解释文字，SlideNote 只做审计和路径校验。
+- 表格/公式解释：把 table summary、OCR、visual summary 组合成更清晰的 agent pack 输入。
+- Section 写作：让 Claude 输出更像讲义的章节，而不是逐页摘要。
+- 局部修订：保持整节替换，不做 diff patch；后续再考虑 block-level revise。
+- Prompt 版本评测：同一课件用不同 `skill.md` / `style.md` 生成，比较 coverage 和人工可读性。
+- 失败恢复：保留可用初稿，repair 失败只写 warning，不中断最终 notes。
 
-- 自动限速：根据 provider rate limit、错误类型和重试历史自动调整并发。
-- 真正的小节级局部重跑：目前 GUI 可传 `--refresh-pages` 做页级 refresh；后续补 section/chapter-level refresh 与依赖结果复用。
-- 失败恢复增强：目前支持日志、失败提示和复用输出目录局部重跑；后续补断点续跑、失败阶段回滚和任务恢复。
-- 更细阶段统计：后续在 GUI 中展示 parsing / OCR / Vision / LLM / coverage / export 的耗时占比和失败统计。
-- 质量评分自动闭环：目前 GUI 展示 coverage 与 repair queue；后续补自动补回遗漏细节、二次生成和质量评分阈值。
-- 更强版面分析与内容图分类：后续补更准的图表/流程图/表格/装饰图分类，以及 GUI 中人工选择 OCR/Vision 页和目标图。
-- 课程工作区基础模型：Course / Source / Chapter。
-- 多 PPT / 多 PDF 课程级整合。
-- PPT 章节切分与分批输出：`split` 子命令、`--split-by section`、`section_index.json` 等。
-- 来源显示与内容融合策略：`--source-display` 已实现三种模式；后续补 `--fusion-mode`（separated/blended/integrated）、多来源 metadata 和 GUI 切换。
-- 小节级上下文增强：`--note-context auto|document|section|page` 与 `--section-detection auto|local|llm` 已实现；后续补 chapter 模式、章节置信度、人机修正、overflow fallback。
-- 输出语言与术语策略增强：`--note-language` 和 `--term-policy` 已实现；后续补术语表抽取、用户自定义词表和按学科 profile 的术语规则。
-- LaTeX 默认模板设计。
+### P2：分支集成
 
-### P1：中期能力
+- 保留旧 `slidenote build` 作为 baseline，不做默认入口替换。
+- 如果 `agent-eval` 证明 Claude backend 明显更好，再新增可选 note strategy 或实验入口别名。
+- 研究 agent pack 缓存：解析结果不变时，只重跑 Claude section。
+- 课程级资料、个人笔记、教材 RAG 先作为 Claude 输入侧扩展，不急于做复杂后端服务。
+- GUI 只在 CLI 质量闭环稳定后接入，优先展示 `agent-eval` 报告和 review checklist。
 
-- 教材 RAG 知识库。
-- 学科策略 / Domain Profiles：`--domain auto/general/math/medicine/cs`。
-- 交互式编辑与对话式微调：局部修订、diff 审阅、用户编辑保护。
-- 学生个人笔记接入，先支持文本型笔记和可选中文字的 PDF。
-- 持续输入与增量更新，先支持新增文件后只处理新 source。
-- GUI 深化：原页预览、元素覆盖高亮、人工选择 OCR/Vision 页、任务恢复。
-- 按知识结构重排笔记。
-- 覆盖率状态细分。
-- 用户可选页级视觉 refresh。
+### P3：长期增强
 
-### P2：长期增强
-
-- 多 Agent 工作流。
-- Anki / 题库 / 复习资料生成。
+- 多 Agent 工作流，但必须基于结构化 blackboard，而不是开放式聊天。
+- Anki / 题库 / 复习资料生成，可复用 Claude backend 的 agent pack。
 - 用户上传 LaTeX / Word 模板。
 - 本地 OCR 或更多 OCR API。
 - Rust 局部重写或桌面端工程化。
+- 如果 Claude backend 稳定胜出，再讨论 `build` 是否 Claude-first。
 
 ## 关键原则
 
-- AI 不是第一步，解析和校验才是第一步。
+- Claude 不是第一步，解析和校验才是第一步。
 - 图像不是装饰，很多课程的灵魂在图里。
 - 成本必须可见，缓存必须可复用。
 - 可追溯性不能牺牲，即使笔记按知识结构重排。
 - 不要只做“总结器”，要做“可检查、可追溯、可复习”的学习材料生成系统。
+- 不要因为 Claude 输出好看就放弃 coverage；好看的漏内容仍然是失败。

@@ -28,7 +28,8 @@
   <a href="README.md">English</a> |
   <a href="README.zh-CN.md">中文</a> |
   <a href="CONFIG.zh-CN.md">配置参考</a> |
-  <a href="ROADMAP.zh-CN.md">路线图</a>
+  <a href="ROADMAP.zh-CN.md">路线图</a> |
+  <a href="CLAUDE_BACKEND.zh-CN.md">Claude Backend</a>
 </p>
 
 ---
@@ -60,6 +61,41 @@ python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --
 ```
 
 生成后打开 `outputs\lecture\notes.md`。图片会默认打包在 `outputs\lecture\notes.assets\` 里。
+
+## 实验分支：Claude Code Backend
+
+当前 `experiment/claude-backend` 分支正在验证一条新的路线：不立刻改写稳定的 `slidenote build`，而是新增 Claude Code 后端旁路。SlideNote 继续负责解析、图片资产、source id、coverage、source map、落盘和报告；Claude Code 负责基于 agent pack 写讲义、组织图文、按 coverage 结果修订 section。
+
+这个实验第一版是 CLI only、stdout-only：
+
+- 本机需要能运行官方 `claude` 命令，或通过 `--claude-command` 指定路径，并且 Claude Code 的认证由本机环境负责。
+- 只接官方 Claude Code CLI：`claude -p --bare --output-format json`。
+- Claude 只通过 stdout 返回 JSON，不直接写文件、不改仓库。
+- SlideNote 校验 JSON、校验图片路径、写 `agent_sections/*.md`、合并 `notes.md`、重跑 coverage。
+- `agent-run` / `agent-build` 默认开启一轮 repair，覆盖 trace missing、required visible missing、缺图、插图但未解释等问题。
+
+分步运行：
+
+```powershell
+python -m slidenote agent-pack path\to\lecture.pdf --out outputs\agent
+python -m slidenote agent-run outputs\agent\agent_pack --out outputs\agent_run
+```
+
+端到端运行：
+
+```powershell
+python -m slidenote agent-build path\to\lecture.pdf --out outputs\agent_build
+```
+
+和旧 pipeline 做对比评测：
+
+```powershell
+python -m slidenote agent-eval path\to\lecture.pdf --out outputs\agent_eval
+```
+
+`agent-eval` 会同时写出 `baseline_build/`、`agent_build/`、`eval_report.json` 和 `eval_report.md`，用于比较 coverage、必讲内容遗漏、图片缺失/未解释、repair 状态、Claude 调用次数和人工检查清单。
+
+详细设计见 [CLAUDE_BACKEND.zh-CN.md](CLAUDE_BACKEND.zh-CN.md)，分支路线见 [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md)。
 
 ## 可选 GUI
 
@@ -98,6 +134,7 @@ GUI 亮点：
 - 生成 `content.json` 作为原始内容清单。
 - 生成 `notes.md`，默认隐藏来源标记，也可选择显示简洁页码或详细元素 ID。
 - 生成 `coverage.json` / `coverage.md`，检查哪些元素没有出现在笔记中。
+- 实验性 Claude Code backend：可导出 agent pack、以 stdout-only 方式生成/修订 section，并用 `agent-eval` 对比旧 pipeline 与 Claude backend。
 - 可选导出 `notes.toc.md`、`notes.docx`、`notes.pdf` 和 `notes.tex`；Word/LaTeX 需要安装 Pandoc；PDF 需要 Pandoc 和 LibreOffice。
 - 支持多家 LLM：ChatGPT/OpenAI、DeepSeek、通义千问、豆包、GLM、Gemini、Claude。
 - 支持 `lecture-weave` 高质量笔记策略：先逐页深讲，再按章节编织成连贯笔记。
