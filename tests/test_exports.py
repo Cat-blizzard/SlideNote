@@ -57,13 +57,24 @@ def test_markdown_toc_export_does_not_need_pandoc(tmp_path, monkeypatch):
     assert not (tmp_path / "notes.docx").exists()
 
 
-def test_pandoc_exports_record_success(tmp_path, monkeypatch):
-    def fake_run(command, cwd=None, text=None, stdout=None, stderr=None, check=None):
-        output = tmp_path / command[command.index("-o") + 1]
-        output.write_bytes(b"exported")
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+def test_pandoc_exports_record_success_and_pdf_uses_libreoffice(tmp_path, monkeypatch):
+    commands = []
 
-    monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: "pandoc")
+    def fake_which(name):
+        return {"pandoc": "pandoc", "soffice": "soffice"}.get(name)
+
+    def fake_run(command, cwd=None, text=None, stdout=None, stderr=None, check=None):
+        commands.append(command)
+        if command[0] == "pandoc":
+            output = tmp_path / command[command.index("-o") + 1]
+            output.write_bytes(b"exported")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if command[0] == "soffice":
+            (tmp_path / "notes.pdf").write_bytes(b"pdf")
+            return subprocess.CompletedProcess(command, 0, stdout="convert ok", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr("slidenote.exporting.shutil.which", fake_which)
     monkeypatch.setattr("slidenote.exporting.subprocess.run", fake_run)
 
     report = build_export_artifacts("# Lecture\n\n## Topic\n", tmp_path, ["docx", "pdf", "latex"])
@@ -73,6 +84,32 @@ def test_pandoc_exports_record_success(tmp_path, monkeypatch):
     assert (tmp_path / "notes.docx").exists()
     assert (tmp_path / "notes.pdf").exists()
     assert (tmp_path / "notes.tex").exists()
+    assert any(command[0] == "soffice" and "--convert-to" in command for command in commands)
+    latex_command = next(command for command in commands if command[0] == "pandoc" and command[command.index("-o") + 1] == "notes.tex")
+    assert "markdown-implicit_figures" in latex_command
+    assert "documentclass=ctexart" in latex_command
+
+
+def test_pdf_export_requires_libreoffice_even_when_docx_can_be_built(tmp_path, monkeypatch):
+    def fake_which(name):
+        return "pandoc" if name == "pandoc" else None
+
+    def fake_run(command, cwd=None, text=None, stdout=None, stderr=None, check=None):
+        output = tmp_path / command[command.index("-o") + 1]
+        output.write_bytes(b"docx")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("slidenote.exporting.shutil.which", fake_which)
+    monkeypatch.setattr("slidenote.exporting.subprocess.run", fake_run)
+
+    report = build_export_artifacts("# Lecture\n\n## Topic\n", tmp_path, ["pdf"])
+
+    assert report["summary"]["failed"] == 1
+    assert report["summary"]["blocking_failures"] == 1
+    assert report["results"][0]["format"] == "pdf"
+    assert report["results"][0]["reason"] == "libreoffice_not_found"
+    assert (tmp_path / "notes.docx").exists()
+    assert not (tmp_path / "notes.pdf").exists()
 
 
 def test_pandoc_missing_marks_requested_formats_failed(tmp_path, monkeypatch):

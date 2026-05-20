@@ -16,6 +16,7 @@ PANDOC_FORMATS = ("docx", "pdf", "latex")
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", flags=re.DOTALL)
+_LIBREOFFICE_CANDIDATES = ("soffice", "soffice.com", "libreoffice")
 
 
 @dataclass(frozen=True)
@@ -80,21 +81,51 @@ def build_export_artifacts(notes_markdown: str, output_root: Path, formats: list
                 )
             warnings.append("Pandoc was not found on PATH; docx/pdf/latex exports were not generated.")
         else:
-            for fmt in pandoc_formats:
-                result = _run_pandoc(pandoc, source, output_root, fmt)
-                results.append(result)
-                if result["status"] != "ok":
-                    warnings.append(f"{fmt} export failed: {result.get('reason') or result.get('stderr') or 'unknown error'}")
+            docx_path: Path | None = None
+            docx_result: dict[str, Any] | None = None
+
+            if "docx" in pandoc_formats or "pdf" in pandoc_formats:
+                docx_result = _run_pandoc(pandoc, source, output_root, "docx")
+                if docx_result["status"] == "ok":
+                    docx_path = output_root / "notes.docx"
+                if "docx" in pandoc_formats:
+                    results.append(docx_result)
+                    if docx_result["status"] != "ok":
+                        warnings.append(f"docx export failed: {docx_result.get('reason') or docx_result.get('stderr') or 'unknown error'}")
+
+            if "pdf" in pandoc_formats:
+                if docx_path is None:
+                    pdf_result = {
+                        "format": "pdf",
+                        "status": "failed",
+                        "path": "notes.pdf",
+                        "reason": "docx_required_failed",
+                        "blocking": True,
+                        "dependency": docx_result,
+                    }
+                else:
+                    pdf_result = _run_pdf_from_docx(docx_path, output_root)
+                results.append(pdf_result)
+                if pdf_result["status"] != "ok":
+                    warnings.append(f"pdf export failed: {pdf_result.get('reason') or pdf_result.get('stderr') or 'unknown error'}")
+
+            if "latex" in pandoc_formats:
+                latex_result = _run_pandoc(pandoc, source, output_root, "latex")
+                results.append(latex_result)
+                if latex_result["status"] != "ok":
+                    warnings.append(f"latex export failed: {latex_result.get('reason') or latex_result.get('stderr') or 'unknown error'}")
 
     failed = sum(1 for result in results if result["status"] == "failed")
     skipped = sum(1 for result in results if result["status"] == "skipped")
     succeeded = sum(1 for result in results if result["status"] == "ok")
     blocking_failures = sum(1 for result in results if result["status"] == "failed" and result.get("blocking"))
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": utc_now_iso(),
         "requested_formats": formats,
         "export_toc": export_toc,
+        "pdf_strategy": "docx_to_pdf_via_libreoffice",
+        "latex_strategy": "pandoc_ctexart_source",
         "summary": {
             "requested": len(formats),
             "succeeded": succeeded,
@@ -219,11 +250,9 @@ def _write_pandoc_source(markdown: str, output_root: Path) -> Path:
 def _run_pandoc(pandoc: str, source: Path, output_root: Path, fmt: str) -> dict[str, Any]:
     output_name = _output_name(fmt)
     output_path = output_root / output_name
-    command = [pandoc, _relative_to_output(source, output_root), "-o", output_name]
-    if fmt == "pdf":
-        command.append("--pdf-engine=xelatex")
-    elif fmt == "latex":
-        command.append("--standalone")
+    command = [pandoc, "-f", "markdown-implicit_figures", _relative_to_output(source, output_root), "-o", output_name]
+    if fmt == "latex":
+        command.extend(["--standalone", "--pdf-engine=xelatex", "-V", "documentclass=ctexart", "-V", "geometry:margin=1in"])
 
     result: dict[str, Any] = {
         "format": fmt,
@@ -252,6 +281,67 @@ def _run_pandoc(pandoc: str, source: Path, output_root: Path, fmt: str) -> dict[
     result["stdout"] = _summarize_stream(completed.stdout)
     result["reason"] = "pandoc_failed" if completed.returncode else "pandoc_output_missing"
     return result
+
+
+def _run_pdf_from_docx(docx_path: Path, output_root: Path) -> dict[str, Any]:
+    output_name = "notes.pdf"
+    output_path = output_root / output_name
+    libreoffice = _find_libreoffice()
+    result: dict[str, Any] = {
+        "format": "pdf",
+        "path": output_name,
+        "source": docx_path.name,
+        "strategy": "docx_to_pdf_via_libreoffice",
+    }
+    if not libreoffice:
+        result.update(
+            {
+                "status": "failed",
+                "blocking": True,
+                "reason": "libreoffice_not_found",
+                "message": "PDF export uses LibreOffice to convert notes.docx for reliable Chinese/CJK layout.",
+            }
+        )
+        return result
+
+    if output_path.exists():
+        output_path.unlink()
+    command = [libreoffice, "--headless", "--convert-to", "pdf", "--outdir", str(output_root), str(docx_path)]
+    result["command"] = command
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(output_root),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as exc:
+        result.update({"status": "failed", "blocking": True, "reason": "libreoffice_launch_failed", "stderr": str(exc), "returncode": None})
+        return result
+    result["returncode"] = completed.returncode
+    if completed.returncode == 0 and output_path.exists():
+        result["status"] = "ok"
+        return result
+    result.update(
+        {
+            "status": "failed",
+            "blocking": True,
+            "reason": "libreoffice_pdf_failed" if completed.returncode else "libreoffice_output_missing",
+            "stderr": _summarize_stream(completed.stderr),
+            "stdout": _summarize_stream(completed.stdout),
+        }
+    )
+    return result
+
+
+def _find_libreoffice() -> str | None:
+    for executable in _LIBREOFFICE_CANDIDATES:
+        found = shutil.which(executable)
+        if found:
+            return found
+    return None
 
 
 def _output_name(fmt: str) -> str:
