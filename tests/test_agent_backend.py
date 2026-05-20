@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -598,3 +599,52 @@ def test_agent_run_nonzero_claude_exit_writes_diagnostics(tmp_path, monkeypatch)
     diagnostics = json.loads((run_out / "agent_diagnostics.json").read_text(encoding="utf-8"))
     assert exit_code == 1
     assert "exited with code 7" in diagnostics["message"]
+
+
+def test_agent_eval_writes_baseline_agent_comparison(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    eval_out = tmp_path / "eval"
+    _write_pdf(source)
+
+    def fake_run(args, **kwargs):
+        del kwargs
+        prompt = args[-1]
+        source_ids = sorted(set(re.findall(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", prompt)))
+        return subprocess.CompletedProcess(
+            ["claude"],
+            0,
+            stdout=json.dumps(
+                {
+                    "type": "result",
+                    "result": json.dumps(
+                        {
+                            "markdown": (
+                                "## Consensus\n\n"
+                                "Quorum reads and writes overlap to preserve consistency. "
+                                f"<!-- slidenote-source: p1:{','.join(source_ids)} -->"
+                            ),
+                            "used_asset_paths": [],
+                            "covered_source_ids": source_ids,
+                            "warnings": [],
+                        }
+                    ),
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("slidenote.agent_backend.subprocess.run", fake_run)
+
+    exit_code = main(["agent-eval", str(source), "--out", str(eval_out), "--quiet"])
+
+    report = json.loads((eval_out / "eval_report.json").read_text(encoding="utf-8"))
+    markdown = (eval_out / "eval_report.md").read_text(encoding="utf-8")
+    assert exit_code == 0
+    assert report["status"] == "ok"
+    assert report["baseline"]["status"] == "ok"
+    assert report["agent"]["status"] == "ok"
+    assert report["comparison"]["coverage_ratio"]["agent"] is not None
+    assert report["agent"]["agent_run"]["estimated_claude_calls"] == 1
+    assert (eval_out / "baseline_build" / "coverage.json").exists()
+    assert (eval_out / "agent_build" / "agent_run.json").exists()
+    assert "# SlideNote Agent Eval" in markdown

@@ -12,6 +12,7 @@ from slidenote.build_pipeline import (
     run_build,
 )
 from slidenote.agent_backend import AgentBackendError, run_agent_build, run_agent_pack, run_agent_run
+from slidenote.agent_eval import run_agent_eval
 from slidenote.doctor import render_doctor_report, run_doctor
 from slidenote.llm import supported_provider_names
 from slidenote.utils import write_json
@@ -29,6 +30,8 @@ def main(argv: list[str] | None = None) -> int:
             return _agent_run(args)
         if args.command == "agent-build":
             return _agent_build(args)
+        if args.command == "agent-eval":
+            return _agent_eval(args)
         if args.command == "doctor":
             return _doctor(args)
     except (UserFacingConfigError, AgentBackendError) as exc:
@@ -314,6 +317,12 @@ def _build_parser() -> argparse.ArgumentParser:
     agent_build.add_argument("--out", type=Path, default=Path("outputs") / "agent_build", help="Output directory.")
     _add_agent_pack_options(agent_build)
     _add_agent_run_options(agent_build, include_out=False, include_quiet=False)
+
+    agent_eval = subparsers.add_parser("agent-eval", help="Compare baseline build output with the Claude agent build.")
+    agent_eval.add_argument("input", type=Path, help="Input .pptx, .ppt, or .pdf file.")
+    agent_eval.add_argument("--out", type=Path, default=Path("outputs") / "agent_eval", help="Evaluation output directory.")
+    _add_agent_pack_options(agent_eval)
+    _add_agent_run_options(agent_eval, include_out=False, include_quiet=False)
     return parser
 
 
@@ -426,6 +435,10 @@ def _agent_run(args: argparse.Namespace) -> int:
 
 def _agent_build(args: argparse.Namespace) -> int:
     return run_agent_build(args)
+
+
+def _agent_eval(args: argparse.Namespace) -> int:
+    return run_agent_eval(args)
 
 
 
