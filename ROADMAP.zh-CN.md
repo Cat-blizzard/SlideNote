@@ -39,7 +39,7 @@ SlideNote 当前的核心定位仍然是：
 - 支持 Deck Brief 课程全景图：`--deck-brief auto` 可用 LLM 生成课程主题、核心问题、概念依赖关系和页面角色划分，作为后续笔记生成的全局导航。
 - 支持 Figure Grounding 图文锚定：`--figure-grounding local|vision` 将图片锚定到页面内最近的文本或表格元素，让笔记中的图片出现在相关概念附近而非堆积在页尾。输出 `figure_grounding.json`。
 - 支持 Content Guard：`--content-guard auto` 识别高置信关键学习内容，并对 required visible coverage 做一次自然修复。
-- 支持额外导出：带目录 Markdown、Word、PDF、LaTeX；Word/PDF/LaTeX 通过可选 Pandoc。
+- 支持额外导出：带目录 Markdown、Word、PDF、LaTeX；Word/LaTeX 通过 Pandoc，PDF 通过 DOCX → LibreOffice 转换以改善中文/CJK 排版。
 - 支持基础 SlideNote Studio GUI 和成本报告：上传文件、配置 provider、查看进度、预览输出和 token/cost dashboard。
 
 ## 1. 上下文策略增强
@@ -372,6 +372,9 @@ lecture-weave 第二阶段按 section 编织
 ## 6. GUI 可视化界面
 
 基础版已经合入 SlideNote Studio：一个 Streamlit GUI，包装现有 `python -m slidenote build` pipeline，不改核心解析和生成逻辑。它已经支持上传 PPT/PDF、选择预设、填写 provider/API key、配置 OCR/Vision/LLM、设置缓存和并发、查看 `progress.json`、预览 notes/coverage/run summary，并生成 token/cost 报告。
+
+**2026-05 GUI 导出补齐：** Studio 现在可以在侧边栏直接选择 Markdown TOC、Word、PDF 和 LaTeX 导出，并在结果区提供 Exports 标签页、单文件下载和完整 ZIP 下载。Pandoc 或 LibreOffice 缺失时 GUI 会提前提示，不影响基础 notes.md 生成；转换状态写入 `export_report.json`。
+
 
 当前基础版已经实现：
 
@@ -1471,18 +1474,24 @@ CLI 对新手不够友好，尤其是多个服务商都要 key。
 
 ### P0：近期最值得做
 
-已完成基础版，后续增强：
+已完成或已具备基础可用能力：
 
-- `slidenote doctor` 环境检测：已实现完整命令行诊断；后续补 GUI 一键诊断和更友好的 API key 配置引导。
-- 运行进度系统：CLI 实时进度、`progress.json`、`run_summary.json` 已完成；后续补 ETA、失败恢复和更细阶段统计。
-- 加速与成本调度：`--speed-mode`、总并发、LLM/Vision/OCR/Figure 细分并发、`--global-cache-dir`、`--refresh-pages` 和临时错误重试已完成；后续补自动限速、只重跑指定小节。
-- SlideNote Studio GUI：基础 Streamlit GUI、上传文件、运行预设、进度预览、成本报告已完成；后续补原页/元素/笔记联动视图、doctor 面板和局部 refresh。
-- 分层生成策略：Lecture-Weave（`--note-strategy lecture-weave`）已是默认策略；后续补质量评分、自动补回遗漏细节。
-- 页面类型检测与处理路由：`page_modalities.json` 已实现；后续补更准的版面分析和 GUI 手动修正。
-- 视觉目标选择：装饰图过滤、figure crop 优先级、图片学习价值排序已实现；后续补内容图分类和更强版面分析。
+- `slidenote doctor` 环境检测：已实现完整命令行诊断；SlideNote Studio 已补 GUI Doctor 面板，可在页面内查看 Python、核心依赖、可选导出工具、LLM/OCR/Vision API key readiness，并给出基础修复建议。
+- 运行进度系统：CLI 实时进度、`progress.json`、`run_summary.json` 已完成；SlideNote Studio 已补 live run 状态、elapsed、ETA 估算、运行日志和结果预览。
+- 加速与成本调度：`--speed-mode`、总并发、LLM/Vision/OCR/Figure 细分并发、`--global-cache-dir`、`--refresh-pages` 和临时错误重试已完成；SlideNote Studio 已暴露 speed mode、总并发、细分并发、cache、refresh pages、OCR/Vision target 限制和 token/cost dashboard。
+- SlideNote Studio GUI：已支持 Streamlit GUI、上传文件、运行预设、页面内 API key 配置、进度预览、成本报告、自定义保存目录、完整结果 ZIP 下载、Doctor 面板、Quality 面板、Page explorer 原页/元素/笔记联动视图，以及 page modality 手动修正 manifest。
+- 分层生成策略：Lecture-Weave（`--note-strategy lecture-weave`）已是默认策略；GUI 已暴露 note strategy、note depth、note context、section detection、deck brief、content guard 等控制项，并在 Quality 面板中展示 coverage score、missing elements 和 repair queue。
+- 页面类型检测与处理路由：`page_modalities.json` 已实现；GUI 已支持查看每页 modality，并可保存 `page_modalities.overrides.json` 作为人工修正清单。
+- 视觉目标选择：装饰图过滤、figure crop 优先级、图片学习价值排序已实现；GUI 已暴露 Vision/OCR/Figure 相关 target、detail、edge、crop 设置，并可结合 Page explorer 查看页面截图与解析元素。
 
-仍待实现：
+仍待实现或进一步增强：
 
+- 自动限速：根据 provider rate limit、错误类型和重试历史自动调整并发。
+- 真正的小节级局部重跑：目前 GUI 可传 `--refresh-pages` 做页级 refresh；后续补 section/chapter-level refresh 与依赖结果复用。
+- 失败恢复增强：目前支持日志、失败提示和复用输出目录局部重跑；后续补断点续跑、失败阶段回滚和任务恢复。
+- 更细阶段统计：后续在 GUI 中展示 parsing / OCR / Vision / LLM / coverage / export 的耗时占比和失败统计。
+- 质量评分自动闭环：目前 GUI 展示 coverage 与 repair queue；后续补自动补回遗漏细节、二次生成和质量评分阈值。
+- 更强版面分析与内容图分类：后续补更准的图表/流程图/表格/装饰图分类，以及 GUI 中人工选择 OCR/Vision 页和目标图。
 - 课程工作区基础模型：Course / Source / Chapter。
 - 多 PPT / 多 PDF 课程级整合。
 - PPT 章节切分与分批输出：`split` 子命令、`--split-by section`、`section_index.json` 等。

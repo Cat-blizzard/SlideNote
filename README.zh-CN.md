@@ -63,14 +63,25 @@ python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --
 
 ## 可选 GUI
 
-SlideNote Studio 是套在同一条 CLI pipeline 外面的 Streamlit 图形界面。它支持上传 PPT/PDF、配置 provider、查看进度，并预览 notes、coverage、usage 和成本报告。
+SlideNote Studio 是套在同一条 CLI pipeline 外面的 Streamlit 图形界面。它支持上传 PPT/PDF、在页面内配置 API key、选择运行预设、查看进度/ETA、查看 token 与成本报告、做逐页溯源检查，并下载生成结果。
 
 ```powershell
 python -m pip install -e ".[dev,llm,gui]"
 streamlit run gui/app.py
 ```
 
-GUI 会通过子进程环境变量传递 API key，不把 key 放进命令行参数。更多说明见 [gui/README_GUI.zh-CN.md](gui/README_GUI.zh-CN.md)。
+GUI 亮点：
+
+- **不用命令行配置 API：** 页面中输入的 API key 会通过子进程环境变量传给本次 build，不写入源码，也不放进命令行参数。
+- **速度与成本控制：** 暴露 `--speed-mode`、总并发 `--concurrency`、`--llm-concurrency`、`--vision-concurrency`、`--ocr-concurrency`、`--figure-concurrency`、共享全局缓存、OCR/Vision 目标上限和按页 `--refresh-pages`。
+- **运行可观测：** 用更直观的 `Off` / `Missing key` / `Ready` 显示 API 状态，并展示进度、ETA、阶段日志、`run_summary.json`、usage 文件和 token/cost dashboard。
+- **Doctor 面板：** 在 GUI 内运行与 `slidenote doctor` 同源的环境检查，并展示缺失依赖和 API 配置建议。
+- **审阅工作台：** Page explorer 可以联动查看原页截图、解析元素、生成笔记、页面类型、coverage 质量，并保存页面类型人工修正清单。
+- **保存与导出体验：** 支持默认 `gui_runs/outputs` 工作区，也支持自定义输出目录；可在侧边栏直接勾选导出 `notes.toc.md`、Word `notes.docx`、PDF `notes.pdf` 和 LaTeX `notes.tex`，生成后可一键下载单个文件或完整结果 ZIP。Word/LaTeX 需要 Pandoc；PDF 会优先通过 LibreOffice 将 notes.docx 转成 notes.pdf，以保证中文/CJK 排版更稳定。GUI 会提前提示缺失依赖。
+
+更多说明见 [gui/README_GUI.zh-CN.md](gui/README_GUI.zh-CN.md)。
+
+> GUI 导出说明：Markdown 目录版不需要额外依赖；Word 和 LaTeX 使用 Pandoc；PDF 会先生成 `notes.docx`，再通过 LibreOffice 转成 `notes.pdf`；`export_report.json` 会记录成功/失败原因。PDF 导出不再默认走 Markdown → LaTeX → PDF，而是优先走 DOCX → LibreOffice PDF，这样中文和图片排版更稳定；LaTeX 仍保留为技术型源码导出。
 
 ## 功能
 
@@ -86,7 +97,7 @@ GUI 会通过子进程环境变量传递 API key，不把 key 放进命令行参
 - 生成 `content.json` 作为原始内容清单。
 - 生成 `notes.md`，默认隐藏来源标记，也可选择显示简洁页码或详细元素 ID。
 - 生成 `coverage.json` / `coverage.md`，检查哪些元素没有出现在笔记中。
-- 可选导出 `notes.toc.md`、`notes.docx`、`notes.pdf` 和 `notes.tex`；Word/PDF/LaTeX 需要安装 Pandoc。
+- 可选导出 `notes.toc.md`、`notes.docx`、`notes.pdf` 和 `notes.tex`；Word/LaTeX 需要安装 Pandoc；PDF 需要 Pandoc 和 LibreOffice。
 - 支持多家 LLM：ChatGPT/OpenAI、DeepSeek、通义千问、豆包、GLM、Gemini、Claude。
 - 支持 `lecture-weave` 高质量笔记策略：先逐页深讲，再按章节编织成连贯笔记。
 - 支持控制笔记输出语言和术语策略：英文课件可以生成中文或英文笔记，中文笔记可保留英文专业术语。
@@ -294,7 +305,7 @@ outputs/lecture/
 
 `content_guard.json` 默认由 `--content-guard auto` 生成。不开 `--use-llm` 时，它只记录本地启发式审查；开启 `--use-llm` 后，SlideNote 会先本地预筛表格、公式、定义、条件、OCR 关键文本、视觉摘要和非装饰图片，再让文本模型判断页面角色和元素级学习角色。只有高置信 `must_explain` 元素会进入 `required_visible_coverage` 并触发最多一次自然修复；低置信元素只保留在审查报告里。
 
-额外导出默认关闭。`--export markdown-toc` 不需要 Pandoc，会写出带目录的 `notes.toc.md`。`--export docx,pdf,latex` 会调用 Pandoc 生成 `notes.docx`、`notes.pdf` 和 `notes.tex`；转换结果和错误摘要会写入 `export_report.json`。
+额外导出默认关闭。`--export markdown-toc` 不需要 Pandoc，会写出带目录的 `notes.toc.md`。`--export docx,pdf,latex` 会调用 Pandoc 生成 `notes.docx` 和 `notes.tex`，并用 LibreOffice 将 `notes.docx` 转为 `notes.pdf`；转换结果和错误摘要会写入 `export_report.json`。
 
 ## 环境检测
 
