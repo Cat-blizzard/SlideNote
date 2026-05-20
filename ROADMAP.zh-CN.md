@@ -19,7 +19,7 @@ SlideNote 当前的核心定位仍然是：
 - 支持独立视觉解析：OpenAI、Qwen-VL、豆包/火山方舟等视觉模型。
 - 有 LLM / OCR / Vision 缓存和结构化用量报告，便于 CLI/GUI 展示成本和缓存命中。
 - 有基础运行进度文件 `progress.json` 和运行总览 `run_summary.json`。
-- 支持基础 `--speed-mode` 预设、总并发与 LLM/Vision/OCR/Figure 细分并发、`--global-cache-dir` 全局缓存目录，并对临时 API 错误做退避重试。
+- 支持基础 `--speed-mode` 预设、总并发与 LLM/Vision/OCR/Figure 细分并发、`--vision-max-targets` / `--vision-max-edge` / `--vision-detail` 视觉预算控制、`--global-cache-dir` 全局缓存目录，并对临时 API 错误做退避重试。
 - 支持 `--refresh-pages` 对指定页绕过本地缓存进行局部刷新。
 - 支持 `slidenote doctor` 环境检测。
 - 支持疑似小图标/装饰图标记，默认从笔记、覆盖率、OCR fallback 和视觉目标中过滤。
@@ -34,7 +34,7 @@ SlideNote 当前的核心定位仍然是：
 - 支持 `--screenshot-policy fallback|always|never`，默认有局部图/嵌入图时不在笔记里重复插入整页截图。
 - 支持基础图片学习价值排序 `--image-ranking local|off`，输出 `image_importance.json`，供视觉目标选择、笔记插图和 GUI 使用。
 - 支持语义版面增强：`--semantic-layout auto|local|vision` 先用本地规则生成 blocks/groups/relations，再按需用视觉模型增强代码示例、图文混排、因果注释等复杂页面。输出 `semantic_layout.json`，并复用现有 vision provider/cache/concurrency。
-- 支持章节计划输出 `sections.json`，并提供 `--section-detection auto|local|llm`；开启章节式 LLM 笔记时可用模型辅助识别章节边界。
+- 支持章节计划输出 `sections.json`，并提供 `--section-detection auto|local|llm` 与 `--section-cache on|off|refresh`；开启章节式 LLM 笔记时可用模型辅助识别章节边界，并缓存 LLM 章节识别结果。
 - 支持 `--note-language auto|zh|en` 和 `--term-policy preserve|translate|bilingual`，可让英文课件输出中文/英文笔记，并控制专业术语保留方式。
 - 支持 Lecture-Weave 分层生成策略：`--note-strategy lecture-weave`（默认），先逐页让模型"讲课"，再按章节编织成连贯笔记。输出中间产物 `page_notes.json`、`page_notes.md` 和 `weave_report.json`。
 - 支持 Deck Brief 课程全景图：`--deck-brief auto` 可用 LLM 生成课程主题、核心问题、概念依赖关系和页面角色划分，作为后续笔记生成的全局导航。
@@ -583,7 +583,7 @@ GUI 阶段则做成：
 
 长课件、扫描 PDF、图片驱动型 PPT 会让运行时间和 token 成本快速上升。后续需要把 SlideNote 从“顺序执行所有步骤”升级为“可调度的处理管线”，让用户可以在速度、成本和质量之间做选择。
 
-当前基础版已经实现：`--speed-mode`、`--concurrency`、`--llm-concurrency`、`--vision-concurrency`、`--ocr-concurrency`、`--figure-concurrency`、`--global-cache-dir` 和 `--refresh-pages`。LLM / Vision / OCR API 调用已经有临时限流、网络超时和 5xx 的退避重试；`run_summary.json` 会记录 `api_concurrency`、阶段耗时和最慢阶段。后续仍需要加入 provider 自动限速、真正的局部小节重跑和更智能的任务调度。
+当前基础版已经实现：`--speed-mode`、`--concurrency`、`--llm-concurrency`、`--vision-concurrency`、`--ocr-concurrency`、`--figure-concurrency`、`--global-cache-dir`、`--refresh-pages`、`--vision-max-targets`、`--vision-max-edge`、`--vision-detail`，以及章节识别缓存 `--section-cache`。LLM / Vision / OCR API 调用已经有临时限流、网络超时和 5xx 的退避重试；`run_summary.json` 会记录 `api_concurrency`、阶段耗时和最慢阶段。后续仍需要加入 provider 自动限速、真正的局部小节重跑和更智能的任务调度。
 
 ### 当前耗时来源
 
@@ -651,7 +651,7 @@ debug
 
 视觉是图多课件的主要瓶颈之一。
 
-可优化方向：
+可优化方向（其中 `--vision-max-targets`、`--vision-max-edge` 和 `--vision-detail` 已有初版参数，后续重点是让策略更自动）：
 
 - 限制视觉目标数，例如 `--vision-max-targets 20/30/50`。
 - 优先解析整页截图，而不是所有嵌入碎图。
@@ -942,7 +942,7 @@ domain_profiles/
 
 ## 13. LaTeX / PDF 高质量排版
 
-Markdown 后续可以进一步导出成 LaTeX，再编译成 PDF。
+当前已经支持额外导出 `notes.docx`、`notes.tex` 和 `notes.pdf`：Word/LaTeX 通过 Pandoc，PDF 通过 `notes.docx -> LibreOffice` 转换。这里后续关注的重点不再是“能不能导出”，而是排版质量、模板系统和可定制性。
 
 设计方向：
 
@@ -1429,8 +1429,8 @@ python -m slidenote update-course outputs/my-course
 - 依赖包版本（PyMuPDF、python-pptx 等）。
 - LibreOffice 是否安装、`soffice` 是否在 PATH。
 - Windows 是否可用 PowerPoint COM、是否安装 `pywin32`。
-- 各 provider 的 API key 是否配置、是否可连通（发送轻量测试请求）。
-- OCR / Vision provider 是否可用。
+- 各 provider 的 API key 环境变量是否已配置（当前不做在线连通性探测）。
+- OCR / Vision 所需依赖与 key 是否就绪，以及 GUI 可读取的 readiness 标志。
 
 输出包含每项检查的影响范围、修复建议、推荐下一步，以及 GUI 可读取的 `readiness` metadata。
 
