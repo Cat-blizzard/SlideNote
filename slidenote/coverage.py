@@ -369,30 +369,92 @@ def _normalize_text_key(value: str) -> str:
 
 
 def _figure_coverage(deck: Deck, notes_markdown: str) -> dict[str, object]:
-    image_targets = [target.strip().strip("<>") for target in re.findall(r"!\[[^\]]*]\(([^)]+)\)", notes_markdown)]
+    image_links = _markdown_image_links(notes_markdown)
     figures: list[dict[str, object]] = []
     for page in deck.pages:
         for image in note_candidate_images(page):
-            covered = any(target == image.path or target.endswith(image.path) for target in image_targets)
-            figures.append(_figure_record(page, image, covered))
+            matched_links = [link for link in image_links if _image_target_matches(str(link["target"]), image.path)]
+            covered = bool(matched_links)
+            note_explained = any(_figure_link_has_visible_explanation(link, image) for link in matched_links)
+            figures.append(_figure_record(page, image, covered, note_explained, [str(link["target"]) for link in matched_links]))
     return {
         "total_figures": len(figures),
         "covered_figures": sum(1 for figure in figures if figure["covered"]),
         "missing_figures": sum(1 for figure in figures if not figure["covered"]),
         "anchored_figures": sum(1 for figure in figures if figure["anchor_element_ids"]),
         "explained_figures": sum(1 for figure in figures if figure["figure_explanation_status"] not in {None, "missing"}),
+        "note_explained_figures": sum(1 for figure in figures if figure["note_explained"]),
+        "unexplained_note_figures": sum(1 for figure in figures if figure["covered"] and not figure["note_explained"]),
         "needs_review": sum(1 for figure in figures if figure["figure_audit_status"] == "needs_review"),
         "figures": figures,
     }
 
 
-def _figure_record(page: SlidePage, image: ImageAsset, covered: bool) -> dict[str, object]:
+def _markdown_image_links(markdown: str) -> list[dict[str, object]]:
+    blocks = _markdown_blocks(markdown)
+    links: list[dict[str, object]] = []
+    for block_index, block in enumerate(blocks):
+        for match in re.finditer(r"!\[([^\]]*)]\(([^)]+)\)", block):
+            links.append(
+                {
+                    "target": match.group(2).strip().strip("<>").replace("\\", "/"),
+                    "alt": match.group(1),
+                    "block": block,
+                    "block_index": block_index,
+                    "blocks": blocks,
+                }
+            )
+    return links
+
+
+def _image_target_matches(target: str, image_path: str) -> bool:
+    normalized_target = target.strip().strip("<>").replace("\\", "/")
+    normalized_image_path = image_path.replace("\\", "/")
+    return normalized_target == normalized_image_path or normalized_target.endswith(normalized_image_path)
+
+
+def _figure_link_has_visible_explanation(link: dict[str, object], image: ImageAsset) -> bool:
+    block = str(link.get("block") or "")
+    if _block_has_visible_nonimage_explanation(block):
+        return True
+    blocks = link.get("blocks")
+    if not isinstance(blocks, list):
+        return False
+    block_index = int(link.get("block_index") or 0)
+    related_tokens = {image.id, *image.source_element_ids, *image.anchor_element_ids}
+    current_tokens = _source_tokens(block) & related_tokens
+    for neighbor_index in (block_index - 1, block_index + 1):
+        if neighbor_index < 0 or neighbor_index >= len(blocks):
+            continue
+        neighbor = str(blocks[neighbor_index])
+        if neighbor.lstrip().startswith("#"):
+            continue
+        neighbor_tokens = _source_tokens(neighbor) & related_tokens
+        if (current_tokens or neighbor_tokens) and _block_has_visible_nonimage_explanation(neighbor):
+            return True
+    return False
+
+
+def _block_has_visible_nonimage_explanation(block: str) -> bool:
+    without_images = re.sub(r"!\[[^\]]*]\([^)]+\)", " ", block)
+    return _block_has_visible_explanation(without_images)
+
+
+def _figure_record(
+    page: SlidePage,
+    image: ImageAsset,
+    covered: bool,
+    note_explained: bool,
+    matched_markdown_targets: list[str],
+) -> dict[str, object]:
     return {
         "id": image.id,
         "slide_id": page.slide_id,
         "path": image.path,
         "role": image.role,
         "covered": covered,
+        "note_explained": note_explained,
+        "matched_markdown_targets": matched_markdown_targets,
         "source_element_ids": list(image.source_element_ids),
         "anchor_element_ids": list(image.anchor_element_ids),
         "anchor_reason": image.anchor_reason,

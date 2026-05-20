@@ -274,6 +274,7 @@ def run_claude_agent_pack(
     ensure_clean_dir(output_root)
     _copy_pack_assets_to_output(pack_dir, output_root)
     known_assets = {str(asset.get("path")).replace("\\", "/") for asset in manifest.get("assets", []) if asset.get("path")}
+    asset_path_by_id = _agent_asset_path_by_id(manifest)
     deck = _deck_from_manifest(manifest)
     source_id_to_slide = _source_id_to_slide(deck)
     section_results: list[dict[str, Any]] = []
@@ -327,6 +328,7 @@ def run_claude_agent_pack(
             section_results=section_results,
             coverage_report=coverage_report,
             known_assets=known_assets,
+            asset_path_by_id=asset_path_by_id,
             source_id_to_slide=source_id_to_slide,
             claude_command=claude_command,
             claude_model=claude_model,
@@ -384,6 +386,7 @@ def _repair_agent_sections_once(
     section_results: list[dict[str, Any]],
     coverage_report: dict[str, Any],
     known_assets: set[str],
+    asset_path_by_id: dict[str, str],
     source_id_to_slide: dict[str, int],
     claude_command: str,
     claude_model: str | None,
@@ -392,7 +395,12 @@ def _repair_agent_sections_once(
     quiet: bool,
 ) -> dict[str, Any]:
     report = _empty_repair_report("auto", 1, coverage_report)
-    issues_by_section, unmapped = _repair_issues_by_section(coverage_report, section_results, source_id_to_slide)
+    issues_by_section, unmapped = _repair_issues_by_section(
+        coverage_report,
+        section_results,
+        source_id_to_slide,
+        asset_path_by_id=asset_path_by_id,
+    )
     report["unmapped_issues"] = unmapped
     if not issues_by_section:
         return report
@@ -458,7 +466,12 @@ def _repair_agent_sections_once(
 
     final_notes = _compose_agent_notes(manifest, section_results, output_root)
     final_coverage = analyze_coverage(deck, final_notes, content_guard=manifest.get("content_guard"))
-    final_issues_by_section, final_unmapped = _repair_issues_by_section(final_coverage, section_results, source_id_to_slide)
+    final_issues_by_section, final_unmapped = _repair_issues_by_section(
+        final_coverage,
+        section_results,
+        source_id_to_slide,
+        asset_path_by_id=asset_path_by_id,
+    )
     for result in section_results:
         if result.get("repair_attempted"):
             result["missing_after"] = final_issues_by_section.get(str(result.get("section_id") or ""), [])
@@ -478,8 +491,10 @@ def _repair_issues_by_section(
     coverage_report: dict[str, Any],
     section_results: list[dict[str, Any]],
     source_id_to_slide: dict[str, int],
+    *,
+    asset_path_by_id: dict[str, str] | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
-    issues = _repair_issues_from_coverage(coverage_report)
+    issues = _repair_issues_from_coverage(coverage_report, asset_path_by_id=asset_path_by_id)
     section_by_slide: dict[int, str] = {}
     for section in section_results:
         section_id = str(section.get("section_id") or "")
@@ -498,7 +513,12 @@ def _repair_issues_by_section(
     return grouped, unmapped
 
 
-def _repair_issues_from_coverage(coverage_report: dict[str, Any]) -> list[dict[str, Any]]:
+def _repair_issues_from_coverage(
+    coverage_report: dict[str, Any],
+    *,
+    asset_path_by_id: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    asset_path_by_id = asset_path_by_id or {}
     by_id: dict[str, dict[str, Any]] = {}
     for item in coverage_report.get("items") or []:
         if not isinstance(item, dict):
@@ -519,6 +539,38 @@ def _repair_issues_from_coverage(coverage_report: dict[str, Any]) -> list[dict[s
         issue = by_id.get(issue_id) or _repair_issue_record(item)
         issue["required_visible_missing"] = True
         by_id[issue_id] = issue
+    figure_coverage = coverage_report.get("figure_coverage")
+    figures = figure_coverage.get("figures") if isinstance(figure_coverage, dict) else []
+    for figure in figures or []:
+        if not isinstance(figure, dict):
+            continue
+        issue_id = str(figure.get("id") or "")
+        if not issue_id:
+            continue
+        figure_missing = not bool(figure.get("covered"))
+        figure_unexplained = bool(figure.get("covered")) and not bool(figure.get("note_explained"))
+        figure_needs_review = figure.get("figure_audit_status") == "needs_review" and (figure_missing or figure_unexplained)
+        if not (figure_missing or figure_unexplained or figure_needs_review):
+            continue
+        issue = by_id.get(issue_id) or _repair_issue_record(figure)
+        issue.update(
+            {
+                "kind": "image",
+                "figure_missing": bool(issue.get("figure_missing")) or figure_missing,
+                "figure_unexplained": bool(issue.get("figure_unexplained")) or figure_unexplained,
+                "figure_needs_review": bool(issue.get("figure_needs_review")) or figure_needs_review,
+                "asset_path": asset_path_by_id.get(issue_id) or figure.get("path"),
+                "raw_image_path": figure.get("path"),
+                "role": figure.get("role"),
+                "source_element_ids": figure.get("source_element_ids") or [],
+                "anchor_element_ids": figure.get("anchor_element_ids") or [],
+                "figure_explanation_status": figure.get("figure_explanation_status"),
+                "figure_audit_status": figure.get("figure_audit_status"),
+                "note_explained": bool(figure.get("note_explained")),
+                "matched_markdown_targets": figure.get("matched_markdown_targets") or [],
+            }
+        )
+        by_id[issue_id] = issue
     return sorted(by_id.values(), key=lambda item: (int(item.get("slide_id") or 0), str(item.get("id") or "")))
 
 
@@ -530,15 +582,27 @@ def _repair_issue_record(item: dict[str, Any]) -> dict[str, Any]:
         "preview": item.get("preview"),
         "trace_missing": False,
         "required_visible_missing": False,
+        "figure_missing": False,
+        "figure_unexplained": False,
+        "figure_needs_review": False,
     }
 
 
 def _coverage_repair_summary(coverage_report: dict[str, Any]) -> dict[str, Any]:
     required = coverage_report.get("required_visible_coverage")
     required_missing = required.get("missing") if isinstance(required, dict) else 0
+    figure_coverage = coverage_report.get("figure_coverage")
+    figure_missing = figure_coverage.get("missing_figures") if isinstance(figure_coverage, dict) else 0
+    figure_unexplained = figure_coverage.get("unexplained_note_figures") if isinstance(figure_coverage, dict) else 0
+    figure_note_explained = figure_coverage.get("note_explained_figures") if isinstance(figure_coverage, dict) else 0
+    figure_needs_review = figure_coverage.get("needs_review") if isinstance(figure_coverage, dict) else 0
     return {
         "trace_missing": int(coverage_report.get("missing") or 0),
         "required_visible_missing": int(required_missing or 0),
+        "figure_missing": int(figure_missing or 0),
+        "figure_unexplained": int(figure_unexplained or 0),
+        "figure_note_explained": int(figure_note_explained or 0),
+        "figure_needs_review": int(figure_needs_review or 0),
         "coverage_ratio": coverage_report.get("coverage_ratio"),
     }
 
@@ -552,6 +616,18 @@ def _agent_result_warnings(initial_warnings: list[str], section_results: list[di
     if repair_report.get("failed_repairs"):
         warnings.append(f"repair_failed_sections:{repair_report['failed_repairs']}")
     return warnings
+
+
+def _agent_asset_path_by_id(manifest: dict[str, Any]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for asset in manifest.get("assets") or []:
+        if not isinstance(asset, dict):
+            continue
+        asset_id = str(asset.get("id") or "")
+        path = str(asset.get("path") or "").replace("\\", "/")
+        if asset_id and path:
+            result[asset_id] = path
+    return result
 
 
 def _copy_agent_assets(deck: Deck, output_root: Path, pack_dir: Path) -> tuple[dict[str, str], list[dict[str, Any]], list[str]]:
@@ -694,6 +770,14 @@ def _render_page_pack_markdown(deck: Deck, page: SlidePage, asset_map: dict[str,
                 lines.append(f"  - ocr_text: {image.ocr_text}")
             if image.figure_explanation:
                 lines.append(f"  - existing_figure_explanation: {image.figure_explanation}")
+            if image.figure_explanation_status:
+                lines.append(f"  - figure_explanation_status: {image.figure_explanation_status}")
+            if image.figure_audit_status:
+                lines.append(f"  - figure_audit_status: {image.figure_audit_status}")
+            if image.importance_score is not None:
+                lines.append(f"  - importance_score: {image.importance_score}")
+            if image.importance_rank is not None:
+                lines.append(f"  - importance_rank: {image.importance_rank}")
             lines.append(f"  - markdown_reference: ![{caption}]({display_path})")
         lines.append("")
     return lines
@@ -804,6 +888,7 @@ You must return only one JSON object with these fields:
 - "warnings": string[]
 
 Do not write files. Do not invent image paths. Use only assets listed in the section pack.
+When a useful figure/image is listed, insert its `markdown_reference` near the relevant concept and add visible explanatory text in the same paragraph, list item, or caption block.
 
 SOURCE TITLE: {manifest.get("source", {}).get("title")}
 SECTION ID: {section.get("section_id")}
@@ -843,6 +928,9 @@ Return the full revised section markdown, not a diff. Do not write files.
 Fix the listed missing coverage issues while preserving the good parts of the current section.
 For required_visible_missing items, include a visible explanation in the same paragraph/list item/table/image block as the source marker.
 For trace_missing items, cover the source in prose or add an appropriate source marker.
+For figure_missing items, insert the listed `asset_path` with Markdown image syntax near the relevant concept.
+For figure_unexplained items, keep or insert the image and add visible explanatory text in the same paragraph, list item, or caption block.
+For figure_needs_review items, explain cautiously using the visual summary, OCR, anchors, and source ids; add a warning if ambiguity remains.
 Use only assets listed in the section pack.
 
 SOURCE TITLE: {manifest.get("source", {}).get("title")}

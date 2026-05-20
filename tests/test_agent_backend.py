@@ -17,6 +17,72 @@ def _write_pdf(path: Path) -> None:
     doc.close()
 
 
+def _add_test_figure_to_pack(pack_dir: Path) -> dict:
+    manifest_path = pack_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    raw_path = "images/quorum.png"
+    asset_path = "assets/images/quorum.png"
+    figure_id = "s1_img1"
+    asset_file = pack_dir / asset_path
+    asset_file.parent.mkdir(parents=True, exist_ok=True)
+    asset_file.write_bytes(b"fake-png")
+    manifest["assets"].append(
+        {
+            "id": figure_id,
+            "slide_id": 1,
+            "kind": "images",
+            "path": asset_path,
+            "original_path": raw_path,
+            "caption": "Quorum overlap diagram",
+            "role": "content",
+            "source_element_ids": [],
+            "anchor_element_ids": ["s1_t1"],
+            "importance_score": 0.95,
+            "importance_rank": 1,
+            "visual_summary": "A diagram showing overlapping read and write quorums.",
+            "ocr_text": "read quorum / write quorum",
+        }
+    )
+    manifest["deck"]["pages"][0].setdefault("images", []).append(
+        {
+            "id": figure_id,
+            "path": raw_path,
+            "caption": "Quorum overlap diagram",
+            "visual_summary": "A diagram showing overlapping read and write quorums.",
+            "ocr_text": "read quorum / write quorum",
+            "role": "content",
+            "ignored": False,
+            "source_element_ids": [],
+            "anchor_element_ids": ["s1_t1"],
+            "anchor_reason": "The figure illustrates quorum overlap.",
+            "grounding_confidence": 0.86,
+            "importance_score": 0.95,
+            "importance_rank": 1,
+            "figure_explanation_status": "missing",
+            "figure_audit_status": "needs_review",
+        }
+    )
+    if figure_id not in manifest["sections"][0]["source_ids"]:
+        manifest["sections"][0]["source_ids"].append(figure_id)
+    section_path = pack_dir / manifest["sections"][0]["file"]
+    section_text = section_path.read_text(encoding="utf-8")
+    section_text += (
+        "\n#### Images And Figures\n\n"
+        f"- `{figure_id}`: `{asset_path}`\n"
+        "  - caption: Quorum overlap diagram\n"
+        "  - source_ids: `s1_img1`\n"
+        "  - anchor_element_ids: `s1_t1`\n"
+        "  - visual_summary: A diagram showing overlapping read and write quorums.\n"
+        "  - ocr_text: read quorum / write quorum\n"
+        "  - figure_explanation_status: missing\n"
+        "  - figure_audit_status: needs_review\n"
+        "  - markdown_reference: ![Quorum overlap diagram](assets/images/quorum.png)\n"
+    )
+    section_path.write_text(section_text, encoding="utf-8")
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest
+
+
 def test_agent_pack_writes_manifest_sections_and_assets(tmp_path):
     source = tmp_path / "lecture.pdf"
     out = tmp_path / "out"
@@ -325,6 +391,126 @@ def test_agent_run_repairs_required_visible_coverage(tmp_path, monkeypatch):
     assert coverage["required_visible_coverage"]["missing"] == 0
     assert report["repair"]["before"]["required_visible_missing"] == 1
     assert report["repair"]["after"]["required_visible_missing"] == 0
+
+
+def test_agent_run_repairs_missing_figure_reference(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    build_out = tmp_path / "build"
+    run_out = tmp_path / "run"
+    _write_pdf(source)
+    assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
+    manifest = _add_test_figure_to_pack(build_out / "agent_pack")
+    source_ids = manifest["sections"][0]["source_ids"]
+    calls = []
+
+    def fake_run(args, **kwargs):
+        del kwargs
+        prompt = args[-1]
+        calls.append(prompt)
+        if "Repair one SlideNote section" in prompt:
+            markdown = (
+                "## Consensus\n\n"
+                "![Quorum overlap diagram](assets/images/quorum.png) "
+                "This diagram shows why read and write quorums must overlap. "
+                f"<!-- slidenote-source: p1:{','.join(source_ids)} -->"
+            )
+            used_assets = ["assets/images/quorum.png"]
+        else:
+            markdown = "## Consensus\n\nQuorums overlap. " + f"<!-- slidenote-source: p1:{','.join(source_ids)} -->"
+            used_assets = []
+        return subprocess.CompletedProcess(
+            ["claude"],
+            0,
+            stdout=json.dumps(
+                {
+                    "type": "result",
+                    "result": json.dumps(
+                        {
+                            "markdown": markdown,
+                            "used_asset_paths": used_assets,
+                            "covered_source_ids": source_ids,
+                            "warnings": [],
+                        }
+                    ),
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("slidenote.agent_backend.subprocess.run", fake_run)
+
+    exit_code = main(["agent-run", str(build_out / "agent_pack"), "--out", str(run_out), "--quiet"])
+
+    coverage = json.loads((run_out / "coverage.json").read_text(encoding="utf-8"))
+    report = json.loads((run_out / "agent_run.json").read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert len(calls) == 2
+    assert "figure_missing" in calls[1]
+    assert "assets/images/quorum.png" in calls[1]
+    assert coverage["figure_coverage"]["missing_figures"] == 0
+    assert coverage["figure_coverage"]["note_explained_figures"] == 1
+    assert report["repair"]["before"]["figure_missing"] == 1
+    assert report["repair"]["after"]["figure_missing"] == 0
+    assert report["sections"][0]["missing_after"] == []
+
+
+def test_agent_run_repairs_unexplained_figure_reference(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    build_out = tmp_path / "build"
+    run_out = tmp_path / "run"
+    _write_pdf(source)
+    assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
+    manifest = _add_test_figure_to_pack(build_out / "agent_pack")
+    source_ids = manifest["sections"][0]["source_ids"]
+    calls = []
+
+    def fake_run(args, **kwargs):
+        del kwargs
+        prompt = args[-1]
+        calls.append(prompt)
+        if "Repair one SlideNote section" in prompt:
+            markdown = (
+                "## Consensus\n\n"
+                "![Quorum overlap diagram](assets/images/quorum.png) "
+                "The overlap area is the safety condition that prevents stale reads. "
+                f"<!-- slidenote-source: p1:{','.join(source_ids)} -->"
+            )
+        else:
+            markdown = (
+                "## Consensus\n\n"
+                f"![Quorum overlap diagram](assets/images/quorum.png) <!-- slidenote-source: p1:{','.join(source_ids)} -->"
+            )
+        return subprocess.CompletedProcess(
+            ["claude"],
+            0,
+            stdout=json.dumps(
+                {
+                    "type": "result",
+                    "result": json.dumps(
+                        {
+                            "markdown": markdown,
+                            "used_asset_paths": ["assets/images/quorum.png"],
+                            "covered_source_ids": source_ids,
+                            "warnings": [],
+                        }
+                    ),
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("slidenote.agent_backend.subprocess.run", fake_run)
+
+    exit_code = main(["agent-run", str(build_out / "agent_pack"), "--out", str(run_out), "--quiet"])
+
+    coverage = json.loads((run_out / "coverage.json").read_text(encoding="utf-8"))
+    report = json.loads((run_out / "agent_run.json").read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert len(calls) == 2
+    assert "figure_unexplained" in calls[1]
+    assert report["repair"]["before"]["figure_unexplained"] == 1
+    assert report["repair"]["after"]["figure_unexplained"] == 0
+    assert coverage["figure_coverage"]["unexplained_note_figures"] == 0
 
 
 def test_agent_run_keeps_original_section_when_repair_fails(tmp_path, monkeypatch):
