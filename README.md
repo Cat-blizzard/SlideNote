@@ -89,6 +89,7 @@ See [gui/README_GUI.md](gui/README_GUI.md) for details.
 - Extracts titles, text blocks, tables, embedded images, and slide/page screenshots.
 - Classifies each page as native text, mixed, image-only, shape-diagram-like, or decorative to route OCR, vision, and figure cropping.
 - Ranks images by study value so vision calls and notes prefer diagrams, charts, figure crops, and high-signal visuals.
+- Builds `semantic_layout.json` with local semantic blocks/groups/relations plus optional vision refinement, so code/output pairs, callout annotations, and mixed text-image scenes stay grouped through cropping, grounding, and note writing.
 - Detects composite figures made from many embedded picture pieces, crops the whole region from the page screenshot, and keeps the pieces as hidden source refs.
 - Writes `sections.json`; with LLM enabled, `--section-detection auto` can ask the model to refine section boundaries before Lecture-Weave.
 - Writes `deck_brief.json` / `deck_brief.md` in high-quality Lecture-Weave mode: a global course map used only as navigation, not as a replacement for page-level coverage.
@@ -291,13 +292,13 @@ By default, `notes.md` references bundled image copies under `notes.assets/`. If
 
 `table_understanding.json` records local table summaries, conclusions, and key rows. Note generation uses these fields as the primary study signal, so tables are explained by what they mean rather than by mechanically repeating every cell.
 
-`semantic_layout.json` records local page-level semantic blocks, groups, and relations. It is especially useful for code examples, console output, cause/fix annotations, and multi-part visual scenes that should be explained as one learning unit.
+`semantic_layout.json` records page-level semantic blocks, groups, and relations. In `--semantic-layout auto`, SlideNote starts with local rules and only asks the vision model to refine dense mixed layouts, code/output pairs, cause/fix annotations, and other low-confidence pages. The file also records the winning method, confidence, reason, warnings, and any validated vision enhancement so later stages can keep related elements together.
 
 `element_ir.json` is the normalized Page IR / Element IR consumed by prompts, coverage, and source maps. Each element has a stable `element_id`, `kind`, `bbox`, `roles`, `evidence`, and `source_ids`, so later GUI editing, local revise flows, and block-level source tracing can read one format instead of many dataclass-specific fields.
 
 `composite_figures.json` records local detections where a diagram was assembled from multiple embedded picture pieces. SlideNote crops the whole visual region as one `composite_figure`, marks the small pieces as `composite_child`, and keeps their IDs in hidden source refs instead of inserting them separately.
 
-`figure_grounding.json` records where each study-value figure belongs in the note: layout order, nearby text/table anchors, grounding confidence, explanation status, and whether the figure needs manual review. `notes.md` uses this metadata to place figures near the relevant paragraph instead of dumping all images at the end.
+`figure_grounding.json` records where each study-value figure belongs in the note: layout order, nearby text/table anchors, semantic-group anchors, grounding confidence, explanation status, and whether the figure needs manual review. `notes.md` uses this metadata to place figures near the relevant paragraph instead of dumping all images at the end.
 
 `sections.json` records the section plan used by `--note-context section` and `lecture-weave`. In `--section-detection auto`, SlideNote uses local rules without LLM notes, and switches to LLM-assisted section detection when section-based LLM notes are enabled.
 
@@ -497,6 +498,22 @@ Default limits:
 
 Figure cropping is best-effort. The model returns bounding boxes, and SlideNote validates, filters, deduplicates, and crops them locally. If no reliable local figure is found, notes fall back to the full-page screenshot.
 
+When `semantic_layout.json` is available, figure cropping also sees the page's semantic groups. That makes code snippets plus output panes, boxed explanations, and arrow-annotated teaching scenes more likely to be cropped as one complete learning unit instead of as isolated fragments.
+
+## Semantic Layout
+
+Before figure grounding and note writing, SlideNote groups related text, tables, images, and diagram fragments into page-level semantic blocks and relations:
+
+```powershell
+--semantic-layout auto   # Default: local rules first, then vision on dense/mixed/low-confidence pages
+--semantic-layout local  # Local rules only; no vision call
+--semantic-layout vision # Force multimodal enhancement on candidate pages
+```
+
+`auto` favors note quality. It reuses the normal vision settings (`--vision-provider`, `--vision-model`, `--vision-cache`, `--vision-cache-dir`, `--vision-concurrency`) and only spends a vision call on pages where local layout is likely too weak: code-plus-output examples, mixed diagram/text teaching pages, causal annotations, and other visually dense layouts. With `--vision off` or `--semantic-layout local`, SlideNote still writes the local layout without any API call.
+
+Vision responses may only reference existing text/table/image element IDs. Invalid references are dropped, warnings stay in `semantic_layout.json`, and the local layout remains the fallback so generation can continue safely.
+
 ## Figure Grounding
 
 After OCR/vision and before note writing, SlideNote anchors non-decorative figures to nearby text or table elements. The default is local and deterministic:
@@ -507,7 +524,7 @@ After OCR/vision and before note writing, SlideNote anchors non-decorative figur
 --figure-audit local      # Report missing explanations or low-confidence anchors
 ```
 
-Use `--figure-grounding vision` when you want image explanations even if `--vision off`; this will trigger the normal vision extraction path for important visual targets. Coverage reports now include a figure section showing which images were inserted, where they were anchored, and which ones need review.
+Use `--figure-grounding vision` when you want image explanations even if `--vision off`; this sends the page screenshot, element boxes, semantic layout groups, and OCR/vision summaries through the normal vision extraction path for important visual targets. The result can add `anchor_element_ids`, `anchor_group_id`, `figure_explanation`, `grounding_confidence`, and `anchor_reason`, but low-confidence or invalid outputs fall back to the local anchor instead of blocking generation. Coverage reports now include a figure section showing which images were inserted, where they were anchored, and which ones need review.
 
 `source_map.json` records the mapping between note blocks and source elements:
 

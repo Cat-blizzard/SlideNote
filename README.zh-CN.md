@@ -89,6 +89,7 @@ GUI 亮点：
 - 逐页抽取标题、正文文本块、表格、嵌入图片。
 - 自动识别页面类型：原生文字页、图文混合页、整页图片页、形状图页、装饰页，并据此路由 OCR、视觉解析和局部图裁剪。
 - 自动给图片做学习价值排序，让视觉调用和笔记优先使用图表、流程图、局部裁剪图和高信息量图片。
+- 生成 `semantic_layout.json`：先用本地规则组织页面语义块/语义组/关系，再按需用视觉模型增强代码+输出、注释框、图文混排等复杂页面，供裁图、图文对齐和写笔记复用。
 - 自动识别由多个嵌入小图片拼成的组合图，从整页截图裁出整体区域，并把小图保留为隐藏来源。
 - 生成 `sections.json`；开启 LLM 时，`--section-detection auto` 可以用模型辅助修正章节边界，再交给 Lecture-Weave 编织。
 - 在高质量 Lecture-Weave 模式下生成 `deck_brief.json` / `deck_brief.md`：先形成全局课程脉络，但只作为导航，不替代逐页覆盖。
@@ -291,13 +292,13 @@ outputs/lecture/
 
 `table_understanding.json` 会记录表格的本地摘要、表格结论和关键行。后续笔记优先使用这些学习信号，解释“表格说明了什么”，而不是机械覆盖每个单元格文本。
 
-`semantic_layout.json` 会记录页面级语义块、语义组和关系，尤其用于代码示例、运行输出、原因/修复标注、多块组合图等需要作为一个学习单元讲解的场景。
+`semantic_layout.json` 会记录页面级语义块、语义组和关系。在 `--semantic-layout auto` 下，SlideNote 会先跑本地规则，只在图文密集、代码+输出、原因/修复标注等低置信复杂页面上再调用视觉模型增强。文件里也会记录最终采用的方法、置信度、原因、warning，以及通过校验后的视觉增强结果，方便后续阶段把相关元素保持在一起。
 
 `element_ir.json` 是统一的 Page IR / Element IR，供 prompt、coverage 和 source map 共同读取。每个元素都有稳定的 `element_id`、`kind`、`bbox`、`roles`、`evidence` 和 `source_ids`，方便后续 GUI、局部 revise 和块级溯源使用同一种格式，而不是到处读取 dataclass 字段。
 
 `composite_figures.json` 会记录本地识别出的组合图：当流程图、结构图由多个嵌入小图片拼成时，SlideNote 会从整页截图裁出整体 `composite_figure`，把零散小图标成 `composite_child`，并把它们的 ID 写入隐藏来源标记，而不是作为独立图片插入笔记。
 
-`figure_grounding.json` 会记录每张重要图片应该靠近哪段文字或表格：包括版面顺序、锚点元素、锚定原因、置信度、图片解释状态和是否需要人工复查。`notes.md` 会用这份信息把图片尽量插到相关知识点附近，而不是全部堆在页尾。
+`figure_grounding.json` 会记录每张重要图片应该靠近哪段文字或表格：包括版面顺序、锚点元素、语义组锚点、锚定原因、置信度、图片解释状态和是否需要人工复查。`notes.md` 会用这份信息把图片尽量插到相关知识点附近，而不是全部堆在页尾。
 
 `sections.json` 会记录最终采用的章节计划。不开 LLM 时使用本地规则；在 `--section-detection auto` 且启用章节式 LLM 笔记时，会先调用文本模型辅助识别章节边界。
 
@@ -497,6 +498,22 @@ figure_usage.json
 
 局部图裁剪使用视觉模型返回 bbox，然后由本地程序裁剪图片。它不是强保证：如果视觉模型没有找到可靠局部图，系统会回退到整页截图。
 
+如果已经生成 `semantic_layout.json`，局部图裁剪还会参考页面语义组。这样代码块+运行结果、蓝框解释、箭头标注等组合教学场景更容易被裁成完整语义单元，而不是碎成几个孤立小块。
+
+## 语义版面增强
+
+在图文对齐和写笔记之前，SlideNote 会先把相关文本、表格、图片和图形碎片组织成页面级语义块与关系：
+
+```powershell
+--semantic-layout auto   # 默认：先本地规则，再对图文密集/低置信页面做视觉增强
+--semantic-layout local  # 只用本地规则，不调用视觉模型
+--semantic-layout vision # 对候选页强制做多模态增强
+```
+
+`auto` 默认按效果优先处理，但仍复用现有视觉配置：`--vision-provider`、`--vision-model`、`--vision-cache`、`--vision-cache-dir`、`--vision-concurrency`。只有在本地版面规则可能不够稳的页面上，才会额外花一次视觉调用，例如代码+输出示例、图文混排教学页、因果箭头/注释页等。使用 `--vision off` 或 `--semantic-layout local` 时，系统仍会输出本地语义版面，不需要 API。
+
+视觉模型返回的关系只能引用已有的 text/table/image element ID。非法引用会被丢弃，warning 会写进 `semantic_layout.json`，同时保留本地结果作为 fallback，避免生成流程被中断。
+
 ## 图文对齐
 
 在 OCR/vision 之后、写笔记之前，SlideNote 会把非装饰图片锚定到同页附近的文字或表格。默认走本地版面判断：
@@ -507,7 +524,7 @@ figure_usage.json
 --figure-audit local      # 报告缺解释、低置信度或需复查的图片
 ```
 
-如果希望即使 `--vision off` 也给重要图片补解释，可以用 `--figure-grounding vision`，这会触发正常的视觉解析流程。`coverage.md` 现在也会单独列出图片覆盖情况：哪些图进入了笔记、锚定到哪里、解释是否缺失、是否需要人工复查。
+如果希望即使 `--vision off` 也给重要图片补解释，可以用 `--figure-grounding vision`。这会把页面截图、元素 bbox、语义版面分组和 OCR/vision 摘要一起送进正常的视觉解析流程。结果里可以补充 `anchor_element_ids`、`anchor_group_id`、`figure_explanation`、`grounding_confidence` 和 `anchor_reason`；如果模型结果低置信或不合法，系统会回退到本地锚点而不是中断生成。`coverage.md` 现在也会单独列出图片覆盖情况：哪些图进入了笔记、锚定到哪里、解释是否缺失、是否需要人工复查。
 
 `source_map.json` 会记录笔记块和原始元素之间的映射，方便 GUI、LaTeX/Word/HTML 导出和来源显示策略使用：
 
