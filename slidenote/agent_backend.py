@@ -96,6 +96,8 @@ def run_agent_run(args: argparse.Namespace) -> int:
             claude_model=args.claude_model,
             max_budget_usd=args.max_budget_usd,
             timeout_seconds=args.claude_timeout,
+            repair_mode=args.repair,
+            repair_rounds=args.repair_rounds,
             quiet=args.quiet,
         )
     except AgentBackendError as exc:
@@ -255,6 +257,8 @@ def run_claude_agent_pack(
     max_budget_usd: float | None,
     timeout_seconds: int,
     quiet: bool,
+    repair_mode: str = "auto",
+    repair_rounds: int = 1,
 ) -> dict[str, Any]:
     manifest_path = pack_dir / "manifest.json"
     if not manifest_path.exists():
@@ -262,6 +266,10 @@ def run_claude_agent_pack(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if int(manifest.get("schema_version") or 0) != AGENT_PACK_SCHEMA_VERSION:
         raise AgentBackendError("Unsupported agent pack schema version.")
+    if repair_mode not in {"auto", "off"}:
+        raise AgentBackendError("Repair mode must be `auto` or `off`.")
+    if repair_rounds not in {0, 1}:
+        raise AgentBackendError("First version supports only --repair-rounds 0 or 1.")
 
     ensure_clean_dir(output_root)
     _copy_pack_assets_to_output(pack_dir, output_root)
@@ -308,8 +316,28 @@ def run_claude_agent_pack(
         )
 
     notes_markdown = _compose_agent_notes(manifest, section_results, output_root)
-    write_text(output_root / "notes.md", notes_markdown)
     coverage_report = analyze_coverage(deck, notes_markdown, content_guard=manifest.get("content_guard"))
+    repair_report = _empty_repair_report(repair_mode=repair_mode, repair_rounds=repair_rounds, coverage_before=coverage_report)
+    if repair_mode == "auto" and repair_rounds > 0:
+        repair_report = _repair_agent_sections_once(
+            manifest=manifest,
+            pack_dir=pack_dir,
+            output_root=output_root,
+            deck=deck,
+            section_results=section_results,
+            coverage_report=coverage_report,
+            known_assets=known_assets,
+            source_id_to_slide=source_id_to_slide,
+            claude_command=claude_command,
+            claude_model=claude_model,
+            max_budget_usd=max_budget_usd,
+            timeout_seconds=timeout_seconds,
+            quiet=quiet,
+        )
+        notes_markdown = _compose_agent_notes(manifest, section_results, output_root)
+        coverage_report = analyze_coverage(deck, notes_markdown, content_guard=manifest.get("content_guard"))
+        repair_report["after"] = _coverage_repair_summary(coverage_report)
+    write_text(output_root / "notes.md", notes_markdown)
     write_json(output_root / "coverage.json", coverage_report)
     write_text(output_root / "coverage.md", render_coverage_markdown(coverage_report))
     source_map = build_source_map(deck, notes_markdown, output_root)
@@ -321,14 +349,209 @@ def run_claude_agent_pack(
         "agent_pack": str(pack_dir),
         "summary": {
             "sections_total": len(section_results),
-            "warnings": warnings,
+            "warnings": _agent_result_warnings(warnings, section_results, repair_report),
             "coverage_missing": coverage_report.get("missing"),
             "coverage_ratio": coverage_report.get("coverage_ratio"),
         },
+        "repair": repair_report,
         "sections": section_results,
     }
     write_json(output_root / "agent_run.json", run_report)
     return run_report
+
+
+def _empty_repair_report(repair_mode: str, repair_rounds: int, coverage_before: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "mode": repair_mode,
+        "rounds_requested": repair_rounds,
+        "rounds_completed": 0,
+        "attempted_sections": 0,
+        "failed_repairs": 0,
+        "unmapped_issues": [],
+        "before": _coverage_repair_summary(coverage_before),
+        "after": _coverage_repair_summary(coverage_before),
+        "sections": [],
+    }
+
+
+def _repair_agent_sections_once(
+    *,
+    manifest: dict[str, Any],
+    pack_dir: Path,
+    output_root: Path,
+    deck: Deck,
+    section_results: list[dict[str, Any]],
+    coverage_report: dict[str, Any],
+    known_assets: set[str],
+    source_id_to_slide: dict[str, int],
+    claude_command: str,
+    claude_model: str | None,
+    max_budget_usd: float | None,
+    timeout_seconds: int,
+    quiet: bool,
+) -> dict[str, Any]:
+    report = _empty_repair_report("auto", 1, coverage_report)
+    issues_by_section, unmapped = _repair_issues_by_section(coverage_report, section_results, source_id_to_slide)
+    report["unmapped_issues"] = unmapped
+    if not issues_by_section:
+        return report
+
+    section_records = manifest.get("sections") or []
+    sections_by_id = {str(section.get("section_id")): section for section in section_records if section.get("section_id")}
+    for result in section_results:
+        section_id = str(result.get("section_id") or "")
+        issues = issues_by_section.get(section_id)
+        if not issues:
+            result.setdefault("repair_attempted", False)
+            result.setdefault("repair_status", "not_needed")
+            continue
+        section = sections_by_id.get(section_id)
+        if not section:
+            warning = f"repair_section_manifest_missing:{section_id}"
+            result.setdefault("warnings", []).append(warning)
+            report.setdefault("unmapped_issues", []).extend(issues)
+            continue
+        section_file = pack_dir / str(section.get("file") or "")
+        current_markdown_path = output_root / str(result.get("file") or "")
+        current_markdown = current_markdown_path.read_text(encoding="utf-8")
+        result["repair_attempted"] = True
+        result["repair_status"] = "attempted"
+        result["missing_before"] = issues
+        if not quiet:
+            print(f"Repairing Claude Code section: {result.get('title') or section_id}")
+        try:
+            prompt = _build_claude_repair_prompt(manifest, section, section_file, current_markdown, issues)
+            parsed, metadata = _run_claude_command(
+                prompt=prompt,
+                pack_dir=pack_dir,
+                claude_command=claude_command,
+                claude_model=claude_model,
+                max_budget_usd=max_budget_usd,
+                timeout_seconds=timeout_seconds,
+            )
+            markdown = str(parsed["markdown"]).strip()
+            _validate_asset_references(markdown, parsed["used_asset_paths"], known_assets)
+            markdown = _ensure_covered_markers(markdown, parsed["covered_source_ids"], source_id_to_slide)
+            write_text(current_markdown_path, markdown.rstrip() + "\n")
+            result["repair_status"] = "ok"
+            result["repair"] = {
+                "used_asset_paths": parsed["used_asset_paths"],
+                "covered_source_ids": parsed["covered_source_ids"],
+                "warnings": parsed.get("warnings") or [],
+                "claude": metadata,
+            }
+            result.setdefault("warnings", []).extend(str(item) for item in parsed.get("warnings") or [])
+        except AgentBackendError as exc:
+            result["repair_status"] = "failed"
+            result["repair_error"] = str(exc)
+            result.setdefault("warnings", []).append(f"repair_failed:{exc}")
+        report["sections"].append(
+            {
+                "section_id": section_id,
+                "title": result.get("title"),
+                "status": result.get("repair_status"),
+                "missing_before": issues,
+                "error": result.get("repair_error"),
+            }
+        )
+
+    final_notes = _compose_agent_notes(manifest, section_results, output_root)
+    final_coverage = analyze_coverage(deck, final_notes, content_guard=manifest.get("content_guard"))
+    final_issues_by_section, final_unmapped = _repair_issues_by_section(final_coverage, section_results, source_id_to_slide)
+    for result in section_results:
+        if result.get("repair_attempted"):
+            result["missing_after"] = final_issues_by_section.get(str(result.get("section_id") or ""), [])
+    for section_record in report["sections"]:
+        section_id = str(section_record.get("section_id") or "")
+        section_record["missing_after"] = final_issues_by_section.get(section_id, [])
+
+    report["rounds_completed"] = 1
+    report["attempted_sections"] = sum(1 for result in section_results if result.get("repair_attempted"))
+    report["failed_repairs"] = sum(1 for result in section_results if result.get("repair_status") == "failed")
+    report["unmapped_issues"].extend(final_unmapped)
+    report["after"] = _coverage_repair_summary(final_coverage)
+    return report
+
+
+def _repair_issues_by_section(
+    coverage_report: dict[str, Any],
+    section_results: list[dict[str, Any]],
+    source_id_to_slide: dict[str, int],
+) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
+    issues = _repair_issues_from_coverage(coverage_report)
+    section_by_slide: dict[int, str] = {}
+    for section in section_results:
+        section_id = str(section.get("section_id") or "")
+        for slide_id in section.get("slide_ids") or []:
+            section_by_slide[int(slide_id)] = section_id
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    unmapped: list[dict[str, Any]] = []
+    for issue in issues:
+        source_id = str(issue.get("id") or "")
+        slide_id = int(issue.get("slide_id") or source_id_to_slide.get(source_id) or 0)
+        section_id = section_by_slide.get(slide_id)
+        if not section_id:
+            unmapped.append(issue)
+            continue
+        grouped.setdefault(section_id, []).append(issue)
+    return grouped, unmapped
+
+
+def _repair_issues_from_coverage(coverage_report: dict[str, Any]) -> list[dict[str, Any]]:
+    by_id: dict[str, dict[str, Any]] = {}
+    for item in coverage_report.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("trace_covered"):
+            continue
+        issue = _repair_issue_record(item)
+        issue["trace_missing"] = True
+        by_id[issue["id"]] = issue
+    required = coverage_report.get("required_visible_coverage")
+    missing_required = required.get("missing_items") if isinstance(required, dict) else []
+    for item in missing_required or []:
+        if not isinstance(item, dict):
+            continue
+        issue_id = str(item.get("id") or item.get("element_id") or "")
+        if not issue_id:
+            continue
+        issue = by_id.get(issue_id) or _repair_issue_record(item)
+        issue["required_visible_missing"] = True
+        by_id[issue_id] = issue
+    return sorted(by_id.values(), key=lambda item: (int(item.get("slide_id") or 0), str(item.get("id") or "")))
+
+
+def _repair_issue_record(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(item.get("id") or item.get("element_id") or ""),
+        "slide_id": int(item.get("slide_id") or 0),
+        "kind": item.get("kind"),
+        "preview": item.get("preview"),
+        "trace_missing": False,
+        "required_visible_missing": False,
+    }
+
+
+def _coverage_repair_summary(coverage_report: dict[str, Any]) -> dict[str, Any]:
+    required = coverage_report.get("required_visible_coverage")
+    required_missing = required.get("missing") if isinstance(required, dict) else 0
+    return {
+        "trace_missing": int(coverage_report.get("missing") or 0),
+        "required_visible_missing": int(required_missing or 0),
+        "coverage_ratio": coverage_report.get("coverage_ratio"),
+    }
+
+
+def _agent_result_warnings(initial_warnings: list[str], section_results: list[dict[str, Any]], repair_report: dict[str, Any]) -> list[str]:
+    warnings: list[str] = list(initial_warnings)
+    for section in section_results:
+        warnings.extend(str(item) for item in section.get("warnings") or [])
+    if repair_report.get("unmapped_issues"):
+        warnings.append(f"repair_unmapped_issues:{len(repair_report['unmapped_issues'])}")
+    if repair_report.get("failed_repairs"):
+        warnings.append(f"repair_failed_sections:{repair_report['failed_repairs']}")
+    return warnings
 
 
 def _copy_agent_assets(deck: Deck, output_root: Path, pack_dir: Path) -> tuple[dict[str, str], list[dict[str, Any]], list[str]]:
@@ -585,6 +808,52 @@ Do not write files. Do not invent image paths. Use only assets listed in the sec
 SOURCE TITLE: {manifest.get("source", {}).get("title")}
 SECTION ID: {section.get("section_id")}
 SECTION TITLE: {section.get("title")}
+
+=== skill.md ===
+{skill}
+
+=== style.md ===
+{style}
+
+=== section pack ===
+{section_markdown}
+"""
+
+
+def _build_claude_repair_prompt(
+    manifest: dict[str, Any],
+    section: dict[str, Any],
+    section_file: Path,
+    current_markdown: str,
+    missing_issues: list[dict[str, Any]],
+) -> str:
+    style = (section_file.parent.parent / "style.md").read_text(encoding="utf-8")
+    skill = (section_file.parent.parent / "skill.md").read_text(encoding="utf-8")
+    section_markdown = section_file.read_text(encoding="utf-8")
+    missing_json = json.dumps(missing_issues, ensure_ascii=False, indent=2)
+    return f"""Repair one SlideNote section after deterministic coverage checks.
+
+You must return only one JSON object with these fields:
+- "markdown": string
+- "used_asset_paths": string[]
+- "covered_source_ids": string[]
+- "warnings": string[]
+
+Return the full revised section markdown, not a diff. Do not write files.
+Fix the listed missing coverage issues while preserving the good parts of the current section.
+For required_visible_missing items, include a visible explanation in the same paragraph/list item/table/image block as the source marker.
+For trace_missing items, cover the source in prose or add an appropriate source marker.
+Use only assets listed in the section pack.
+
+SOURCE TITLE: {manifest.get("source", {}).get("title")}
+SECTION ID: {section.get("section_id")}
+SECTION TITLE: {section.get("title")}
+
+=== missing coverage issues ===
+{missing_json}
+
+=== current section markdown ===
+{current_markdown}
 
 === skill.md ===
 {skill}

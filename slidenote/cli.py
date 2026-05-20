@@ -394,6 +394,8 @@ def _add_agent_run_options(command: argparse.ArgumentParser, include_out: bool =
     command.add_argument("--backend", choices=["claude"], default="claude", help="Agent backend. First version supports official Claude Code only.")
     if include_out:
         command.add_argument("--out", type=Path, default=None, help="Output directory. Defaults to the agent pack parent directory.")
+    command.add_argument("--repair", choices=["auto", "off"], default="auto", help="Run one coverage repair pass after initial agent output. Defaults to auto.")
+    command.add_argument("--repair-rounds", type=int, default=1, help="Maximum repair rounds. First version supports 0 or 1.")
     command.add_argument("--claude-command", default="claude", help="Claude Code executable to run.")
     command.add_argument("--claude-model", default=None, help="Optional Claude Code model argument.")
     command.add_argument("--max-budget-usd", type=float, default=None, help="Optional Claude Code --max-budget-usd value.")

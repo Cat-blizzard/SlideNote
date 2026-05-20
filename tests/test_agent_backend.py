@@ -118,6 +118,261 @@ def test_agent_run_with_mock_claude_writes_notes_coverage_and_sources(tmp_path, 
     assert (run_out / asset_path).exists()
 
 
+def test_agent_run_repairs_missing_trace_coverage_by_default(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    build_out = tmp_path / "build"
+    run_out = tmp_path / "run"
+    _write_pdf(source)
+    assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
+    manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
+    source_ids = manifest["sections"][0]["source_ids"]
+    calls = []
+
+    def fake_run(args, **kwargs):
+        del kwargs
+        prompt = args[-1]
+        calls.append(prompt)
+        if "Repair one SlideNote section" in prompt:
+            markdown = "## Consensus\n\nRepaired coverage. " + f"<!-- slidenote-source: p1:{','.join(source_ids)} -->"
+            covered = source_ids
+        else:
+            markdown = "## Consensus\n\nInitial partial coverage. " + f"<!-- slidenote-source: p1:{source_ids[0]} -->"
+            covered = [source_ids[0]]
+        return subprocess.CompletedProcess(
+            ["claude"],
+            0,
+            stdout=json.dumps(
+                {
+                    "type": "result",
+                    "result": json.dumps(
+                        {
+                            "markdown": markdown,
+                            "used_asset_paths": [],
+                            "covered_source_ids": covered,
+                            "warnings": [],
+                        }
+                    ),
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("slidenote.agent_backend.subprocess.run", fake_run)
+
+    exit_code = main(["agent-run", str(build_out / "agent_pack"), "--out", str(run_out), "--quiet"])
+
+    coverage = json.loads((run_out / "coverage.json").read_text(encoding="utf-8"))
+    report = json.loads((run_out / "agent_run.json").read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert len(calls) == 2
+    assert "Repair one SlideNote section" in calls[1]
+    assert coverage["missing"] == 0
+    assert report["repair"]["attempted_sections"] == 1
+    assert report["repair"]["before"]["trace_missing"] > report["repair"]["after"]["trace_missing"]
+    assert report["sections"][0]["repair_status"] == "ok"
+
+
+def test_agent_run_repair_off_does_not_call_second_claude_pass(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    build_out = tmp_path / "build"
+    run_out = tmp_path / "run"
+    _write_pdf(source)
+    assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
+    manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
+    source_ids = manifest["sections"][0]["source_ids"]
+    calls = []
+
+    def fake_run(args, **kwargs):
+        del kwargs
+        calls.append(args[-1])
+        return subprocess.CompletedProcess(
+            ["claude"],
+            0,
+            stdout=json.dumps(
+                {
+                    "type": "result",
+                    "result": json.dumps(
+                        {
+                            "markdown": "## Consensus\n\nPartial. " + f"<!-- slidenote-source: p1:{source_ids[0]} -->",
+                            "used_asset_paths": [],
+                            "covered_source_ids": [source_ids[0]],
+                            "warnings": [],
+                        }
+                    ),
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("slidenote.agent_backend.subprocess.run", fake_run)
+
+    exit_code = main(["agent-run", str(build_out / "agent_pack"), "--out", str(run_out), "--quiet", "--repair", "off"])
+
+    coverage = json.loads((run_out / "coverage.json").read_text(encoding="utf-8"))
+    report = json.loads((run_out / "agent_run.json").read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert coverage["missing"] > 0
+    assert report["repair"]["mode"] == "off"
+    assert report["repair"]["rounds_completed"] == 0
+
+
+def test_agent_run_repair_rounds_zero_disables_repair(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    build_out = tmp_path / "build"
+    run_out = tmp_path / "run"
+    _write_pdf(source)
+    assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
+    manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
+    source_ids = manifest["sections"][0]["source_ids"]
+    calls = []
+
+    def fake_run(args, **kwargs):
+        del kwargs
+        calls.append(args[-1])
+        return subprocess.CompletedProcess(
+            ["claude"],
+            0,
+            stdout=json.dumps(
+                {
+                    "type": "result",
+                    "result": json.dumps(
+                        {
+                            "markdown": "## Consensus\n\nPartial. " + f"<!-- slidenote-source: p1:{source_ids[0]} -->",
+                            "used_asset_paths": [],
+                            "covered_source_ids": [source_ids[0]],
+                            "warnings": [],
+                        }
+                    ),
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("slidenote.agent_backend.subprocess.run", fake_run)
+
+    exit_code = main(["agent-run", str(build_out / "agent_pack"), "--out", str(run_out), "--quiet", "--repair-rounds", "0"])
+
+    report = json.loads((run_out / "agent_run.json").read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert report["repair"]["rounds_requested"] == 0
+    assert report["repair"]["attempted_sections"] == 0
+
+
+def test_agent_run_repairs_required_visible_coverage(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    build_out = tmp_path / "build"
+    run_out = tmp_path / "run"
+    _write_pdf(source)
+    assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
+    manifest_path = build_out / "agent_pack" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    required_id = manifest["sections"][0]["source_ids"][0]
+    required_item = {
+        "element_id": required_id,
+        "slide_id": 1,
+        "kind": "text",
+        "preview": "Consensus",
+        "learning_role": "core_concept",
+        "must_explain": True,
+        "confidence": 0.95,
+        "reason": "test required visible coverage",
+    }
+    manifest["content_guard"] = {
+        "required_confidence_threshold": 0.7,
+        "items": [required_item],
+        "pages": [{"slide_id": 1, "page_role": "content", "items": [required_item]}],
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    calls = []
+
+    def fake_run(args, **kwargs):
+        del kwargs
+        prompt = args[-1]
+        calls.append(prompt)
+        if "Repair one SlideNote section" in prompt:
+            markdown = f"## Consensus\n\nConsensus is the central topic. <!-- slidenote-source: p1:{required_id} -->"
+        else:
+            markdown = f"<!-- slidenote-source: p1:{required_id} -->"
+        return subprocess.CompletedProcess(
+            ["claude"],
+            0,
+            stdout=json.dumps(
+                {
+                    "type": "result",
+                    "result": json.dumps(
+                        {
+                            "markdown": markdown,
+                            "used_asset_paths": [],
+                            "covered_source_ids": [required_id],
+                            "warnings": [],
+                        }
+                    ),
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("slidenote.agent_backend.subprocess.run", fake_run)
+
+    exit_code = main(["agent-run", str(build_out / "agent_pack"), "--out", str(run_out), "--quiet"])
+
+    coverage = json.loads((run_out / "coverage.json").read_text(encoding="utf-8"))
+    report = json.loads((run_out / "agent_run.json").read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert "required_visible_missing" in calls[1]
+    assert coverage["required_visible_coverage"]["missing"] == 0
+    assert report["repair"]["before"]["required_visible_missing"] == 1
+    assert report["repair"]["after"]["required_visible_missing"] == 0
+
+
+def test_agent_run_keeps_original_section_when_repair_fails(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    build_out = tmp_path / "build"
+    run_out = tmp_path / "run"
+    _write_pdf(source)
+    assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
+    manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
+    source_ids = manifest["sections"][0]["source_ids"]
+
+    def fake_run(args, **kwargs):
+        del kwargs
+        prompt = args[-1]
+        if "Repair one SlideNote section" in prompt:
+            return subprocess.CompletedProcess(["claude"], 9, stdout="", stderr="repair auth failed")
+        return subprocess.CompletedProcess(
+            ["claude"],
+            0,
+            stdout=json.dumps(
+                {
+                    "type": "result",
+                    "result": json.dumps(
+                        {
+                            "markdown": "## Consensus\n\nOriginal partial. " + f"<!-- slidenote-source: p1:{source_ids[0]} -->",
+                            "used_asset_paths": [],
+                            "covered_source_ids": [source_ids[0]],
+                            "warnings": [],
+                        }
+                    ),
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("slidenote.agent_backend.subprocess.run", fake_run)
+
+    exit_code = main(["agent-run", str(build_out / "agent_pack"), "--out", str(run_out), "--quiet"])
+
+    notes = (run_out / "notes.md").read_text(encoding="utf-8")
+    report = json.loads((run_out / "agent_run.json").read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert "Original partial" in notes
+    assert report["repair"]["failed_repairs"] == 1
+    assert report["sections"][0]["repair_status"] == "failed"
+    assert "repair auth failed" in report["sections"][0]["repair_error"]
+
+
 def test_agent_run_invalid_claude_json_writes_diagnostics(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
     build_out = tmp_path / "build"
