@@ -15,6 +15,7 @@ from .assembly import (
     _compose_final_markdown,
     _ensure_grounded_figures,
     _postprocess_llm_markdown,
+    _repair_markdown_image_links,
     _render_page_notes_markdown,
     _resolved_context_mode,
     _select_note_contexts,
@@ -210,6 +211,7 @@ def _generate_notes_with_lecture_weave(
         section_plan=section_plan,
         source_display=source_display,
     )
+    markdown = _repair_markdown_image_links(markdown, output_root, asset_map)
     markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
     markdown, final_repair_record = _repair_required_markdown_once(
         deck=deck,
@@ -234,7 +236,9 @@ def _generate_notes_with_lecture_weave(
         record_repair(content_guard, final_repair_record)
         if isinstance(final_repair_record.get("llm"), dict):
             repair_context_records.append(final_repair_record["llm"])
+    markdown = _repair_markdown_image_links(markdown, output_root, asset_map)
     markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
+    markdown = _repair_markdown_image_links(markdown, output_root, asset_map)
     all_context_records = page_records + weave_records + repair_context_records
     usage_report = _build_usage_report(
         deck=deck,

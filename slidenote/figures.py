@@ -105,6 +105,7 @@ def enrich_deck_with_figures(
             cache_mode=cache_mode,
             runtime=runtime,
             api_key=api_key,
+            source_type=deck.source_type,
             max_output_tokens=max_output_tokens,
             temperature=temperature,
             detail=detail,
@@ -169,6 +170,7 @@ def _process_figure_target(
     cache_mode: str,
     runtime: dict[str, Any],
     api_key: str | None,
+    source_type: str,
     max_output_tokens: int,
     temperature: float | None,
     detail: str,
@@ -280,6 +282,8 @@ def _process_figure_target(
             min_confidence=min_confidence,
             min_area=min_area,
             start_index=_next_figure_index(page),
+            page=page,
+            source_type=source_type,
         )
         record["result"] = parsed
         record["crops"] = crop_records
@@ -301,6 +305,8 @@ def _crop_figures(
     min_confidence: float,
     min_area: int,
     start_index: int = 1,
+    page: SlidePage | None = None,
+    source_type: str | None = None,
 ) -> tuple[list[ImageAsset], list[dict[str, Any]], list[dict[str, Any]]]:
     crops: list[ImageAsset] = []
     crop_records: list[dict[str, Any]] = []
@@ -334,6 +340,19 @@ def _crop_figures(
                     )
                     continue
                 normalized = refinement.figure
+                text_region_reason = _structured_text_region_skip_reason(page, normalized, source_type)
+                if text_region_reason:
+                    skipped.append(
+                        {
+                            "reason": text_region_reason,
+                            "candidate": candidate,
+                            "bbox": normalized.bbox,
+                            "original_bbox": refinement.original_bbox,
+                            "crop_quality": refinement.quality,
+                            "crop_warnings": refinement.warnings,
+                        }
+                    )
+                    continue
                 reason = _skip_reason(normalized, accepted, width=width, height=height, min_confidence=min_confidence, min_area=min_area)
                 if reason:
                     skipped.append(
@@ -392,6 +411,101 @@ def _crop_figures(
     except Exception as exc:
         skipped.append({"reason": "crop_failed", "error": str(exc)})
     return crops, crop_records, skipped
+
+
+def _structured_text_region_skip_reason(page: SlidePage | None, figure: NormalizedFigure, source_type: str | None) -> str | None:
+    if page is None:
+        return None
+    crop_area = _bbox_area(figure.bbox)
+    if crop_area <= 0:
+        return None
+    text_boxes, visual_boxes = _page_layout_boxes(page, source_type)
+    if not text_boxes:
+        return None
+    text_coverage = sum(_intersection_area(figure.bbox, box) for box in text_boxes) / crop_area
+    visual_coverage = sum(_intersection_area(figure.bbox, box) for box in visual_boxes) / crop_area
+    text_like_candidate = _is_text_crop_content(figure.content_type, figure.label)
+    if text_like_candidate and text_coverage >= 0.18 and visual_coverage < 0.08:
+        return "structured_text_region"
+    if text_coverage >= 0.55 and visual_coverage < 0.12:
+        return "structured_text_region"
+    return None
+
+
+def _page_layout_boxes(page: SlidePage, source_type: str | None) -> tuple[list[list[float]], list[list[float]]]:
+    text_boxes: list[list[float]] = []
+    visual_boxes: list[list[float]] = []
+    if page.semantic_blocks:
+        for block in page.semantic_blocks:
+            bbox = block.get("bbox")
+            if not _looks_normalized_bbox(bbox):
+                continue
+            kind = str(block.get("kind") or "")
+            block_type = str(block.get("block_type") or "")
+            if kind in {"text", "table"} or block_type in {"title", "concept_label", "explanation", "cause_explanation", "fix", "code", "output"}:
+                text_boxes.append(_round_bbox([float(value) for value in bbox]))
+            elif kind == "image" or block_type in {"figure", "image"}:
+                visual_boxes.append(_round_bbox([float(value) for value in bbox]))
+        if text_boxes or visual_boxes:
+            return text_boxes, visual_boxes
+
+    for block in page.text_blocks:
+        bbox = _normalize_page_bbox(block.bbox, page, source_type)
+        if bbox:
+            text_boxes.append(bbox)
+    for table in page.tables:
+        bbox = _normalize_page_bbox(table.bbox, page, source_type)
+        if bbox:
+            text_boxes.append(bbox)
+    for image in page.images:
+        if image.ignored or image.role == "page_image":
+            continue
+        bbox = _normalize_page_bbox(image.crop_bbox or image.bbox, page, source_type)
+        if bbox:
+            visual_boxes.append(bbox)
+    return text_boxes, visual_boxes
+
+
+def _normalize_page_bbox(bbox: list[float] | None, page: SlidePage, source_type: str | None) -> list[float] | None:
+    if not bbox or len(bbox) != 4:
+        return None
+    try:
+        values = [float(value) for value in bbox]
+    except (TypeError, ValueError):
+        return None
+    if all(-0.001 <= value <= 1.001 for value in values):
+        return _round_bbox(values)
+    width = page.page_width or 0.0
+    height = page.page_height or 0.0
+    if width <= 0 or height <= 0:
+        return None
+    x1, y1, third, fourth = values
+    if source_type == "pptx":
+        x2, y2 = x1 + third, y1 + fourth
+    else:
+        x2, y2 = third, fourth
+    return _round_bbox([x1 / width, y1 / height, x2 / width, y2 / height])
+
+
+def _looks_normalized_bbox(value: object) -> bool:
+    return isinstance(value, list) and len(value) == 4 and all(isinstance(item, (int, float)) and -0.001 <= float(item) <= 1.001 for item in value)
+
+
+def _is_text_crop_content(content_type: str, label: str) -> bool:
+    text = f"{content_type} {label}".strip().lower()
+    return any(token in text for token in ("text", "title", "heading", "paragraph", "bullet", "caption", "ocr", "word", "文字", "标题", "正文"))
+
+
+def _bbox_area(bbox: list[float]) -> float:
+    return max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
+
+
+def _intersection_area(left: list[float], right: list[float]) -> float:
+    x1 = max(left[0], right[0])
+    y1 = max(left[1], right[1])
+    x2 = min(left[2], right[2])
+    y2 = min(left[3], right[3])
+    return max(0.0, x2 - x1) * max(0.0, y2 - y1)
 
 
 def _normalize_candidate(candidate: dict[str, Any], width: int, height: int) -> NormalizedFigure | None:

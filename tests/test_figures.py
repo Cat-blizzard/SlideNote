@@ -126,6 +126,41 @@ def test_figure_crop_skips_unstable_code_candidates(tmp_path):
     assert skipped[0]["crop_quality"] == "code_deferred_to_ocr"
 
 
+def test_figure_crop_skips_structured_text_regions(tmp_path):
+    screenshot = tmp_path / "screenshots" / "slide5.png"
+    screenshot.parent.mkdir()
+    Image.new("RGB", (1000, 600), "white").save(screenshot)
+    target = select_figure_targets(
+        Deck(
+            source_path="lecture.pdf",
+            source_type="pdf",
+            pages=[SlidePage(slide_id=5, page_screenshot="screenshots/slide5.png")],
+        )
+    )[0]
+    page = SlidePage(
+        slide_id=5,
+        page_width=1000,
+        page_height=600,
+        text_blocks=[TextBlock(id="s5_t1", type="heading", content="High performance", bbox=[50, 50, 500, 170])],
+    )
+
+    crops, _, skipped = _crop_figures(
+        source_path=screenshot,
+        output_root=tmp_path,
+        figures_dir=tmp_path / "figures",
+        target=target,
+        figures=[{"bbox": [0.04, 0.06, 0.56, 0.33], "label": "red title text", "content_type": "text", "confidence": 0.92}],
+        max_crops_per_page=3,
+        min_confidence=0.45,
+        min_area=40_000,
+        page=page,
+        source_type="pdf",
+    )
+
+    assert crops == []
+    assert skipped[0]["reason"] == "structured_text_region"
+
+
 def test_figure_prompt_includes_semantic_layout_context(tmp_path):
     page = SlidePage(
         slide_id=5,

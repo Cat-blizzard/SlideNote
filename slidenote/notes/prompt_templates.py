@@ -120,6 +120,11 @@ def _llm_context_prompt(
         "\u628a\u540c\u4e00 group \u91cc\u7684\u4ee3\u7801\u3001\u8fd0\u884c\u7ed3\u679c\u3001\u84dd\u6846\u89e3\u91ca\u3001\u7ea2\u5b57\u6ce8\u91ca\u548c\u7bad\u5934\u56e0\u679c\u5408\u5e76\u6210\u4e00\u6bb5\u81ea\u7136\u8bb2\u89e3\uff1b"
         "\u4e0d\u8981\u628a\u5c0f\u5757\u5206\u522b\u5199\u6210\u5b64\u7acb\u56fe\u7247\u6216 OCR \u6e05\u5355\u3002"
     )
+    text_style_rule = (
+        "\u5982\u679c text_blocks \u4e2d\u6709 style_runs/color\uff0c\u8fd9\u4e9b\u662f\u5df2\u63d0\u53d6\u51fa\u6765\u7684\u6587\u5b57\u6837\u5f0f\uff0c"
+        "\u4e0d\u8981\u628a\u5b83\u4eec\u5f53\u6210\u56fe\u7247\uff1b\u9700\u8981\u4fdd\u7559\u539f\u59cb\u5f3a\u8c03\u65f6\uff0c\u53ef\u4f7f\u7528 "
+        "`<span style=\"color:#C00000\">...</span>` \u8fd9\u7c7b Markdown \u5185\u5d4c HTML \u8868\u793a\u7ea2\u5b57\uff0c\u9ed1\u5b57\u7528\u9ed8\u8ba4\u6b63\u6587\u6837\u5f0f\u5373\u53ef\u3002"
+    )
     language_rule = _language_prompt_rule(note_language)
     term_rule = _term_policy_prompt_rule(note_language, term_policy)
     depth_rule = _note_depth_rule(note_depth)
@@ -145,6 +150,7 @@ def _llm_context_prompt(
         f"{structural_rule}\n"
         f"{table_rule}\n"
         f"{semantic_rule}\n"
+        f"{text_style_rule}\n"
         f"{language_rule}\n"
         f"{term_rule}\n"
         f"{depth_rule}\n"
@@ -225,6 +231,10 @@ def _llm_page_lecture_prompt(
         "\u82e5 current_page.semantic_layout \u7ed9\u51fa scene_type/relations\uff0c\u4f18\u5148\u6309 group \u8bb2\u77e5\u8bc6\uff1a"
         "\u4ee3\u7801\u3001\u8f93\u51fa\u6846\u3001\u56e0\u679c\u89e3\u91ca\u548c\u4fee\u590d\u63d0\u793a\u5e94\u5408\u5e76\u4e3a\u540c\u4e00\u6559\u5b66\u573a\u666f\uff0c\u4e0d\u8981\u9010\u4e2a\u5c0f\u5757\u63cf\u8ff0\u7248\u9762\u3002"
     )
+    text_style_rule = (
+        "\u82e5 current_page.text_blocks \u542b style_runs/color\uff0c\u8fd9\u662f\u5df2\u62bd\u53d6\u7684\u5f69\u8272\u6587\u5b57\uff0c\u4e0d\u662f\u56fe\u7247\uff1b"
+        "\u9700\u8981\u4fdd\u7559\u7ea2\u5b57\u5f3a\u8c03\u65f6\u7528 `<span style=\"color:#C00000\">...</span>`\uff0c\u9ed1\u5b57\u7528\u666e\u901a\u6b63\u6587\u3002"
+    )
     return (
         "\u8bf7\u53ea\u8bb2\u89e3 JSON \u4e2d\u7684 current_page \u5305\u542b\u7684\u77e5\u8bc6\u5185\u5bb9\uff0c\u4e0d\u8981\u66ff\u5176\u4ed6\u9875\u9762\u5199\u6b63\u6587\u3002\n"
         "nearby_pages \u53ea\u7528\u4e8e\u7406\u89e3\u524d\u540e\u903b\u8f91\u548c\u51cf\u5c11\u91cd\u590d\uff0c\u4e0d\u80fd\u628a\u90bb\u8fd1\u9875\u5185\u5bb9\u5f53\u4f5c current_page \u7684\u5185\u5bb9\u5c55\u5f00\u3002\n"
@@ -234,6 +244,7 @@ def _llm_page_lecture_prompt(
         f"{structural_rule}\n"
         f"{table_rule}\n"
         f"{semantic_rule}\n"
+        f"{text_style_rule}\n"
         f"{language_rule}\n"
         f"{term_rule}\n"
         f"{depth_rule}\n"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import mimetypes
 import re
 import shutil
@@ -13,6 +14,7 @@ from slidenote.image_ranking import sorted_images_by_importance
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 
 SOURCE_COMMENT_PREFIX = "slidenote-source:"
+_CSS_HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,14 +95,43 @@ def _remove_existing_image_block(markdown: str, image_path: str, image: ImageAss
     for index, line in enumerate(lines):
         if not _line_has_image_target(line, image_path):
             continue
-        remove.add(index)
-        for neighbor in (index - 1, index + 1):
-            if 0 <= neighbor < len(lines) and _is_marker_only_for_ids(lines[neighbor], source_ids):
-                remove.add(neighbor)
+        remove.update(_image_block_indexes_to_remove(lines, index, image, source_ids))
     if not remove:
         return markdown
     kept = [line for index, line in enumerate(lines) if index not in remove]
     return _collapse_blank_lines(kept).rstrip() + "\n"
+
+
+def _image_block_indexes_to_remove(lines: list[str], image_index: int, image: ImageAsset, source_ids: set[str]) -> set[int]:
+    remove = {image_index}
+    before = image_index - 1
+    while before >= 0 and not lines[before].strip():
+        remove.add(before)
+        before -= 1
+    if before >= 0 and _is_marker_only_for_ids(lines[before], source_ids):
+        remove.add(before)
+        caption = before - 1
+        while caption >= 0 and not lines[caption].strip():
+            remove.add(caption)
+            caption -= 1
+        if caption >= 0 and _is_image_caption_line(lines[caption], image):
+            remove.add(caption)
+
+    after = image_index + 1
+    while after < len(lines) and not lines[after].strip():
+        remove.add(after)
+        after += 1
+    if after < len(lines) and _is_marker_only_for_ids(lines[after], source_ids):
+        remove.add(after)
+    return remove
+
+
+def _is_image_caption_line(line: str, image: ImageAsset) -> bool:
+    stripped = line.strip()
+    caption = (image.caption or "").strip()
+    if caption and stripped in {caption, f"{caption}\u3002"}:
+        return True
+    return bool(re.fullmatch(r"\u7b2c\s*\d+\s*\u9875(?:\u56fe\u7247|\u56fe\u793a|\u622a\u56fe).*[\u3002.]?", stripped))
 
 
 def _line_has_image_target(line: str, image_path: str) -> bool:
@@ -232,6 +263,38 @@ def _ensure_sentence(text: str) -> str:
 def _quote_multiline(text: str) -> list[str]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return [f"> {line}" for line in lines]
+
+
+def _styled_block_text(block: TextBlock) -> str | None:
+    if not block.style_runs:
+        return None
+    pieces: list[str] = []
+    has_visible_style = False
+    for run in block.style_runs:
+        text = str(run.get("text") or "")
+        if not text:
+            continue
+        escaped = html.escape(text).replace("\n", "<br>")
+        css: list[str] = []
+        color = _safe_css_color(run.get("color"))
+        if color:
+            css.append(f"color:{color}")
+        if run.get("bold") is True:
+            css.append("font-weight:700")
+        if run.get("italic") is True:
+            css.append("font-style:italic")
+        if css:
+            has_visible_style = True
+            pieces.append(f'<span style="{";".join(css)}">{escaped}</span>')
+        else:
+            pieces.append(escaped)
+    rendered = "".join(pieces).strip()
+    return rendered if has_visible_style and rendered else None
+
+
+def _safe_css_color(value: object) -> str | None:
+    color = str(value or "").strip()
+    return color.upper() if _CSS_HEX_COLOR_RE.fullmatch(color) else None
 
 
 # ---------------------------------------------------------------------------
@@ -720,6 +783,63 @@ def _embed_asset(source_path: Path) -> str | None:
 
 def _asset_display_path(path: str, asset_map: dict[str, str]) -> str:
     return asset_map.get(path, path)
+
+
+def _repair_markdown_image_links(markdown: str, output_root: Path, asset_map: dict[str, str]) -> str:
+    if not markdown or not asset_map:
+        return markdown
+    exact, by_name = _asset_link_rewrite_maps(asset_map)
+
+    def replace(match: re.Match[str]) -> str:
+        alt = match.group(1)
+        target = match.group(2)
+        cleaned = _normalize_image_target(target)
+        if not cleaned or cleaned.startswith(("data:", "http://", "https://")):
+            return match.group(0)
+        replacement = exact.get(cleaned) or exact.get(cleaned.lstrip("./"))
+        if replacement and replacement != cleaned:
+            return f"![{alt}]({replacement})"
+        if _image_target_exists(cleaned, output_root):
+            return match.group(0)
+        if replacement is None:
+            replacement = by_name.get(_path_name(cleaned))
+        if not replacement:
+            return match.group(0)
+        return f"![{alt}]({replacement})"
+
+    return re.sub(r"!\[([^\]]*)]\(([^)]+)\)", replace, markdown)
+
+
+def _asset_link_rewrite_maps(asset_map: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+    exact: dict[str, str] = {}
+    by_name_values: dict[str, set[str]] = {}
+    for raw_path, display_path in asset_map.items():
+        display = _normalize_image_target(display_path)
+        if not display:
+            continue
+        for candidate in {raw_path, display_path, _normalize_image_target(raw_path), display}:
+            key = _normalize_image_target(candidate)
+            if key and not key.startswith(("data:", "http://", "https://")):
+                exact[key] = display
+                exact[key.lstrip("./")] = display
+        by_name_values.setdefault(_path_name(raw_path), set()).add(display)
+        by_name_values.setdefault(_path_name(display_path), set()).add(display)
+    by_name = {name: next(iter(values)) for name, values in by_name_values.items() if name and len(values) == 1}
+    return exact, by_name
+
+
+def _normalize_image_target(target: object) -> str:
+    return str(target or "").strip().strip("<>").replace("\\", "/")
+
+
+def _path_name(path: object) -> str:
+    return _normalize_image_target(path).rstrip("/").rsplit("/", 1)[-1]
+
+
+def _image_target_exists(target: str, output_root: Path) -> bool:
+    path = Path(target)
+    candidate = path if path.is_absolute() else output_root / path
+    return candidate.exists()
 
 
 def _should_render_screenshot(page: SlidePage, screenshot_policy: str) -> bool:

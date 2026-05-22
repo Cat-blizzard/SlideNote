@@ -209,6 +209,72 @@ def test_local_notes_bundle_assets_and_use_renderable_image_links(tmp_path):
     assert result.asset_warnings == []
 
 
+def test_local_notes_render_colored_text_runs(tmp_path):
+    deck = Deck(
+        source_path="lecture.pptx",
+        source_type="pptx",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                text_blocks=[
+                    TextBlock(
+                        id="s1_t1",
+                        type="paragraph",
+                        content="High performance and consistency",
+                        style_runs=[
+                            {"text": "High performance", "color": "#FF0000"},
+                            {"text": " and consistency"},
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+    result = generate_notes_result(deck, tmp_path)
+
+    assert '<span style="color:#FF0000">High performance</span>' in result.markdown
+    assert " and consistency" in result.markdown
+
+
+def test_llm_notes_rewrite_raw_image_path_to_bundled_asset(tmp_path, monkeypatch):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    (image_dir / "diagram.png").write_bytes(b"fake")
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Quorum")],
+                images=[ImageAsset(id="s1_img1", path="images/diagram.png", anchor_element_ids=["s1_t1"])],
+            )
+        ],
+    )
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            class Result:
+                text = "Quorum overlap.\n\n![Quorum figure](images/diagram.png) <!-- slidenote-source: p1:s1_t1 -->"
+                usage = {}
+
+            return Result()
+
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
+
+    result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct")
+
+    assert "![Quorum figure](images/diagram.png)" not in result.markdown
+    assert "![\u7b2c 1 \u9875\u56fe\u7247](notes.assets/images/diagram.png)" in result.markdown
+    assert result.markdown.count("notes.assets/images/diagram.png") == 1
+    assert "<!-- slidenote-source: p1:s1_img1 -->" in result.markdown
+    assert result.asset_warnings == []
+
+
 def test_local_notes_place_grounded_image_near_anchor(tmp_path):
     image_dir = tmp_path / "images"
     image_dir.mkdir()
