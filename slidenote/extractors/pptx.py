@@ -52,7 +52,7 @@ def extract_pptx(input_path: Path, output_root: Path) -> Deck:
                     counters["image"] += 1
                 continue
 
-            text = _shape_text(shape)
+            text, style_runs = _shape_text_and_runs(shape)
             if text:
                 block_type = _classify_shape_text(shape, text)
                 block = TextBlock(
@@ -60,6 +60,7 @@ def extract_pptx(input_path: Path, output_root: Path) -> Deck:
                     type=block_type,
                     content=text,
                     bbox=_shape_bbox(shape),
+                    style_runs=style_runs,
                 )
                 page.text_blocks.append(block)
                 counters["text"] += 1
@@ -86,17 +87,71 @@ def _iter_shapes(shapes: Iterable[object]) -> Iterable[object]:
 
 
 def _shape_text(shape: object) -> str:
+    text, _ = _shape_text_and_runs(shape)
+    return text
+
+
+def _shape_text_and_runs(shape: object) -> tuple[str, list[dict[str, object]]]:
     if not getattr(shape, "has_text_frame", False):
-        return ""
+        return "", []
     frame = shape.text_frame
     lines: list[str] = []
+    style_runs: list[dict[str, object]] = []
+    has_explicit_style = False
     for paragraph in frame.paragraphs:
-        runs = [run.text for run in paragraph.runs]
-        text = "".join(runs).strip()
+        runs = [(run.text, _run_style(run)) for run in paragraph.runs if run.text]
+        text = "".join(run_text for run_text, _ in runs).strip()
         if text:
             indent = "  " * int(getattr(paragraph, "level", 0) or 0)
+            if lines:
+                style_runs.append({"text": "\n"})
+            if indent:
+                style_runs.append({"text": indent})
             lines.append(f"{indent}{text}")
-    return "\n".join(lines).strip()
+            for run_text, style in runs:
+                if not run_text:
+                    continue
+                entry: dict[str, object] = {"text": run_text}
+                if style:
+                    entry.update(style)
+                    has_explicit_style = True
+                style_runs.append(entry)
+    return "\n".join(lines).strip(), style_runs if has_explicit_style else []
+
+
+def _run_style(run: object) -> dict[str, object]:
+    style: dict[str, object] = {}
+    color = _run_font_color(run)
+    if color:
+        style["color"] = color
+    try:
+        bold = run.font.bold
+    except Exception:
+        bold = None
+    if bold is True:
+        style["bold"] = True
+    try:
+        italic = run.font.italic
+    except Exception:
+        italic = None
+    if italic is True:
+        style["italic"] = True
+    return style
+
+
+def _run_font_color(run: object) -> str | None:
+    try:
+        rgb = run.font.color.rgb
+    except Exception:
+        return None
+    if not rgb:
+        return None
+    value = str(rgb).strip()
+    if not value:
+        return None
+    if len(value) == 6 and all(char in "0123456789abcdefABCDEF" for char in value):
+        return f"#{value.upper()}"
+    return None
 
 
 def _classify_shape_text(shape: object, text: str) -> str:

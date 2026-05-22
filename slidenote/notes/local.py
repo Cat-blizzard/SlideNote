@@ -22,6 +22,7 @@ from .assembly import (
     _should_add_context_headings,
     _should_render_screenshot,
     _source_marker,
+    _styled_block_text,
 )
 
 
@@ -172,16 +173,16 @@ def _render_text_blocks(page: SlidePage, source_display: str, note_style: str) -
 def _render_text_block(page: SlidePage, block: TextBlock, source_display: str, note_style: str) -> list[str]:
     lines: list[str] = []
     if block.type == "title":
-        content = _plain_block_text(block)
+        content = _styled_block_text(block) or _plain_block_text(block)
         lines.append(f"\u672c\u9875\u4e3b\u9898\u662f\u201c{content}\u201d\u3002")
     elif block.type == "bullet":
-        content = _rewrite_block(block)
+        content = _styled_block_text(block) or _rewrite_block(block)
         if note_style == "article":
             lines.append(content)
         else:
             lines.append(f"\u672c\u9875\u5217\u51fa\u4e86\u4ee5\u4e0b\u8981\u70b9\uff1a{content}")
     else:
-        content = _rewrite_block(block)
+        content = _styled_block_text(block) or _rewrite_block(block)
         lines.append(content)
     lines.append(_source_marker(page.slide_id, [block.id], source_display))
     lines.append("")

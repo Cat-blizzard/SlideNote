@@ -51,11 +51,23 @@ def _extract_text_blocks(page: object, page_index: int) -> list[TextBlock]:
         if block.get("type") != 0:
             continue
         lines: list[str] = []
+        style_runs: list[dict[str, object]] = []
+        has_explicit_style = False
         for line in block.get("lines", []):
-            spans = [span.get("text", "") for span in line.get("spans", [])]
-            text = "".join(spans).strip()
+            spans = [(span.get("text", ""), _span_style(span)) for span in line.get("spans", [])]
+            text = "".join(span_text for span_text, _ in spans).strip()
             if text:
+                if lines:
+                    style_runs.append({"text": "\n"})
                 lines.append(text)
+                for span_text, style in spans:
+                    if not span_text:
+                        continue
+                    entry: dict[str, object] = {"text": span_text}
+                    if style:
+                        entry.update(style)
+                        has_explicit_style = True
+                    style_runs.append(entry)
         content = "\n".join(lines).strip()
         if not content:
             continue
@@ -65,10 +77,29 @@ def _extract_text_blocks(page: object, page_index: int) -> list[TextBlock]:
                 type=_classify_text(content),
                 content=content,
                 bbox=[float(x) for x in block.get("bbox", [])] or None,
+                style_runs=style_runs if has_explicit_style else [],
             )
         )
         text_count += 1
     return blocks
+
+
+def _span_style(span: dict[str, object]) -> dict[str, object]:
+    style: dict[str, object] = {}
+    color = _span_color(span)
+    if color:
+        style["color"] = color
+    return style
+
+
+def _span_color(span: dict[str, object]) -> str | None:
+    raw = span.get("color")
+    if not isinstance(raw, int):
+        return None
+    color = max(0, min(0xFFFFFF, raw))
+    if color == 0:
+        return None
+    return f"#{color:06X}"
 
 
 def _extract_tables(page: object, page_index: int) -> list[TableBlock]:
