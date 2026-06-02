@@ -352,7 +352,7 @@ By default, `notes.md` references bundled image copies under `notes.assets/`. If
 
 Extra exports are opt-in. `--export markdown-toc` writes `notes.toc.md` without Pandoc. `--export docx,latex` uses Pandoc to write `notes.docx` and `notes.tex`; `--export pdf` first builds `notes.docx` with Pandoc and then converts it to `notes.pdf` with LibreOffice; conversion status and any Pandoc errors are written to `export_report.json`.
 
-Review/exam mode is also opt-in. It turns the finished notes into a study pack: `review.md` contains an exam-oriented checklist with importance labels, logic chains, pitfalls, and page references; `exam.md`, `exam.json`, and `exam.html` contain self-test questions. Local mode is deterministic and does not call an API:
+Review/exam mode is also opt-in. It turns the finished notes into a study pack: `review.md` contains an exam-oriented checklist with importance labels, logic chains, pitfalls, figure/table quick notes, and page references; `exam.md`, `exam.json`, and `exam.html` contain self-test questions. The build also writes `section_study_pack.json`, `exam_review_pack.json`, `final_exam.md`, `final_exam.answers.md`, and `wrong_answer_review_prompt.md`. `exam.html` can generate a wrong-answer review prompt after grading, so learners can continue from "I got this wrong" to "what concept did I miss?". Local mode is deterministic and does not call an API:
 
 ```powershell
 python -m slidenote build path\to\lecture.pdf --out outputs\lecture --vision off --review-mode local --exam-mode local
@@ -364,6 +364,8 @@ LLM/auto mode uses the same text provider settings as note generation and produc
 $env:DEEPSEEK_API_KEY="..."
 python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --provider deepseek --review-mode auto --exam-mode auto --exam-question-count 20
 ```
+
+Study-pack questions are checked locally for question quality. `quality_report.json` includes `question_quality_score`, choice-distractor quality, explanation/pitfall coverage, source-ref coverage, question type mix, and whether figure/table questions keep images near the relevant question.
 
 ## Environment Check
 
@@ -919,10 +921,12 @@ The SlideNote name, logo, and other brand assets are not licensed for standalone
 
 ## Acknowledgements
 
-- SlideNote's optional review/exam study-pack workflow was conceptually inspired by [ExamPass Assistant](https://github.com/WUBING2023/ExamPass-Assistant). SlideNote does not reuse ExamPass Assistant code, templates, prompts, or assets.
+- SlideNote's optional review/exam study-pack workflow was conceptually inspired by [WUBING2023/ExamPass-Assistant](https://github.com/WUBING2023/ExamPass-Assistant) and the extended [MIKUZ12/ExamPass-Assistant](https://github.com/MIKUZ12/ExamPass-Assistant) fork. SlideNote does not reuse their code, templates, prompts, or assets.
 - GUI development contributions from [hongzuoj-pixel](https://github.com/hongzuoj-pixel).
 - Testing contributions from [MOm0-000](https://github.com/MOm0-000).
 - The Claude-oriented agent workflow explored on the `experiment/claude-backend` branch was inspired by [koriyoshi2041](https://github.com/koriyoshi2041).
+- SlideNote's parser-adapter and document-IR roadmap is informed by prior art such as [Microsoft MarkItDown](https://github.com/microsoft/markitdown), [Docling](https://github.com/docling-project/docling), [Marker](https://github.com/datalab-to/marker), [MinerU](https://github.com/opendatalab/MinerU), and [Unstructured](https://github.com/Unstructured-IO/unstructured).
+- SlideNote's future retrieval, source tracing, and post-generation QA direction is informed by systems such as [RAGFlow](https://github.com/infiniflow/ragflow). These projects are references and inspirations, not bundled dependencies unless explicitly listed elsewhere.
 
 ## References
 

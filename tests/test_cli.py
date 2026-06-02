@@ -483,12 +483,24 @@ def test_build_can_generate_local_review_and_exam_pack(tmp_path):
     assert (out / "exam.md").exists()
     assert (out / "exam.json").exists()
     assert (out / "exam.html").exists()
+    assert (out / "section_study_pack.json").exists()
+    assert (out / "exam_review_pack.json").exists()
+    assert (out / "final_exam.md").exists()
+    assert (out / "final_exam.answers.md").exists()
+    assert (out / "wrong_answer_review_prompt.md").exists()
     assert run_summary["run"]["review_mode"] == "local"
     assert run_summary["run"]["exam_mode"] == "local"
     assert run_summary["artifacts"]["study_pack"] == "study_pack.json"
     assert run_summary["artifacts"]["review_markdown"] == "review.md"
     assert run_summary["artifacts"]["exam_html"] == "exam.html"
+    assert run_summary["artifacts"]["section_study_pack"] == "section_study_pack.json"
+    assert run_summary["artifacts"]["exam_review_pack"] == "exam_review_pack.json"
+    assert run_summary["artifacts"]["final_exam_markdown"] == "final_exam.md"
+    assert run_summary["artifacts"]["wrong_answer_review_prompt"] == "wrong_answer_review_prompt.md"
     assert study_pack["summary"]["questions_total"] == 4
+    assert study_pack["question_quality"]["overall_score"] >= 0
+    quality_report = json.loads((out / "quality_report.json").read_text(encoding="utf-8"))
+    assert quality_report["question_quality_score"] is not None
 
 
 def test_build_returns_nonzero_when_requested_pandoc_export_is_missing(tmp_path, monkeypatch):

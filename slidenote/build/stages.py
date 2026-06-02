@@ -26,7 +26,15 @@ from slidenote.notes.quality import build_note_quality_report
 from slidenote.ocr import enrich_deck_with_ocr
 from slidenote.sections import build_section_plan
 from slidenote.source_map import build_source_map
-from slidenote.study_pack import build_study_pack, render_exam_html, render_exam_markdown, render_review_markdown
+from slidenote.study_pack import (
+    build_study_pack,
+    render_exam_html,
+    render_exam_markdown,
+    render_final_exam_answers_markdown,
+    render_final_exam_markdown,
+    render_review_markdown,
+    render_wrong_answer_review_prompt,
+)
 from slidenote.table_understanding import enrich_deck_with_table_understanding
 from slidenote.visual.crop import enrich_deck_with_composite_figures, enrich_deck_with_figures
 from slidenote.visual.grounding import enrich_deck_with_figure_grounding
@@ -438,6 +446,7 @@ def _stage_quality_report(state: BuildState) -> None:
         note_context=args.note_context,
         note_strategy=args.note_strategy,
         note_depth=args.note_depth,
+        study_pack_report=state.study_pack_report,
     )
     state.artifacts.write_json("quality_report", "quality_report.json", state.quality_report)
     state.progress.finish_stage("Quality report complete")
@@ -480,6 +489,15 @@ def _stage_study_pack(state: BuildState) -> None:
             state.artifacts.write_json("exam_json", "exam.json", state.study_pack_report["exam"])
             state.artifacts.write_text("exam_markdown", "exam.md", render_exam_markdown(state.study_pack_report))
             state.artifacts.write_text("exam_html", "exam.html", render_exam_html(state.study_pack_report))
+        if state.study_pack_report.get("section_study_pack"):
+            state.artifacts.write_json("section_study_pack", "section_study_pack.json", state.study_pack_report["section_study_pack"])
+        if state.study_pack_report.get("exam_review_pack"):
+            state.artifacts.write_json("exam_review_pack", "exam_review_pack.json", state.study_pack_report["exam_review_pack"])
+        if state.study_pack_report.get("final_exam"):
+            state.artifacts.write_text("final_exam_markdown", "final_exam.md", render_final_exam_markdown(state.study_pack_report))
+            state.artifacts.write_text("final_exam_answers", "final_exam.answers.md", render_final_exam_answers_markdown(state.study_pack_report))
+        if state.study_pack_report.get("wrong_answer_review"):
+            state.artifacts.write_text("wrong_answer_review_prompt", "wrong_answer_review_prompt.md", render_wrong_answer_review_prompt(state.study_pack_report))
     state.progress.finish_stage("Review and exam pack complete")
 
 
@@ -630,8 +648,8 @@ BUILD_STAGES = (
     _stage_export_content,
     _stage_notes,
     _stage_coverage,
-    _stage_quality_report,
     _stage_study_pack,
+    _stage_quality_report,
     _stage_export,
     _stage_run_summary,
 )

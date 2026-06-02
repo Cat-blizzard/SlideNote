@@ -331,6 +331,16 @@ llm_usage.json
 coverage.json
 coverage.md
 source_map.json
+study_pack.json
+section_study_pack.json
+exam_review_pack.json
+review.md
+exam.md
+exam.json
+exam.html
+final_exam.md
+final_exam.answers.md
+wrong_answer_review_prompt.md
 export_report.json
 notes.toc.md
 notes.docx
