@@ -119,29 +119,35 @@ See [gui/README_GUI.md](gui/README_GUI.md) for details.
 
 > GUI export note: Markdown TOC export does not need extra tools. Word and LaTeX use Pandoc, while PDF is produced by converting `notes.docx` with LibreOffice; `export_report.json` records success/failure details. PDF export prefers DOCX → LibreOffice PDF instead of Markdown → LaTeX PDF, because this is much more stable for Chinese/CJK notes. LaTeX remains available as a technical source export.
 
-## Features
+## SlideNote Pipeline
 
-- Supports `.pptx` and `.pdf`; `.ppt` is handled by attempting a LibreOffice conversion to PDF.
-- Extracts titles, text blocks, tables, embedded images, and slide/page screenshots.
-- Classifies each page as native text, mixed, image-only, shape-diagram-like, or decorative to route OCR, vision, and figure cropping.
-- Ranks images by study value so vision calls and notes prefer diagrams, charts, figure crops, and high-signal visuals.
-- Builds `semantic_layout.json` with local semantic blocks/groups/relations plus optional vision refinement, so code/output pairs, callout annotations, and mixed text-image scenes stay grouped through cropping, grounding, and note writing.
-- Detects composite figures made from many embedded picture pieces, crops the whole region from the page screenshot, and keeps the pieces as hidden source refs.
-- Writes `sections.json`; with LLM enabled, `--section-detection auto` can ask the model to refine section boundaries before Lecture-Weave.
-- Writes `deck_brief.json` / `deck_brief.md` in high-quality Lecture-Weave mode: a global course map used only as navigation, not as a replacement for page-level coverage.
-- Writes `content_guard.json` with page roles, high-confidence learning items, required visible coverage, repair attempts, and residual risks.
-- Produces `content.json` as the source inventory.
-- Produces `notes.md` with hidden source markers by default, plus optional visible page references.
-- Produces `coverage.json` / `coverage.md` to flag elements that may be missing from the notes.
-- Experimental Claude Code backend can export agent packs, run stdout-only section generation/repair, and compare old/new pipelines with `agent-eval`.
-- Optional exports can generate `notes.toc.md`, `notes.docx`, `notes.pdf`, and `notes.tex`; Word/LaTeX require Pandoc. PDF requires Pandoc plus LibreOffice because it is converted from notes.docx for better CJK layout.
-- Optional review/exam mode can generate `review.md`, `exam.md`, structured `exam.json`, and an interactive `exam.html` self-test page from the generated notes.
-- Optional vision extraction writes OCR text and visual summaries back into the structured content.
-- Optional LLM generation supports OpenAI/ChatGPT, DeepSeek, Qwen, Doubao/Volcengine Ark, GLM, Gemini, and Claude.
-- Optional `lecture-weave` note strategy first generates detailed per-page explanations, then weaves them into coherent sections.
-- Configurable note language and term policy: English slides can produce Chinese or English notes, and Chinese notes can preserve key academic English terms.
-- Local caching, structured usage reports, and cost reports make token/API cost visible in CLI outputs and SlideNote Studio.
-- Optional Streamlit GUI lets users upload files, configure providers, monitor progress, preview outputs, and inspect token/cost dashboards.
+SlideNote is organized as a five-stage product pipeline. The low-level modules stay granular for caching, debugging, and partial refresh, but the user-facing workflow is meant to feel like a small set of presets instead of a bag of switches.
+
+| Stage | What it does | Current artifacts / capabilities |
+| --- | --- | --- |
+| **1. Ingest** | Deterministically parses the source file and preserves traceable material. | `.pptx` / `.pdf` input, `.ppt` via LibreOffice conversion, `content.json`, `element_ir.json`, `source_map.json`, screenshots, extracted assets, `notes.assets/`, cache and progress files. |
+| **2. Understand** | Lets local rules, OCR, vision, and LLM passes explain what the deck is about. | Page modality routing, `semantic_layout.json`, `sections.json`, `table_understanding.json`, `image_importance.json`, composite figures, figure crops, `figure_grounding.json`, optional `deck_brief.json` / `deck_brief.md`. |
+| **3. Write** | Turns structured material into readable study notes. | `notes.md`, `--note-context`, `--note-style`, `--note-profile`, `--note-depth`, Lecture-Weave page notes, section weave, optional teaching enrichment, configurable language and term policy. |
+| **4. Guard** | Checks whether the generated note is faithful and useful. | `coverage.json` / `coverage.md`, `content_guard.json`, required visible coverage repair, source markers, `quality_report.json`, review/exam study pack checks, experimental Claude repair checks. |
+| **5. Export** | Publishes the result and reports what happened. | `notes.toc.md`, `notes.docx`, `notes.pdf`, `notes.tex`, `review.md`, `exam.md`, `exam.json`, `exam.html`, `run_summary.json`, usage/cost reports, SlideNote Studio GUI, experimental Claude agent packs and `agent-eval` reports. |
+
+Parser IDs, image paths, cache keys, cost accounting, and export conversion stay deterministic. LLMs are used where semantic judgment helps most: section planning, page roles, figure/table meaning, lecture-style writing, review questions, and quality repair.
+
+## User Presets
+
+The top-level `--preset` is the product workflow selector. It maps to lower-level options such as `--note-profile`, `--note-strategy`, `--deck-brief`, and `--content-guard`, while explicit lower-level flags still override the preset.
+
+| Preset | Use it when | Behind the scenes |
+| --- | --- | --- |
+| `fast` | You want a quick draft or a low-cost local-first run. | Uses `--speed-mode fast`, direct writing, local section detection, and disables extra deck brief/content guard/teaching passes unless you explicitly re-enable them. |
+| `faithful` | You care most about traceability and coverage. | Uses faithful writing, Lecture-Weave, section context, Deck Brief auto, and Content Guard auto. |
+| `lecture` | You want detailed teacher-style notes. | Maps to `--note-profile lecture-notes`, Lecture-Weave, section context, Deck Brief auto, Content Guard auto, and teaching enrichment auto. |
+
+```powershell
+python -m slidenote build lecture.pdf --out outputs\fast --preset fast
+python -m slidenote build lecture.pdf --out outputs\faithful --preset faithful --use-llm --provider deepseek
+python -m slidenote build lecture.pdf --out outputs\lecture --preset lecture --use-llm --provider deepseek
+```
 
 ## Origin
 
@@ -456,6 +462,7 @@ Note: `--refresh-pages` currently means "bypass local cache for these slides", n
 The default output is a detailed lecture-style study note: it is organized by concepts instead of slide-by-slide translation, while keeping depth for definitions, formulas, examples, conditions, and figure/table conclusions. Source element IDs are hidden from the visible body, and images without OCR/vision summaries are inserted without noisy "image not parsed" explanations:
 
 ```powershell
+--preset auto             # Default: keep the explicit lower-level options below
 --note-style article       # Default: organize as study notes, not a summary
 --note-profile auto        # Default: keep current article + lecture-weave behavior
 --source-display hidden    # Default: store source refs in HTML comments and source_map.json
@@ -469,6 +476,8 @@ The default output is a detailed lecture-style study note: it is organized by co
 --term-policy bilingual    # Default: preserve key English academic terms in Chinese notes
 ```
 
+Use `--preset fast|faithful|lecture` for the normal product workflows. Use the lower-level options in this section when you want to tune or override a preset. `--preset` is the workflow bundle; `--note-profile` only controls the writing route inside the Write stage.
+
 `lecture-weave` is the default LLM note strategy. This mode is more expensive, but it better matches the "explain this slide" workflow: first SlideNote can build a Deck Brief for global navigation, then each page is explained in detail, and finally those page notes are woven into coherent sections. The Deck Brief is explicitly guarded so it cannot replace current-page evidence or make page explanations shorter.
 
 For quality-first teacher-style notes, use `lecture-notes`. This keeps coverage as the final QA layer, but asks the writer to reconstruct the material as a teachable section: core question, background intuition, detailed explanation, figure/formula interpretation, pitfalls, summary, and self-test questions.
@@ -478,12 +487,11 @@ python -m slidenote build lecture.pdf `
   --out outputs\lecture_notes `
   --use-llm `
   --provider deepseek `
-  --note-profile lecture-notes `
-  --note-context section `
+  --preset lecture `
   --max-output-tokens 12000
 ```
 
-`lecture-notes` automatically uses `--note-depth very-detailed` unless you explicitly choose another depth. It also enables a teaching enrichment pass after section weaving and before the final content guard repair. The build writes `quality_report.json` for local checks such as explanation depth, figure integration, self-test/pitfall presence, and mechanical page-listing risk.
+`--preset lecture` maps to `--note-profile lecture-notes`, section-context Lecture-Weave, Deck Brief auto, Content Guard auto, and teaching enrichment auto. `lecture-notes` automatically uses `--note-depth very-detailed` unless you explicitly choose another depth. The build writes `quality_report.json` for local checks such as explanation depth, figure integration, self-test/pitfall presence, and mechanical page-listing risk.
 
 `--content-guard auto` is on by default. It prevents the model from treating prompts as a compiler by giving the note prompt explicit `learning_items` and then checking whether required items appear in visible prose, not only hidden source markers. Use `--content-guard off` when you want the older behavior or need to minimize extra LLM calls.
 

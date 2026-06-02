@@ -6,6 +6,7 @@ from pathlib import Path
 
 from slidenote.build_pipeline import (
     UserFacingConfigError,
+    _apply_build_preset_defaults,
     _apply_note_profile_defaults,
     _apply_speed_mode_defaults,
     _parse_slide_ranges,
@@ -20,8 +21,10 @@ from slidenote.utils import write_json
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_argv)
+    args._explicit_options = _explicit_cli_options(raw_argv)
     try:
         if args.command == "build":
             return _build(args)
@@ -49,6 +52,12 @@ def _build_parser() -> argparse.ArgumentParser:
     build = subparsers.add_parser("build", help="Build notes from a PPTX/PPT/PDF file.")
     build.add_argument("input", type=Path, help="Input .pptx, .ppt, or .pdf file.")
     build.add_argument("--out", type=Path, default=Path("outputs") / "slidenote", help="Output directory.")
+    build.add_argument(
+        "--preset",
+        choices=["auto", "fast", "faithful", "lecture"],
+        default="auto",
+        help="Product-level build preset. fast minimizes extra passes, faithful prioritizes traceable coverage, lecture enables teacher-style notes.",
+    )
     build.add_argument(
         "--speed-mode",
         choices=["fast", "balanced", "quality", "debug"],
@@ -450,6 +459,19 @@ def _doctor(args: argparse.Namespace) -> int:
         write_json(args.json.resolve(), report)
     print(render_doctor_report(report))
     return 0
+
+
+def _explicit_cli_options(argv: list[str]) -> set[str]:
+    explicit: set[str] = set()
+    for token in argv:
+        if token == "--":
+            break
+        if not token.startswith("--") or token == "--":
+            continue
+        option = token[2:].split("=", 1)[0]
+        if option:
+            explicit.add(option.replace("-", "_"))
+    return explicit
 
 
 def _build(args: argparse.Namespace) -> int:

@@ -50,6 +50,7 @@ def _build_run_summary(
         "source_type": deck.source_type,
         "output_root": str(output_root),
         "run": {
+            "preset": getattr(args, "preset", "auto"),
             "speed_mode": args.speed_mode,
             "concurrency": max(1, args.concurrency),
             "api_concurrency": api_concurrency or _resolve_api_concurrency(args),

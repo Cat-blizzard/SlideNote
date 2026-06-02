@@ -11,6 +11,7 @@ python -m slidenote build lecture.pdf `
   --out outputs\lecture `
   --use-llm `
   --provider deepseek `
+  --preset lecture `
   --vision-provider qwen
 ```
 
@@ -18,6 +19,7 @@ python -m slidenote build lecture.pdf `
 
 ```text
 --speed-mode quality
+--preset auto
 --vision auto
 --vision-provider qwen
 --note-strategy lecture-weave
@@ -57,6 +59,7 @@ python -m slidenote build lecture.pdf `
 | --- | --- | --- | --- |
 | `input` | 必填 | `.pptx` / `.ppt` / `.pdf` | 输入课程材料。 |
 | `--out` | `outputs/slidenote` | 路径 | 输出目录。 |
+| `--preset` | `auto` | `auto` / `fast` / `faithful` / `lecture` | 用户侧工作流预设。会映射到底层写作、理解和质检选项；显式传入的底层参数优先。 |
 | `--speed-mode` | `quality` | `fast` / `balanced` / `quality` / `debug` | 成本、速度和质量预设。只填充未显式设置的限额。 |
 | `--concurrency` | `1` | 正整数 | OCR、Vision、Figure Crop 和 LLM 的并发 API 调用数。 |
 | `--global-cache-dir` | 无 | 路径 | 多个输出目录共享缓存。 |
@@ -74,6 +77,17 @@ python -m slidenote build lecture.pdf `
 | `balanced` | `4096` | `120` | `1800` | `80` | `80` | `1400` | `1200` | `low` |
 | `quality` | `7000` | `0` 不限 | `2200` | `160` | `160` | `1800` | `2000` | `high` |
 | `debug` | `4096` | `20` | `1400` | `20` | `20` | `1200` | `1000` | `low` |
+
+## Build Preset 工作流
+
+`--preset` 是用户侧产品入口；`--note-profile` 是写作阶段的风格/结构路线。普通用户优先选 preset，高级用户再用下方参数覆盖细节。
+
+| preset | 适合场景 | 默认映射 |
+| --- | --- | --- |
+| `auto` | 保持当前显式参数和默认值。 | 不额外改写配置。 |
+| `fast` | 快速草稿、低成本、本地优先。 | `--speed-mode fast`、`--note-strategy direct`、`--note-depth balanced`、`--section-detection local`、`--vision off`、`--ocr off`、`--figure-crop off`、`--deck-brief off`、`--content-guard off`、`--teaching-enrichment off`。 |
+| `faithful` | 保真覆盖和来源追踪优先。 | `--note-style faithful`、`--note-strategy lecture-weave`、`--note-context section`、`--note-depth detailed`、`--deck-brief auto`、`--content-guard auto`。 |
+| `lecture` | 教师讲义式详细笔记。 | `--note-profile lecture-notes`、`--note-strategy lecture-weave`、`--note-context section`、`--deck-brief auto`、`--content-guard auto`、`--teaching-enrichment auto`；未显式指定 `--note-depth` 时使用 `very-detailed`。 |
 
 ## LLM 与笔记生成
 
