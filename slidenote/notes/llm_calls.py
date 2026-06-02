@@ -9,8 +9,8 @@ from slidenote.models import Deck
 
 from .assembly import NoteContext, _display_path
 from .prompt_payload import _prompt_brief_hash, _prompt_deck_brief, _prompt_slide_scope
-from .prompt_templates import _llm_context_prompt, _llm_page_lecture_prompt, _llm_weave_prompt
-from .versions import NOTE_PROMPT_VERSION, PAGE_LECTURE_PROMPT_VERSION, WEAVE_PROMPT_VERSION
+from .prompt_templates import _llm_context_prompt, _llm_page_lecture_prompt, _llm_teaching_enrichment_prompt, _llm_weave_prompt
+from .versions import NOTE_PROMPT_VERSION, PAGE_LECTURE_PROMPT_VERSION, TEACHING_ENRICHMENT_PROMPT_VERSION, WEAVE_PROMPT_VERSION
 
 LLMClient = _DefaultLLMClient
 
@@ -40,6 +40,7 @@ def _generate_llm_context(
     source_display: str,
     note_context: str,
     note_style: str,
+    note_profile: str,
     note_depth: str,
     note_language: str,
     term_policy: str,
@@ -57,6 +58,7 @@ def _generate_llm_context(
         source_display=source_display,
         note_context=note_context,
         note_style=note_style,
+        note_profile=note_profile,
         note_depth=note_depth,
         note_language=note_language,
         term_policy=term_policy,
@@ -79,6 +81,7 @@ def _generate_llm_context(
         "source_display": source_display,
         "note_context": note_context,
         "note_style": note_style,
+        "note_profile": note_profile,
         "note_depth": note_depth,
         "note_language": note_language,
         "term_policy": term_policy,
@@ -143,6 +146,8 @@ def _generate_llm_context(
                 "request": {
                     "temperature": temperature,
                     "max_output_tokens": max_output_tokens,
+                    "note_profile": note_profile,
+                    "note_depth": note_depth,
                     "note_language": note_language,
                     "term_policy": term_policy,
                     "deck_brief_used": bool(prompt_brief),
@@ -189,6 +194,7 @@ def _generate_page_lecture_context(
     asset_mode: str,
     source_display: str,
     note_style: str,
+    note_profile: str,
     note_depth: str,
     note_language: str,
     term_policy: str,
@@ -208,6 +214,7 @@ def _generate_page_lecture_context(
         asset_map=asset_map,
         source_display=source_display,
         note_style=note_style,
+        note_profile=note_profile,
         note_depth=note_depth,
         note_language=note_language,
         term_policy=term_policy,
@@ -239,6 +246,7 @@ def _generate_page_lecture_context(
             "asset_mode": asset_mode,
             "source_display": source_display,
             "note_style": note_style,
+            "note_profile": note_profile,
             "note_depth": note_depth,
             "note_language": note_language,
             "term_policy": term_policy,
@@ -266,6 +274,7 @@ def _generate_weave_context(
     source_display: str,
     note_context: str,
     note_style: str,
+    note_profile: str,
     note_depth: str,
     note_language: str,
     term_policy: str,
@@ -280,6 +289,7 @@ def _generate_weave_context(
         source_display=source_display,
         note_context=note_context,
         note_style=note_style,
+        note_profile=note_profile,
         note_depth=note_depth,
         note_language=note_language,
         term_policy=term_policy,
@@ -307,6 +317,7 @@ def _generate_weave_context(
             "source_display": source_display,
             "note_context": note_context,
             "note_style": note_style,
+            "note_profile": note_profile,
             "note_depth": note_depth,
             "note_language": note_language,
             "term_policy": term_policy,
@@ -314,6 +325,77 @@ def _generate_weave_context(
             "deck_brief_used": bool(prompt_brief),
             "deck_brief_hash": _prompt_brief_hash(prompt_brief),
             "content_guard_used": bool(content_guard),
+        },
+    )
+
+def _generate_teaching_enrichment_context(
+    context: NoteContext,
+    woven_markdown: str,
+    page_markdown_by_slide: dict[int, str],
+    output_root: Path,
+    cache: LLMCache,
+    cache_mode: str,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    max_output_tokens: int,
+    temperature: float | None,
+    source_display: str,
+    note_context: str,
+    note_profile: str,
+    note_depth: str,
+    note_language: str,
+    term_policy: str,
+    deck_brief: dict[str, Any] | None = None,
+    content_guard: dict[str, Any] | None = None,
+    force_refresh: bool = False,
+) -> tuple[str, dict[str, Any]]:
+    user_prompt = _llm_teaching_enrichment_prompt(
+        context=context,
+        woven_markdown=woven_markdown,
+        page_markdown_by_slide=page_markdown_by_slide,
+        source_display=source_display,
+        note_context=note_context,
+        note_profile=note_profile,
+        note_depth=note_depth,
+        note_language=note_language,
+        term_policy=term_policy,
+        deck_brief=deck_brief,
+        content_guard=content_guard,
+    )
+    prompt_brief = _prompt_deck_brief(deck_brief, [page.slide_id for page in context.pages])
+    return _generate_cached_llm_text(
+        context=NoteContext(
+            id=f"teaching_{context.id}",
+            kind=f"teaching_{context.kind}",
+            title=context.title,
+            pages=context.pages,
+        ),
+        output_root=output_root,
+        cache=cache,
+        cache_mode=cache_mode,
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        max_output_tokens=max_output_tokens,
+        temperature=temperature,
+        user_prompt=user_prompt,
+        prompt_version=TEACHING_ENRICHMENT_PROMPT_VERSION,
+        generation_stage="teaching_enrichment",
+        force_refresh=force_refresh,
+        request_options={
+            "source_display": source_display,
+            "note_context": note_context,
+            "note_profile": note_profile,
+            "note_depth": note_depth,
+            "note_language": note_language,
+            "term_policy": term_policy,
+            "deck_brief_used": bool(prompt_brief),
+            "deck_brief_hash": _prompt_brief_hash(prompt_brief),
+            "content_guard_used": bool(content_guard),
+            "woven_markdown_hash": sha256_text(woven_markdown),
         },
     )
 

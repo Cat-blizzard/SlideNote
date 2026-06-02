@@ -14,6 +14,7 @@ from .assembly import (
     _validate_markdown_image_links,
 )
 from .local import _generate_notes_locally
+from .options import NOTE_PROFILES, TEACHING_ENRICHMENT_MODES, resolve_note_depth, should_run_teaching_enrichment
 from .orchestrator import _generate_notes_with_llm
 from .prompts import _llm_page_prompt
 
@@ -26,7 +27,7 @@ SOURCE_DISPLAY_MODES = {"hidden", "footnote", "inline"}
 NOTE_CONTEXT_MODES = {"auto", "document", "section", "page"}
 NOTE_STYLES = {"article", "faithful"}
 NOTE_STRATEGIES = {"direct", "lecture-weave"}
-NOTE_DEPTHS = {"concise", "balanced", "detailed"}
+NOTE_DEPTHS = {"concise", "balanced", "detailed", "very-detailed"}
 WEAVE_DEDUP_MODES = {"soft", "normal", "aggressive"}
 SCREENSHOT_POLICIES = {"fallback", "always", "never"}
 NOTE_LANGUAGES = {"auto", "zh", "en"}
@@ -45,6 +46,7 @@ class NoteGenerationResult:
     page_notes: dict[str, Any] | None = None
     page_notes_markdown: str | None = None
     weave_report: dict[str, Any] | None = None
+    teaching_report: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -57,9 +59,13 @@ def estimate_note_generation_steps(
     note_context: str = "section",
     note_strategy: str = "lecture-weave",
     section_plan: dict[str, Any] | None = None,
+    note_profile: str = "auto",
+    teaching_enrichment: str = "auto",
 ) -> int:
     if note_strategy == "lecture-weave":
-        return len(deck.pages) + len(_select_note_contexts(deck, note_context, section_plan=section_plan))
+        weave_contexts = _select_note_contexts(deck, note_context, section_plan=section_plan)
+        enrichment_steps = len(weave_contexts) if should_run_teaching_enrichment(note_profile, teaching_enrichment, note_strategy) else 0
+        return len(deck.pages) + len(weave_contexts) + enrichment_steps
     return len(_select_note_contexts(deck, note_context, section_plan=section_plan))
 
 
@@ -82,10 +88,12 @@ def generate_notes(
     source_display: str = "hidden",
     note_context: str = "section",
     note_style: str = "article",
+    note_profile: str = "auto",
     note_strategy: str = "lecture-weave",
-    note_depth: str = "detailed",
+    note_depth: str | None = None,
     note_language: str = "zh",
     term_policy: str = "bilingual",
+    teaching_enrichment: str = "auto",
     weave_dedup: str = "soft",
     page_neighborhood: int = 1,
     screenshot_policy: str = "fallback",
@@ -113,10 +121,12 @@ def generate_notes(
         source_display=source_display,
         note_context=note_context,
         note_style=note_style,
+        note_profile=note_profile,
         note_strategy=note_strategy,
         note_depth=note_depth,
         note_language=note_language,
         term_policy=term_policy,
+        teaching_enrichment=teaching_enrichment,
         weave_dedup=weave_dedup,
         page_neighborhood=page_neighborhood,
         screenshot_policy=screenshot_policy,
@@ -146,10 +156,12 @@ def generate_notes_result(
     source_display: str = "hidden",
     note_context: str = "section",
     note_style: str = "article",
+    note_profile: str = "auto",
     note_strategy: str = "lecture-weave",
-    note_depth: str = "detailed",
+    note_depth: str | None = None,
     note_language: str = "zh",
     term_policy: str = "bilingual",
+    teaching_enrichment: str = "auto",
     weave_dedup: str = "soft",
     page_neighborhood: int = 1,
     screenshot_policy: str = "fallback",
@@ -158,15 +170,18 @@ def generate_notes_result(
     deck_brief: dict[str, Any] | None = None,
     content_guard: dict[str, Any] | None = None,
 ) -> NoteGenerationResult:
+    resolved_note_depth = resolve_note_depth(note_profile, note_depth)
     _validate_generation_options(
         asset_mode,
         source_display,
         note_context,
         note_style,
+        note_profile,
         note_strategy,
-        note_depth,
+        resolved_note_depth,
         note_language,
         term_policy,
+        teaching_enrichment,
         weave_dedup,
         page_neighborhood,
         screenshot_policy,
@@ -193,10 +208,12 @@ def generate_notes_result(
             source_display=source_display,
             note_context=note_context,
             note_style=note_style,
+            note_profile=note_profile,
             note_strategy=note_strategy,
-            note_depth=note_depth,
+            note_depth=resolved_note_depth,
             note_language=note_language,
             term_policy=term_policy,
+            teaching_enrichment=teaching_enrichment,
             weave_dedup=weave_dedup,
             page_neighborhood=page_neighborhood,
             screenshot_policy=screenshot_policy,
@@ -232,10 +249,12 @@ def _validate_generation_options(
     source_display: str,
     note_context: str,
     note_style: str,
+    note_profile: str,
     note_strategy: str,
     note_depth: str,
     note_language: str,
     term_policy: str,
+    teaching_enrichment: str,
     weave_dedup: str,
     page_neighborhood: int,
     screenshot_policy: str,
@@ -249,6 +268,8 @@ def _validate_generation_options(
         raise ValueError(f"note_context must be one of: {', '.join(sorted(NOTE_CONTEXT_MODES))}")
     if note_style not in NOTE_STYLES:
         raise ValueError(f"note_style must be one of: {', '.join(sorted(NOTE_STYLES))}")
+    if note_profile not in NOTE_PROFILES:
+        raise ValueError(f"note_profile must be one of: {', '.join(sorted(NOTE_PROFILES))}")
     if note_strategy not in NOTE_STRATEGIES:
         raise ValueError(f"note_strategy must be one of: {', '.join(sorted(NOTE_STRATEGIES))}")
     if note_depth not in NOTE_DEPTHS:
@@ -257,6 +278,8 @@ def _validate_generation_options(
         raise ValueError(f"note_language must be one of: {', '.join(sorted(NOTE_LANGUAGES))}")
     if term_policy not in TERM_POLICIES:
         raise ValueError(f"term_policy must be one of: {', '.join(sorted(TERM_POLICIES))}")
+    if teaching_enrichment not in TEACHING_ENRICHMENT_MODES:
+        raise ValueError(f"teaching_enrichment must be one of: {', '.join(sorted(TEACHING_ENRICHMENT_MODES))}")
     if weave_dedup not in WEAVE_DEDUP_MODES:
         raise ValueError(f"weave_dedup must be one of: {', '.join(sorted(WEAVE_DEDUP_MODES))}")
     if page_neighborhood not in {0, 1, 2}:

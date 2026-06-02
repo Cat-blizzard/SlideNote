@@ -6,6 +6,7 @@ from pathlib import Path
 
 from slidenote.build_pipeline import (
     UserFacingConfigError,
+    _apply_note_profile_defaults,
     _apply_speed_mode_defaults,
     _parse_slide_ranges,
     _resolve_api_concurrency,
@@ -138,6 +139,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Article mode is the default study-note organization; faithful mode keeps closer slide order.",
     )
     build.add_argument(
+        "--note-profile",
+        choices=["auto", "lecture-notes", "study-guide"],
+        default="auto",
+        help="Higher-level writing profile. lecture-notes enables teacher-style enrichment; study-guide emphasizes review and self-test framing.",
+    )
+    build.add_argument(
         "--note-language",
         choices=["auto", "zh", "en"],
         default="zh",
@@ -157,9 +164,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     build.add_argument(
         "--note-depth",
-        choices=["concise", "balanced", "detailed"],
-        default="detailed",
-        help="Detail level for LLM note writing. detailed is the default lecture-note depth.",
+        choices=["concise", "balanced", "detailed", "very-detailed"],
+        default=None,
+        help="Detail level for LLM note writing. Defaults to detailed, or very-detailed when --note-profile lecture-notes is used.",
+    )
+    build.add_argument(
+        "--teaching-enrichment",
+        choices=["auto", "off", "force"],
+        default="auto",
+        help="Extra teacher-style enrichment pass after lecture-weave. auto runs for lecture-notes/study-guide; force runs for any LLM lecture-weave build.",
     )
     build.add_argument(
         "--weave-dedup",

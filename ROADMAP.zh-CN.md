@@ -99,7 +99,7 @@ SlideNote 必须保留：
 - 支持表格理解 `table_understanding.json`，输出 table summary / conclusion / key rows，避免只机械覆盖单元格。
 - 支持 `--note-context auto|document|section|page`，短材料整份生成，长材料按章节/分组生成，逐页模式保留为调试选项。
 - 支持 `--source-display hidden|footnote|inline`，默认隐藏正文来源但保留覆盖率和溯源。
-- 支持 `--note-style article|faithful` 和 `--note-depth detailed`，默认生成详细讲义式学习笔记。
+- 支持 `--note-style article|faithful`、`--note-profile auto|lecture-notes|study-guide` 和 `--note-depth concise|balanced|detailed|very-detailed`。默认仍保持 `auto + article + detailed + lecture-weave`；`lecture-notes` 会把目标升级为“像老师重新讲一遍”的教师讲义式路线。
 - 支持基础局部图裁剪 `--figure-crop auto|vision|off`，可用视觉模型定位整页截图中的局部图并裁剪到 `figures/`。
 - 支持组合图识别 `--composite-figures auto|off`，可把多个嵌入小图片拼成的流程图/结构图裁成整体图，并把子图片保留为隐藏来源。
 - 支持 `--screenshot-policy fallback|always|never`，默认有局部图/嵌入图时不在笔记里重复插入整页截图。
@@ -107,10 +107,11 @@ SlideNote 必须保留：
 - 支持语义版面增强：`--semantic-layout auto|local|vision` 先用本地规则生成 blocks/groups/relations，再按需用视觉模型增强代码示例、图文混排、因果注释等复杂页面。输出 `semantic_layout.json`，并复用现有 vision provider/cache/concurrency。
 - 支持章节计划输出 `sections.json`，并提供 `--section-detection auto|local|llm` 与 `--section-cache on|off|refresh`；开启章节式 LLM 笔记时可用模型辅助识别章节边界，并缓存 LLM 章节识别结果。
 - 支持 `--note-language auto|zh|en` 和 `--term-policy preserve|translate|bilingual`，可让英文课件输出中文/英文笔记，并控制专业术语保留方式。
-- 支持 Lecture-Weave 分层生成策略：`--note-strategy lecture-weave`（默认），先逐页让模型"讲课"，再按章节编织成连贯笔记。输出中间产物 `page_notes.json`、`page_notes.md` 和 `weave_report.json`。
+- 支持 Lecture-Weave 分层生成策略：`--note-strategy lecture-weave`（默认），先逐页让模型"讲课"，再按章节编织成连贯笔记。`lecture-notes` profile 下会在 weave 之后、coverage repair 之前增加 teaching enrichment pass，让正文围绕核心问题、背景直觉、图表/公式解读、易错点和自测问题展开。输出中间产物 `page_notes.json`、`page_notes.md`、`weave_report.json` 和按需生成的 `teaching_enrichment.json`。
 - 支持 Deck Brief 课程全景图：`--deck-brief auto` 可用 LLM 生成课程主题、核心问题、概念依赖关系和页面角色划分，作为后续笔记生成的全局导航。
 - 支持 Figure Grounding 图文锚定：`--figure-grounding local|vision` 将图片锚定到页面内最近的文本、表格或语义组元素，让笔记中的图片出现在相关概念附近而非堆积在页尾。输出 `figure_grounding.json`，低置信视觉结果会自动回退到本地锚点。
 - 支持 Content Guard：`--content-guard auto` 识别高置信关键学习内容，并对 required visible coverage 做一次自然修复。
+- 支持本地学习质量报告：每次 build 生成 `quality_report.json`，记录 coherence、explanation depth、example、figure integration、mechanical page listing、self-test、pitfall 和 hallucination risk 等启发式指标；后续可继续扩展 LLM quality reviewer。
 - 支持额外导出：带目录 Markdown、Word、PDF、LaTeX；Word/LaTeX 通过 Pandoc，PDF 通过 DOCX → LibreOffice 转换以改善中文/CJK 排版。
 - 支持基础 SlideNote Studio GUI 和成本报告：上传文件、配置 provider、查看进度、预览输出和 token/cost dashboard。
 

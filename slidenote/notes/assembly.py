@@ -1290,6 +1290,78 @@ def _build_weave_report(
     }
 
 
+def _build_teaching_enrichment_report(
+    deck: Deck,
+    output_root: Path,
+    note_context: str,
+    note_profile: str,
+    note_depth: str,
+    note_language: str,
+    term_policy: str,
+    contexts: list[NoteContext],
+    final_chunks: dict[str, str],
+    page_markdown_by_slide: dict[int, str],
+    teaching_records: list[dict[str, Any]],
+    deck_brief: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from slidenote.llm_cache import utc_now_iso
+    from .prompts import _prompt_deck_brief, _prompt_brief_hash
+    from .versions import TEACHING_ENRICHMENT_PROMPT_VERSION
+
+    prompt_brief = _prompt_deck_brief(deck_brief)
+    record_by_context = {record.get("context_id"): record for record in teaching_records}
+    context_entries: list[dict[str, Any]] = []
+    for context in contexts:
+        markdown = final_chunks.get(context.id, "")
+        final_tokens = _source_tokens(markdown)
+        input_tokens: set[str] = set()
+        for page in context.pages:
+            input_tokens.update(_source_tokens(page_markdown_by_slide.get(page.slide_id, "")))
+        record = record_by_context.get(f"teaching_{context.id}", {})
+        context_entries.append(
+            {
+                "context_id": context.id,
+                "context_title": context.title,
+                "slide_ids": [page.slide_id for page in context.pages],
+                "input_source_ids": sorted(input_tokens),
+                "final_source_ids": sorted(final_tokens),
+                "possibly_added_source_ids": sorted(final_tokens - input_tokens),
+                "possibly_dropped_source_ids": sorted(input_tokens - final_tokens),
+                "cache_status": record.get("cache_status"),
+                "llm_call": record.get("llm_call"),
+                "cache_file": record.get("cache_file"),
+                "input_tokens": record.get("input_tokens"),
+                "output_tokens": record.get("output_tokens"),
+                "total_tokens": record.get("total_tokens"),
+            }
+        )
+    return {
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "source_path": deck.source_path,
+        "source_type": deck.source_type,
+        "prompt_version": TEACHING_ENRICHMENT_PROMPT_VERSION,
+        "request": {
+            "note_context": note_context,
+            "note_profile": note_profile,
+            "note_depth": note_depth,
+            "note_language": note_language,
+            "term_policy": term_policy,
+            "deck_brief_used": bool(prompt_brief),
+            "deck_brief_hash": _prompt_brief_hash(prompt_brief),
+        },
+        "summary": {
+            "contexts_total": len(context_entries),
+            "llm_calls": sum(1 for record in teaching_records if record.get("llm_call")),
+            "local_cache_hits": sum(1 for record in teaching_records if record.get("cache_status") == "local_hit"),
+            "input_tokens": _sum_int(record.get("input_tokens") for record in teaching_records),
+            "output_tokens": _sum_int(record.get("output_tokens") for record in teaching_records),
+            "total_tokens": _sum_int(record.get("total_tokens") for record in teaching_records),
+        },
+        "contexts": context_entries,
+    }
+
+
 def _source_tokens(markdown: str) -> set[str]:
     return set(re.findall(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", markdown))
 

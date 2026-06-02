@@ -4,7 +4,7 @@ from pathlib import Path
 
 import fitz
 
-from slidenote.cli import _apply_speed_mode_defaults, _parse_slide_ranges, _resolve_api_concurrency, main
+from slidenote.cli import _apply_note_profile_defaults, _apply_speed_mode_defaults, _parse_slide_ranges, _resolve_api_concurrency, main
 from slidenote.notes import NoteGenerationResult
 
 
@@ -75,6 +75,7 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     table_understanding = json.loads((out / "table_understanding.json").read_text(encoding="utf-8"))
     semantic_layout = json.loads((out / "semantic_layout.json").read_text(encoding="utf-8"))
     element_ir = json.loads((out / "element_ir.json").read_text(encoding="utf-8"))
+    quality_report = json.loads((out / "quality_report.json").read_text(encoding="utf-8"))
     sections = json.loads((out / "sections.json").read_text(encoding="utf-8"))
     image_importance = json.loads((out / "image_importance.json").read_text(encoding="utf-8"))
     composite_figures = json.loads((out / "composite_figures.json").read_text(encoding="utf-8"))
@@ -87,6 +88,8 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["artifacts"]["table_understanding"] == "table_understanding.json"
     assert run_summary["artifacts"]["semantic_layout"] == "semantic_layout.json"
     assert run_summary["artifacts"]["element_ir"] == "element_ir.json"
+    assert run_summary["artifacts"]["quality_report"] == "quality_report.json"
+    assert run_summary["artifacts"]["registered"]["quality_report"] == "quality_report.json"
     assert run_summary["artifacts"]["registered"]["element_ir"] == "element_ir.json"
     assert run_summary["artifacts"]["sections"] == "sections.json"
     assert run_summary["artifacts"]["deck_brief"] is None
@@ -101,6 +104,9 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert element_ir["schema_version"] == 1
     assert "normalized_bbox" in element_ir["schema_features"]
     assert element_ir["pages"][0]["slide_id"] == 1
+    assert "mechanical_page_listing_score" in quality_report
+    assert "explanation_depth_score" in quality_report
+    assert "figure_integration_score" in quality_report
     first_element = element_ir["pages"][0]["elements"][0]
     assert first_element["role"]
     assert first_element["confidence"] >= 0.0
@@ -121,6 +127,8 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["artifacts"]["note_assets"] == "notes.assets"
     assert source_map["default_display_mode"] == "hidden"
     assert run_summary["run"]["note_language"] == "zh"
+    assert run_summary["run"]["note_profile"] == "auto"
+    assert run_summary["run"]["teaching_enrichment"] == "auto"
     assert run_summary["run"]["term_policy"] == "bilingual"
     assert run_summary["run"]["deck_brief"] == "auto"
     assert run_summary["run"]["semantic_layout"] == "auto"
@@ -258,10 +266,13 @@ def test_quality_first_defaults_are_exposed_by_parser():
     assert args.speed_mode == "quality"
     assert args.vision == "auto"
     assert args.vision_provider == "qwen"
+    _apply_note_profile_defaults(args)
     assert args.note_strategy == "lecture-weave"
     assert args.note_context == "section"
     assert args.note_style == "article"
+    assert args.note_profile == "auto"
     assert args.note_depth == "detailed"
+    assert args.teaching_enrichment == "auto"
     assert args.deck_brief == "auto"
     assert args.note_language == "zh"
     assert args.term_policy == "bilingual"
@@ -278,6 +289,27 @@ def test_quality_first_defaults_are_exposed_by_parser():
     assert args.exam_question_count == 12
     assert args.export is None
     assert args.export_toc == "auto"
+
+
+def test_lecture_notes_profile_defaults_to_very_detailed():
+    from slidenote.cli import _build_parser
+
+    args = _build_parser().parse_args(["build", "lecture.pdf", "--note-profile", "lecture-notes"])
+    _apply_note_profile_defaults(args)
+
+    assert args.note_profile == "lecture-notes"
+    assert args.note_depth == "very-detailed"
+
+
+def test_explicit_note_depth_overrides_lecture_notes_profile():
+    from slidenote.cli import _build_parser
+
+    args = _build_parser().parse_args(
+        ["build", "lecture.pdf", "--note-profile", "lecture-notes", "--note-depth", "balanced"]
+    )
+    _apply_note_profile_defaults(args)
+
+    assert args.note_depth == "balanced"
 
 
 def test_doctor_command_writes_json(tmp_path):

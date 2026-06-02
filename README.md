@@ -457,6 +457,7 @@ The default output is a detailed lecture-style study note: it is organized by co
 
 ```powershell
 --note-style article       # Default: organize as study notes, not a summary
+--note-profile auto        # Default: keep current article + lecture-weave behavior
 --source-display hidden    # Default: store source refs in HTML comments and source_map.json
 --asset-mode bundle        # Default: copy images into notes.assets/
 --note-context section     # Default: weave notes by section
@@ -470,6 +471,20 @@ The default output is a detailed lecture-style study note: it is organized by co
 
 `lecture-weave` is the default LLM note strategy. This mode is more expensive, but it better matches the "explain this slide" workflow: first SlideNote can build a Deck Brief for global navigation, then each page is explained in detail, and finally those page notes are woven into coherent sections. The Deck Brief is explicitly guarded so it cannot replace current-page evidence or make page explanations shorter.
 
+For quality-first teacher-style notes, use `lecture-notes`. This keeps coverage as the final QA layer, but asks the writer to reconstruct the material as a teachable section: core question, background intuition, detailed explanation, figure/formula interpretation, pitfalls, summary, and self-test questions.
+
+```powershell
+python -m slidenote build lecture.pdf `
+  --out outputs\lecture_notes `
+  --use-llm `
+  --provider deepseek `
+  --note-profile lecture-notes `
+  --note-context section `
+  --max-output-tokens 12000
+```
+
+`lecture-notes` automatically uses `--note-depth very-detailed` unless you explicitly choose another depth. It also enables a teaching enrichment pass after section weaving and before the final content guard repair. The build writes `quality_report.json` for local checks such as explanation depth, figure integration, self-test/pitfall presence, and mechanical page-listing risk.
+
 `--content-guard auto` is on by default. It prevents the model from treating prompts as a compiler by giving the note prompt explicit `learning_items` and then checking whether required items appear in visible prose, not only hidden source markers. Use `--content-guard off` when you want the older behavior or need to minimize extra LLM calls.
 
 Language controls are independent of the slide language. For English courseware and Chinese notes, use the default `--note-language zh --term-policy bilingual`; key terms are prompted as `中文译名（English term/acronym）` on first mention. For English notes, use `--note-language en`. Use `--term-policy preserve` when you want the source terminology kept as much as possible, or `--term-policy translate` when you prefer translated terms where safe.
@@ -482,7 +497,7 @@ python -m slidenote build lecture.pdf `
   --weave-dedup soft
 ```
 
-`lecture-weave` also writes `deck_brief.json`, `deck_brief.md`, `page_notes.json`, `page_notes.md`, and `weave_report.json`. These are intermediate/debug artifacts; `notes.md` remains the final readable note.
+`lecture-weave` also writes `deck_brief.json`, `deck_brief.md`, `page_notes.json`, `page_notes.md`, and `weave_report.json`. When teaching enrichment runs, it also writes `teaching_enrichment.json`. These are intermediate/debug artifacts; `notes.md` remains the final readable note. Every build writes `quality_report.json` as a local learning-quality check.
 
 To show compact page references in the note body:
 
