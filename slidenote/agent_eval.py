@@ -28,6 +28,9 @@ BUILD_DEFAULTS: dict[str, Any] = {
     "weave_dedup": "soft",
     "page_neighborhood": 1,
     "screenshot_policy": "fallback",
+    "review_mode": "off",
+    "exam_mode": "off",
+    "exam_question_count": 12,
 }
 
 

@@ -149,6 +149,9 @@ def _fill_agent_pack_defaults(args: argparse.Namespace) -> None:
         "weave_dedup": "soft",
         "page_neighborhood": 1,
         "screenshot_policy": "fallback",
+        "review_mode": "off",
+        "exam_mode": "off",
+        "exam_question_count": 12,
     }
     for name, value in defaults.items():
         if not hasattr(args, name):
