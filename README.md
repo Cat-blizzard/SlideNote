@@ -33,6 +33,17 @@
 
 ---
 
+## Contents
+
+- [Quick Start](#quick-start)
+- [Pipeline And Presets](#slidenote-pipeline)
+- [Install And Configure](#local-requirements)
+- [Usage, Outputs, And Study Modes](#basic-usage)
+- [Speed And Partial Refresh](#speed-progress-and-partial-refresh)
+- [Note Quality Controls](#note-rendering-options)
+- [Vision, OCR, And Figures](#image-filtering-and-source-map)
+- [License And Acknowledgements](#license)
+
 ## Quick Start
 
 ```powershell
