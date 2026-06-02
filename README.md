@@ -295,7 +295,7 @@ By default, `notes.md` references bundled image copies under `notes.assets/`. If
 
 `semantic_layout.json` records page-level semantic blocks, groups, and relations. In `--semantic-layout auto`, SlideNote starts with local rules and only asks the vision model to refine dense mixed layouts, code/output pairs, cause/fix annotations, and other low-confidence pages. The file also records the winning method, confidence, reason, warnings, and any validated vision enhancement so later stages can keep related elements together.
 
-`element_ir.json` is the normalized Page IR / Element IR consumed by prompts, coverage, and source maps. Each element has a stable `element_id`, `kind`, raw `bbox`, normalized `bbox_normalized`, primary `role`, detailed `roles`, `confidence`, `reading_order`, `coverage_state`, `evidence`, and `source_ids`, so later GUI editing, local revise flows, and block-level source tracing can read one format instead of many dataclass-specific fields. The build writes an initial IR before note generation, then refreshes it after coverage so the final file includes actual covered/missing/marker-only states.
+`element_ir.json` is the normalized Page IR / Element IR consumed by prompts, coverage, source maps, and future GUI/agent workflows. Each element has a stable `element_id`, `kind`, raw `bbox`, normalized `bbox_normalized`, primary `role`, detailed `roles`, `confidence`, `reading_order`, `coverage_state`, `evidence`, and `source_ids`, so later GUI editing, local revise flows, and block-level source tracing can read one format instead of many dataclass-specific fields. The build writes an initial IR before note generation, then refreshes it after coverage so the final file includes actual covered/missing/marker-only states.
 
 `composite_figures.json` records local detections where a diagram was assembled from multiple embedded picture pieces. SlideNote crops the whole visual region as one `composite_figure`, marks the small pieces as `composite_child`, and keeps their IDs in hidden source refs instead of inserting them separately.
 
@@ -846,7 +846,7 @@ PPT/PDF -> structured extraction -> source inventory -> note generation -> cover
 
 The local rule-based draft is only a baseline for debugging extraction and coverage. Production notes should use `--use-llm`, while coverage checks still rely on element IDs so the model cannot silently summarize away details.
 
-Internally, the build is being organized around explicit pipeline stages with named dependencies and artifacts. `run_summary.json` includes the registered artifact map, while `element_ir.json` is the shared contract for prompt payloads, coverage, and `source_map.json`. This keeps the current CLI behavior stable while making GUI features and partial-revise work less brittle.
+Internally, the build is being organized around explicit pipeline stages with named dependencies and artifacts. `run_summary.json` includes the registered artifact map, while `element_ir.json` is the shared contract for prompt payloads, coverage, `source_map.json`, and future agent-style workflows. The IR layer is split into a build context, standard field normalization, and source-map projection, keeping the CLI behavior stable while making GUI features and partial-revise work less brittle.
 
 ## License
 
