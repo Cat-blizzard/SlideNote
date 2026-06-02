@@ -332,7 +332,7 @@ outputs/lecture/
 
 `semantic_layout.json` 会记录页面级语义块、语义组和关系。在 `--semantic-layout auto` 下，SlideNote 会先跑本地规则，只在图文密集、代码+输出、原因/修复标注等低置信复杂页面上再调用视觉模型增强。文件里也会记录最终采用的方法、置信度、原因、warning，以及通过校验后的视觉增强结果，方便后续阶段把相关元素保持在一起。
 
-`element_ir.json` 是统一的 Page IR / Element IR，供 prompt、coverage 和 source map 共同读取。每个元素都有稳定的 `element_id`、`kind`、`bbox`、`roles`、`evidence` 和 `source_ids`，方便后续 GUI、局部 revise 和块级溯源使用同一种格式，而不是到处读取 dataclass 字段。
+`element_ir.json` 是统一的 Page IR / Element IR，供 prompt、coverage 和 source map 共同读取。每个元素都有稳定的 `element_id`、`kind`、原始 `bbox`、归一化 `bbox_normalized`、主 `role`、详细 `roles`、`confidence`、`reading_order`、`coverage_state`、`evidence` 和 `source_ids`，方便后续 GUI、局部 revise 和块级溯源使用同一种格式，而不是到处读取 dataclass 字段。构建流程会先在笔记生成前写入基础 IR，coverage 阶段结束后再刷新一次，让最终文件包含 covered / missing / marker-only 等实际覆盖状态。
 
 `composite_figures.json` 会记录本地识别出的组合图：当流程图、结构图由多个嵌入小图片拼成时，SlideNote 会从整页截图裁出整体 `composite_figure`，把零散小图标成 `composite_child`，并把它们的 ID 写入隐藏来源标记，而不是作为独立图片插入笔记。
 
