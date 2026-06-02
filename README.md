@@ -848,6 +848,12 @@ The local rule-based draft is only a baseline for debugging extraction and cover
 
 Internally, the build is being organized around explicit pipeline stages with named dependencies and artifacts. `run_summary.json` includes the registered artifact map, while `element_ir.json` is the shared contract for prompt payloads, coverage, and `source_map.json`. This keeps the current CLI behavior stable while making GUI features and partial-revise work less brittle.
 
+## Acknowledgements
+
+- SlideNote's optional review/exam study-pack workflow was conceptually inspired by [ExamPass Assistant](https://github.com/WUBING2023/ExamPass-Assistant). SlideNote does not reuse ExamPass Assistant code, templates, prompts, or assets.
+- GUI development contributions from [hongzuoj-pixel](https://github.com/hongzuoj-pixel).
+- Testing contributions from [MOm0-000](https://github.com/MOm0-000).
+
 ## References
 
 - [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat/create)
