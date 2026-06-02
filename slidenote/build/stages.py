@@ -22,6 +22,7 @@ from slidenote.image_ranking import rank_deck_images
 from slidenote.ir import build_deck_ir
 from slidenote.models import Deck
 from slidenote.notes import NoteGenerationResult, estimate_note_generation_steps, generate_notes_result
+from slidenote.notes.quality import build_note_quality_report
 from slidenote.ocr import enrich_deck_with_ocr
 from slidenote.sections import build_section_plan
 from slidenote.source_map import build_source_map
@@ -341,7 +342,18 @@ def _stage_export_content(state: BuildState) -> None:
 def _stage_notes(state: BuildState) -> None:
     args = state.args
     deck = _require_deck(state)
-    note_total = estimate_note_generation_steps(deck, args.note_context, args.note_strategy, section_plan=state.section_report) if args.use_llm else None
+    note_total = (
+        estimate_note_generation_steps(
+            deck,
+            args.note_context,
+            args.note_strategy,
+            section_plan=state.section_report,
+            note_profile=args.note_profile,
+            teaching_enrichment=args.teaching_enrichment,
+        )
+        if args.use_llm
+        else None
+    )
     state.progress.start_stage("notes", total=note_total, message="Generating notes")
     state.notes_result = generate_notes_result(
         deck,
@@ -362,10 +374,12 @@ def _stage_notes(state: BuildState) -> None:
         source_display=args.source_display,
         note_context=args.note_context,
         note_style=args.note_style,
+        note_profile=args.note_profile,
         note_language=args.note_language,
         term_policy=args.term_policy,
         note_strategy=args.note_strategy,
         note_depth=args.note_depth,
+        teaching_enrichment=args.teaching_enrichment,
         weave_dedup=args.weave_dedup,
         page_neighborhood=args.page_neighborhood,
         screenshot_policy=args.screenshot_policy,
@@ -386,6 +400,8 @@ def _stage_notes(state: BuildState) -> None:
         state.artifacts.write_text("page_notes_markdown", "page_notes.md", state.notes_result.page_notes_markdown)
     if state.notes_result.weave_report is not None:
         state.artifacts.write_json("weave_report", "weave_report.json", state.notes_result.weave_report)
+    if state.notes_result.teaching_report is not None:
+        state.artifacts.write_json("teaching_enrichment", "teaching_enrichment.json", state.notes_result.teaching_report)
     if not args.use_llm:
         state.progress.advance(message="Local notes generated")
     state.progress.finish_stage("Notes generated")
@@ -408,6 +424,23 @@ def _stage_coverage(state: BuildState) -> None:
     state.source_map = build_source_map(deck, state.notes_markdown, state.output_root)
     state.artifacts.write_json("source_map", "source_map.json", state.source_map)
     state.progress.finish_stage("Coverage complete")
+
+
+def _stage_quality_report(state: BuildState) -> None:
+    args = state.args
+    deck = _require_deck(state)
+    state.progress.start_stage("quality_report", message="Scoring note learning quality")
+    state.quality_report = build_note_quality_report(
+        deck=deck,
+        notes_markdown=state.notes_markdown,
+        coverage_report=state.coverage_report,
+        note_profile=args.note_profile,
+        note_context=args.note_context,
+        note_strategy=args.note_strategy,
+        note_depth=args.note_depth,
+    )
+    state.artifacts.write_json("quality_report", "quality_report.json", state.quality_report)
+    state.progress.finish_stage("Quality report complete")
 
 
 def _stage_study_pack(state: BuildState) -> None:
@@ -490,6 +523,7 @@ def _stage_run_summary(state: BuildState) -> None:
         content_guard_report=state.content_guard_report,
         llm_usage=notes_result.llm_usage,
         coverage_report=coverage_report,
+        quality_report=state.quality_report,
         source_map=source_map,
         cache_dirs=state.cache_dirs,
         refresh_slide_ids=state.refresh_slide_ids,
@@ -513,6 +547,7 @@ def _print_build_outputs(state: BuildState) -> None:
     print(f"- content:  {output_root / 'content.json'}")
     print(f"- notes:    {output_root / 'notes.md'}")
     print(f"- coverage: {output_root / 'coverage.md'}")
+    print(f"- quality:  {output_root / 'quality_report.json'}")
     print(f"- sources:  {output_root / 'source_map.json'}")
     print(f"- element IR: {output_root / 'element_ir.json'}")
     print(f"- modalities: {output_root / 'page_modalities.json'}")
@@ -595,6 +630,7 @@ BUILD_STAGES = (
     _stage_export_content,
     _stage_notes,
     _stage_coverage,
+    _stage_quality_report,
     _stage_study_pack,
     _stage_export,
     _stage_run_summary,

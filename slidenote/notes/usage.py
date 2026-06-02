@@ -25,10 +25,12 @@ def _build_usage_report(
     note_context: str,
     source_display: str,
     note_style: str,
+    note_profile: str,
     note_strategy: str,
     note_depth: str,
     note_language: str,
     term_policy: str,
+    teaching_enrichment: str,
     weave_dedup: str,
     page_neighborhood: int,
     asset_mode: str,
@@ -36,6 +38,7 @@ def _build_usage_report(
     figure_placement: str,
     page_contexts: list[dict[str, Any]] | None = None,
     weave_contexts: list[dict[str, Any]] | None = None,
+    teaching_enrichment_contexts: list[dict[str, Any]] | None = None,
     repair_contexts: list[dict[str, Any]] | None = None,
     deck_brief: dict[str, Any] | None = None,
     content_guard: dict[str, Any] | None = None,
@@ -46,9 +49,11 @@ def _build_usage_report(
         "contexts_total": len(contexts),
         "page_note_contexts": len(page_contexts or []),
         "weave_contexts": len(weave_contexts or []),
+        "teaching_enrichment_contexts": len(teaching_enrichment_contexts or []),
         "repair_contexts": len(repair_contexts or []),
         "page_note_calls": sum(1 for context in (page_contexts or []) if context.get("llm_call")),
         "weave_calls": sum(1 for context in (weave_contexts or []) if context.get("llm_call")),
+        "teaching_enrichment_calls": sum(1 for context in (teaching_enrichment_contexts or []) if context.get("llm_call")),
         "local_cache_hits": sum(1 for context in contexts if context.get("cache_status") == "local_hit"),
         "local_cache_misses": sum(1 for context in contexts if context.get("cache_status") == "miss"),
         "local_cache_refreshes": sum(1 for context in contexts if context.get("cache_status") == "refresh"),
@@ -79,8 +84,10 @@ def _build_usage_report(
             "note_context": note_context,
             "note_strategy": note_strategy,
             "note_depth": note_depth,
+            "note_profile": note_profile,
             "note_language": note_language,
             "term_policy": term_policy,
+            "teaching_enrichment": teaching_enrichment,
             "weave_dedup": weave_dedup,
             "page_neighborhood": page_neighborhood,
             "source_display": source_display,
@@ -97,6 +104,7 @@ def _build_usage_report(
         "contexts": contexts,
         "page_contexts": page_contexts or [],
         "weave_contexts": weave_contexts or [],
+        "teaching_enrichment_contexts": teaching_enrichment_contexts or [],
         "repair_contexts": repair_contexts or [],
     }
 
@@ -111,6 +119,7 @@ def _render_generation_info(usage_report: dict[str, Any]) -> list[str]:
         f"- \u6a21\u578b\uff1a{usage_report['model']}",
         f"- \u7f13\u5b58\u6a21\u5f0f\uff1a{cache_mode}",
         f"- \u7b14\u8bb0\u7b56\u7565\uff1a{usage_report['request'].get('note_strategy', 'direct')}",
+        f"- \u7b14\u8bb0 profile\uff1a{usage_report['request'].get('note_profile', 'auto')}",
         f"- \u8f93\u51fa\u8bed\u8a00\uff1a{usage_report['request'].get('note_language', 'zh')}",
         f"- \u672f\u8bed\u7b56\u7565\uff1a{usage_report['request'].get('term_policy', 'bilingual')}",
         f"- \u751f\u6210\u4e0a\u4e0b\u6587\uff1a{summary.get('contexts_total', summary['pages_total'])} \u4e2a",
@@ -122,4 +131,5 @@ def _render_generation_info(usage_report: dict[str, Any]) -> list[str]:
     if usage_report["request"].get("note_strategy") == "lecture-weave":
         lines.insert(8, f"- \u9010\u9875\u6df1\u8bb2\u8c03\u7528\uff1a{summary.get('page_note_calls', 0)} \u4e2a")
         lines.insert(9, f"- \u7ae0\u8282\u7f16\u7ec7\u8c03\u7528\uff1a{summary.get('weave_calls', 0)} \u4e2a")
+        lines.insert(10, f"- \u8bb2\u89e3\u589e\u5f3a\u8c03\u7528\uff1a{summary.get('teaching_enrichment_calls', 0)} \u4e2a")
     return lines

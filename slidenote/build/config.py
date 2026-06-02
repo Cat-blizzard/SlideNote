@@ -87,6 +87,14 @@ def _should_build_deck_brief(args: argparse.Namespace) -> bool:
     return bool(args.use_llm and args.note_strategy == "lecture-weave")
 
 
+def _apply_note_profile_defaults(args: argparse.Namespace) -> None:
+    if getattr(args, "note_depth", None) is None:
+        if getattr(args, "note_profile", "auto") == "lecture-notes":
+            args.note_depth = "very-detailed"
+        else:
+            args.note_depth = "detailed"
+
+
 def _apply_speed_mode_defaults(args: argparse.Namespace) -> None:
     presets = {
         "fast": {

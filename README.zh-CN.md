@@ -420,6 +420,7 @@ python -m slidenote build lecture.pdf `
 
 ```powershell
 --note-style article       # 默认：按知识点组织学习笔记，不等于摘要
+--note-profile auto        # 默认：保持当前 article + lecture-weave 行为
 --source-display hidden    # 默认：来源写入 HTML 隐藏注释和 source_map.json
 --asset-mode bundle        # 默认：图片复制到 notes.assets/
 --note-context section     # 默认：按章节/分组编织最终笔记
@@ -433,6 +434,20 @@ python -m slidenote build lecture.pdf `
 
 `lecture-weave` 现在是默认 LLM 笔记策略。这个模式会更耗时、更耗 token，但更接近“逐页问 AI：请你讲讲这一页”的效果：先可生成 Deck Brief 作为全局导航，再为每页生成详细讲解，最后把逐页讲解编织成连贯章节。Deck Brief 有明确约束：不能替代当前页证据，也不能让逐页讲解变短。
 
+如果想优先生成“像老师重新讲一遍”的高质量讲义，可以使用 `lecture-notes`。它不会让覆盖率决定正文形状，而是把 coverage 留作最后质检；正文会围绕本节核心问题、背景直觉、详细讲解、图表/公式解读、易错点、小结和自测问题来组织。
+
+```powershell
+python -m slidenote build lecture.pdf `
+  --out outputs\lecture_notes `
+  --use-llm `
+  --provider deepseek `
+  --note-profile lecture-notes `
+  --note-context section `
+  --max-output-tokens 12000
+```
+
+`lecture-notes` 会在用户没有显式指定深度时自动使用 `--note-depth very-detailed`，并在章节编织之后、最终 content guard repair 之前运行 teaching enrichment pass。构建会写出 `quality_report.json`，用本地启发式检查解释深度、图文整合、自测/易错点和机械逐页复述风险。
+
 `--content-guard auto` 默认开启。它会把 `learning_items` 交给笔记 prompt，并在生成后检查关键元素是否出现在可见正文中，而不是只藏在 HTML source marker 里。需要恢复旧行为或尽量减少额外 LLM 调用时，可以用 `--content-guard off`。
 
 输出语言和课件语言是分开的。英文课件想生成中文笔记时，默认的 `--note-language zh --term-policy bilingual` 会要求模型在关键术语首次出现时尽量写成“中文译名（English term/acronym）”；想要英文笔记可以用 `--note-language en`。如果希望尽量保留原始术语，用 `--term-policy preserve`；如果希望尽量翻译术语，用 `--term-policy translate`。
@@ -445,7 +460,7 @@ python -m slidenote build lecture.pdf `
   --weave-dedup soft
 ```
 
-`lecture-weave` 会额外输出 `deck_brief.json`、`deck_brief.md`、`page_notes.json`、`page_notes.md` 和 `weave_report.json`。这些是中间产物和调试报告；最终阅读仍以 `notes.md` 为准。
+`lecture-weave` 会额外输出 `deck_brief.json`、`deck_brief.md`、`page_notes.json`、`page_notes.md` 和 `weave_report.json`。这些是中间产物和调试报告；最终阅读仍以 `notes.md` 为准。teaching enrichment 运行时还会写出 `teaching_enrichment.json`；每次 build 都会写出 `quality_report.json` 作为本地学习质量检查。
 
 如果希望正文显示简洁来源页码，可以用：
 

@@ -89,7 +89,9 @@ python -m slidenote build lecture.pdf `
 | `--note-strategy` | `lecture-weave` | `direct` / `lecture-weave` | `lecture-weave` 会先逐页深讲，再章节编织。 |
 | `--note-context` | `section` | `auto` / `document` / `section` / `page` | 直接生成或编织阶段的一次上下文粒度。 |
 | `--note-style` | `article` | `article` / `faithful` | 默认按知识点组织学习笔记；`faithful` 更贴近原顺序。 |
-| `--note-depth` | `detailed` | `concise` / `balanced` / `detailed` | 默认详细讲义式讲解深度。 |
+| `--note-profile` | `auto` | `auto` / `lecture-notes` / `study-guide` | 高层写作路线；`lecture-notes` 会启用教师讲义式增强。 |
+| `--note-depth` | `detailed` | `concise` / `balanced` / `detailed` / `very-detailed` | 默认详细讲义式讲解深度；`lecture-notes` 未显式指定时使用 `very-detailed`。 |
+| `--teaching-enrichment` | `auto` | `auto` / `off` / `force` | 是否在 section weave 后增加“教学重构”增强 pass；`auto` 只随 `lecture-notes` / `study-guide` 启用。 |
 | `--deck-brief` | `auto` | `auto` / `off` / `force` | 是否在笔记生成前先生成全局课程脉络。`auto` 只在 `--use-llm --note-strategy lecture-weave` 时运行。 |
 | `--content-guard` | `auto` | `auto` / `off` | 学习内容门禁。`auto` 会生成 `content_guard.json`；开启 `--use-llm` 时调用文本模型判断高置信关键内容，未开启时只做本地启发式审查。 |
 | `--note-language` | `zh` | `auto` / `zh` / `en` | 笔记输出语言；可让英文课件生成中文笔记。 |
@@ -113,6 +115,16 @@ lecture-weave
 ```
 
 先对每页做详细讲解，再把逐页讲解编织成章节笔记。质量更好，但调用次数和 token 成本更高。
+
+### `note-profile`
+
+| 值 | 含义 |
+| --- | --- |
+| `auto` | 默认。保持当前 `article + detailed + lecture-weave` 路线，不额外增加 teaching enrichment。 |
+| `lecture-notes` | 教师讲义式路线。默认使用 `very-detailed`，并在 weave 之后、coverage repair 之前运行 teaching enrichment，让正文更像老师重新讲一遍。 |
+| `study-guide` | 复习导向路线。当前复用 teaching enrichment 的结构约束，后续会继续强化考点、例题和自测。 |
+
+`lecture-notes` 不会让 coverage 决定正文形状；coverage 仍然只负责最后质检和补漏。teaching enrichment 的补充内容必须是通用背景、直观解释、例子或类比，不得新增课件没有依据的具体数字、实验结果或结论。
 
 ### `note-language` 与 `term-policy`
 
@@ -299,6 +311,8 @@ notes.md
 page_notes.md
 page_notes.json
 weave_report.json
+teaching_enrichment.json
+quality_report.json
 llm_usage.json
 coverage.json
 coverage.md

@@ -15,7 +15,13 @@ from .prompt_payload import (
     _prompt_deck_brief,
     _prompt_slide_scope,
 )
-from .prompt_rules import _language_prompt_rule, _note_depth_rule, _source_prompt_rule, _term_policy_prompt_rule
+from .prompt_rules import (
+    _language_prompt_rule,
+    _note_depth_rule,
+    _note_profile_prompt_rule,
+    _source_prompt_rule,
+    _term_policy_prompt_rule,
+)
 
 
 def _llm_page_prompt(page: SlidePage, supports_image_input: bool = False) -> str:
@@ -27,6 +33,7 @@ def _llm_page_prompt(page: SlidePage, supports_image_input: bool = False) -> str
         source_display="hidden",
         note_context="page",
         note_style="article",
+        note_profile="auto",
         note_depth="detailed",
         note_language="zh",
         term_policy="bilingual",
@@ -51,6 +58,7 @@ def _llm_context_prompt(
     source_type: str,
     deck_brief: dict[str, Any] | None = None,
     content_guard: dict[str, Any] | None = None,
+    note_profile: str = "auto",
 ) -> str:
     prompt_brief = _prompt_deck_brief(deck_brief, [page.slide_id for page in context.pages])
     payload = {
@@ -127,6 +135,7 @@ def _llm_context_prompt(
     )
     language_rule = _language_prompt_rule(note_language)
     term_rule = _term_policy_prompt_rule(note_language, term_policy)
+    profile_rule = _note_profile_prompt_rule(note_profile)
     depth_rule = _note_depth_rule(note_depth)
     image_rule = (
         "\u56fe\u7247\u5fc5\u987b\u7528\u771f\u6b63\u7684 Markdown \u56fe\u7247\u8bed\u6cd5\u63d2\u5165\uff0c\u4e0d\u80fd\u653e\u8fdb\u53cd\u5f15\u53f7\u3002"
@@ -145,6 +154,7 @@ def _llm_context_prompt(
         "\u8bf7\u628a\u4e0b\u9762\u7684\u8bfe\u7a0b\u6750\u6599 JSON \u6539\u5199\u6210\u53ef\u4ee5\u76f4\u63a5\u9605\u8bfb\u7684 Markdown \u7b14\u8bb0\u3002\n"
         "If deck_brief is present, use it only as a global navigation map; it must not replace page evidence.\n"
         f"{context_rule}\n"
+        f"{profile_rule + chr(10) if profile_rule else ''}"
         f"{style_rule}\n"
         f"{style_depth_rule}\n"
         f"{structural_rule}\n"
@@ -183,6 +193,7 @@ def _llm_page_lecture_prompt(
     source_type: str,
     deck_brief: dict[str, Any] | None = None,
     content_guard: dict[str, Any] | None = None,
+    note_profile: str = "auto",
 ) -> str:
     page = context.pages[0]
     prompt_brief = _prompt_deck_brief(deck_brief, _prompt_slide_scope(deck, page.slide_id, page_neighborhood))
@@ -203,6 +214,7 @@ def _llm_page_lecture_prompt(
     if prompt_brief:
         payload["deck_brief"] = prompt_brief
     depth_rule = _note_depth_rule(note_depth)
+    profile_rule = _note_profile_prompt_rule(note_profile)
     source_rule = _source_prompt_rule(source_display)
     language_rule = _language_prompt_rule(note_language)
     term_rule = _term_policy_prompt_rule(note_language, term_policy)
@@ -239,6 +251,7 @@ def _llm_page_lecture_prompt(
         "\u8bf7\u53ea\u8bb2\u89e3 JSON \u4e2d\u7684 current_page \u5305\u542b\u7684\u77e5\u8bc6\u5185\u5bb9\uff0c\u4e0d\u8981\u66ff\u5176\u4ed6\u9875\u9762\u5199\u6b63\u6587\u3002\n"
         "nearby_pages \u53ea\u7528\u4e8e\u7406\u89e3\u524d\u540e\u903b\u8f91\u548c\u51cf\u5c11\u91cd\u590d\uff0c\u4e0d\u80fd\u628a\u90bb\u8fd1\u9875\u5185\u5bb9\u5f53\u4f5c current_page \u7684\u5185\u5bb9\u5c55\u5f00\u3002\n"
         "If deck_brief is present, it is only a navigation map: current_page is the only source for the body; do not omit current_page elements because of the brief; do not pull later-page content into this page.\n"
+        f"{profile_rule + chr(10) if profile_rule else ''}"
         f"{style_rule}\n"
         f"{style_depth_rule}\n"
         f"{structural_rule}\n"
@@ -274,6 +287,7 @@ def _llm_weave_prompt(
     weave_dedup: str,
     deck_brief: dict[str, Any] | None = None,
     content_guard: dict[str, Any] | None = None,
+    note_profile: str = "auto",
 ) -> str:
     page_notes = [
         {
@@ -302,6 +316,7 @@ def _llm_weave_prompt(
         }
     source_rule = _source_prompt_rule(source_display)
     depth_rule = _note_depth_rule(note_depth)
+    profile_rule = _note_profile_prompt_rule(note_profile)
     language_rule = _language_prompt_rule(note_language)
     term_rule = _term_policy_prompt_rule(note_language, term_policy)
     style_rule = (
@@ -318,6 +333,7 @@ def _llm_weave_prompt(
         "\u8bf7\u628a\u4e0b\u9762\u8fd9\u4e9b\u9010\u9875\u8bb2\u89e3\u7f16\u7ec7\u6210\u4e00\u4e2a\u8fde\u8d2f\u7684 Markdown \u5b66\u4e60\u5c0f\u8282\u3002\n"
         "\u6ce8\u610f\uff1a\u4f60\u7684\u4efb\u52a1\u662f\u63d0\u70bc\u77e5\u8bc6\u7ebf\u7d22\u3001\u53bb\u91cd\u3001\u8865\u8fc7\u6e21\uff0c\u800c\u4e0d\u662f\u628a page_notes \u7684\u9010\u9875\u7ed3\u6784\u539f\u6837\u62fc\u63a5\uff0c\u4e5f\u4e0d\u662f\u91cd\u65b0\u6982\u62ec PPT\u3002\n"
         "If deck_brief is present, use it only for transitions and global structure; never compress page_notes into a deck_brief summary.\n"
+        f"{profile_rule + chr(10) if profile_rule else ''}"
         f"{style_rule}\n"
         f"{language_rule}\n"
         f"{term_rule}\n"
@@ -330,6 +346,69 @@ def _llm_weave_prompt(
         f"4. {source_rule}\n"
         "5. \u56fe\u7247 alt \u6587\u672c\u4e0d\u80fd\u4e3a\u7a7a\uff1b\u4e25\u7981\u8f93\u51fa\u201c\u597d\u7684\uff0c\u8fd9\u662f\u201d\u201c\u6839\u636e JSON\u201d\u201c\u7b14\u8bb0\u5df2\u4e25\u683c\u9075\u5faa\u201d\u201c\u65e0\u6cd5\u89c6\u89c9\u89e3\u6790\u201d\u7b49\u5143\u53d9\u8ff0\u3002\n"
         "6. \u4e25\u7981\u4f7f\u7528\u201c\u8fd9\u4e00\u9875\u201d\u201c\u672c\u9875\u201d\u201c\u5e7b\u706f\u7247\u201d\u201c\u4e0a\u4e00\u9875\u201d\u201c\u4e0b\u4e00\u9875\u201d\u201c\u6b64\u9875\u201d\u7b49 PPT \u9875\u9762\u7ed3\u6784\u8868\u8ff0\uff1b\u76f4\u63a5\u8bb2\u77e5\u8bc6\uff0c\u81ea\u7136\u8fc7\u6e21\u3002\n\n"
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    )
+
+
+def _llm_teaching_enrichment_prompt(
+    context,
+    woven_markdown: str,
+    page_markdown_by_slide: dict[int, str],
+    source_display: str,
+    note_context: str,
+    note_profile: str,
+    note_depth: str,
+    note_language: str,
+    term_policy: str,
+    deck_brief: dict[str, Any] | None = None,
+    content_guard: dict[str, Any] | None = None,
+) -> str:
+    page_notes = [
+        {
+            "slide_id": page.slide_id,
+            "title": page.title,
+            "page_note_markdown": page_markdown_by_slide.get(page.slide_id, ""),
+            "learning_items": learning_items_for_page(content_guard, page.slide_id) if content_guard else [],
+        }
+        for page in context.pages
+    ]
+    payload = {
+        "task": "teaching_enrichment",
+        "context_id": context.id,
+        "context_kind": note_context,
+        "context_title": context.title,
+        "slide_ids": [page.slide_id for page in context.pages],
+        "current_markdown": woven_markdown,
+        "page_notes": page_notes,
+    }
+    prompt_brief = _prompt_deck_brief(deck_brief, [page.slide_id for page in context.pages])
+    if prompt_brief:
+        payload["deck_brief"] = prompt_brief
+    if content_guard:
+        payload["content_guard"] = {
+            "required_confidence_threshold": content_guard.get("required_confidence_threshold"),
+            "rule": "Keep required learning_items visible; this pass enriches teaching quality and must not delete required explanations.",
+        }
+    source_rule = _source_prompt_rule(source_display)
+    language_rule = _language_prompt_rule(note_language)
+    term_rule = _term_policy_prompt_rule(note_language, term_policy)
+    depth_rule = _note_depth_rule(note_depth)
+    profile_rule = _note_profile_prompt_rule(note_profile)
+    return (
+        "\u8bf7\u628a current_markdown \u4fee\u8ba2\u6210\u66f4\u50cf\u8001\u5e08\u91cd\u65b0\u8bb2\u4e00\u904d\u7684 Markdown \u8bb2\u4e49\u5c0f\u8282\u3002\n"
+        "\u4f60\u4e0d\u662f\u5728\u603b\u7ed3\u5e7b\u706f\u7247\uff0c\u800c\u662f\u5728\u505a\u6559\u5b66\u91cd\u6784\uff1a\u5148\u7406\u89e3\u672c\u8282\u5171\u540c\u89e3\u51b3\u4ec0\u4e48\u95ee\u9898\uff0c\u518d\u7528\u5b66\u751f\u80fd\u8ddf\u4e0a\u7684\u987a\u5e8f\u8bb2\u6e05\u695a\u3002\n"
+        f"{profile_rule + chr(10) if profile_rule else ''}"
+        f"{language_rule}\n"
+        f"{term_rule}\n"
+        f"{depth_rule}\n"
+        "\u53ef\u4f7f\u7528\u7684\u8bb2\u4e49\u7ed3\u6784\uff1a### \u672c\u8282\u6838\u5fc3\u95ee\u9898\u3001### \u80cc\u666f\u4e0e\u76f4\u89c9\u3001### \u8be6\u7ec6\u8bb2\u89e3\u3001### \u56fe\u8868/\u516c\u5f0f\u89e3\u8bfb\u3001### \u6613\u9519\u70b9\u3001### \u672c\u8282\u5c0f\u7ed3\u3001### \u81ea\u6d4b\u95ee\u9898\u3002\u5982\u67d0\u9879\u786e\u5b9e\u4e0d\u9002\u7528\uff0c\u53ef\u5408\u5e76\u5230\u76f8\u90bb\u5c0f\u8282\u3002\n"
+        "\u786c\u6027\u8981\u6c42\uff1a\n"
+        "1. \u4fdd\u7559 current_markdown \u4e2d\u5df2\u6709\u7684 Markdown \u56fe\u7247\u94fe\u63a5\u548c HTML source marker\uff1b\u65b0\u589e\u6216\u79fb\u52a8\u6bb5\u843d\u65f6\u4e5f\u8981\u4fdd\u7559\u5bf9\u5e94 source marker\u3002\n"
+        "2. \u4e0d\u8981\u628a\u7ae0\u8282\u6539\u56de\u201c\u7b2c 1 \u9875\u8bb2 A\u3001\u7b2c 2 \u9875\u8bb2 B\u201d\u7684\u6e05\u5355\uff1bcoverage \u53ea\u662f\u6700\u540e\u8d28\u68c0\uff0c\u4e0d\u662f\u6b63\u6587\u6a21\u677f\u3002\n"
+        "3. \u5bf9\u6838\u5fc3\u6982\u5ff5\uff0c\u89e3\u91ca\u5b83\u662f\u4ec0\u4e48\u3001\u4e3a\u4ec0\u4e48\u91cd\u8981\u3001\u5982\u4f55\u8fd0\u4f5c\u3001\u4e0e\u524d\u540e\u5185\u5bb9\u7684\u5173\u7cfb\u3002\n"
+        "4. \u5bf9\u516c\u5f0f\u3001\u56fe\u8868\u3001\u6d41\u7a0b\u56fe\u3001\u622a\u56fe\uff0c\u4e0d\u8981\u53ea\u5199\u201c\u56fe\u4e2d\u5c55\u793a\u4e86\u201d\uff0c\u8981\u8bf4\u660e\u5b83\u652f\u6491\u4e86\u54ea\u4e2a\u6982\u5ff5\u6216\u63a8\u7406\u6b65\u9aa4\u3002\n"
+        "5. \u53ef\u4ee5\u8865\u5145\u5fc5\u8981\u7684\u901a\u7528\u80cc\u666f\u3001\u76f4\u89c9\u89e3\u91ca\u3001\u7b80\u77ed\u4f8b\u5b50\u6216\u7c7b\u6bd4\uff0c\u4f46\u4e0d\u5f97\u65b0\u589e\u8bfe\u4ef6\u6ca1\u6709\u4f9d\u636e\u7684\u5177\u4f53\u6570\u5b57\u3001\u5b9e\u9a8c\u7ed3\u679c\u3001\u4f5c\u8005\u89c2\u70b9\u6216\u7ed3\u8bba\u3002\u901a\u7528\u80cc\u666f\u8981\u7528\u201c\u4e3a\u4e86\u5e2e\u52a9\u7406\u89e3\u201d\u8fd9\u7c7b\u8bed\u6c14\u6807\u660e\u3002\n"
+        f"6. {source_rule}\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 

@@ -11,6 +11,7 @@ from slidenote.models import Deck
 from .assembly import (
     NoteContext,
     _build_page_notes_report,
+    _build_teaching_enrichment_report,
     _build_weave_report,
     _compose_final_markdown,
     _ensure_grounded_figures,
@@ -20,7 +21,8 @@ from .assembly import (
     _resolved_context_mode,
     _select_note_contexts,
 )
-from .llm_calls import _generate_page_lecture_context, _generate_weave_context
+from .llm_calls import _generate_page_lecture_context, _generate_teaching_enrichment_context, _generate_weave_context
+from .options import should_run_teaching_enrichment
 from .prompt_payload import _section_title_by_slide
 from .repair import _repair_required_markdown_once
 from .usage import _build_usage_report
@@ -46,9 +48,11 @@ def _generate_notes_with_lecture_weave(
     source_display: str,
     note_context: str,
     note_style: str,
+    note_profile: str,
     note_depth: str,
     note_language: str,
     term_policy: str,
+    teaching_enrichment: str,
     weave_dedup: str,
     page_neighborhood: int,
     screenshot_policy: str,
@@ -89,6 +93,7 @@ def _generate_notes_with_lecture_weave(
             asset_mode=asset_mode,
             source_display=source_display,
             note_style=note_style,
+            note_profile=note_profile,
             note_depth=note_depth,
             note_language=note_language,
             term_policy=term_policy,
@@ -173,6 +178,7 @@ def _generate_notes_with_lecture_weave(
             source_display=source_display,
             note_context=resolved_note_context,
             note_style=note_style,
+            note_profile=note_profile,
             note_depth=note_depth,
             note_language=note_language,
             term_policy=term_policy,
@@ -203,6 +209,57 @@ def _generate_notes_with_lecture_weave(
         content, record = weave_results[context.id]
         final_chunks[context.id] = content
         weave_records.append(record)
+
+    teaching_records: list[dict[str, Any]] = []
+    teaching_report: dict[str, Any] | None = None
+    if should_run_teaching_enrichment(note_profile, teaching_enrichment, "lecture-weave"):
+        teaching_results: dict[str, tuple[str, dict[str, Any]]] = {}
+
+        def process_teaching(context: NoteContext) -> tuple[str, str, dict[str, Any]]:
+            content, record = _generate_teaching_enrichment_context(
+                context=context,
+                woven_markdown=final_chunks.get(context.id, ""),
+                page_markdown_by_slide=page_markdown_by_slide,
+                output_root=output_root,
+                cache=cache,
+                cache_mode=cache_mode,
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+                force_refresh=bool(refresh_ids.intersection({page.slide_id for page in context.pages})),
+                source_display=source_display,
+                note_context=resolved_note_context,
+                note_profile=note_profile,
+                note_depth=note_depth,
+                note_language=note_language,
+                term_policy=term_policy,
+                deck_brief=deck_brief,
+                content_guard=content_guard,
+            )
+            return context.id, _postprocess_llm_markdown(content, source_display=source_display), record
+
+        if workers == 1:
+            for context in weave_contexts:
+                context_id, content, record = process_teaching(context)
+                teaching_results[context_id] = (content, record)
+                if progress_callback:
+                    progress_callback(record)
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(process_teaching, context): context for context in weave_contexts}
+                for future in as_completed(futures):
+                    context_id, content, record = future.result()
+                    teaching_results[context_id] = (content, record)
+                    if progress_callback:
+                        progress_callback(record)
+
+        for context in weave_contexts:
+            content, record = teaching_results[context.id]
+            final_chunks[context.id] = content
+            teaching_records.append(record)
 
     markdown = _compose_final_markdown(
         deck=deck,
@@ -239,7 +296,7 @@ def _generate_notes_with_lecture_weave(
     markdown = _repair_markdown_image_links(markdown, output_root, asset_map)
     markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
     markdown = _repair_markdown_image_links(markdown, output_root, asset_map)
-    all_context_records = page_records + weave_records + repair_context_records
+    all_context_records = page_records + weave_records + teaching_records + repair_context_records
     usage_report = _build_usage_report(
         deck=deck,
         provider=provider,
@@ -254,10 +311,12 @@ def _generate_notes_with_lecture_weave(
         note_context=resolved_note_context,
         source_display=source_display,
         note_style=note_style,
+        note_profile=note_profile,
         note_strategy="lecture-weave",
         note_depth=note_depth,
         note_language=note_language,
         term_policy=term_policy,
+        teaching_enrichment=teaching_enrichment,
         weave_dedup=weave_dedup,
         page_neighborhood=page_neighborhood,
         asset_mode=asset_mode,
@@ -265,6 +324,7 @@ def _generate_notes_with_lecture_weave(
         figure_placement=figure_placement,
         page_contexts=page_records,
         weave_contexts=weave_records,
+        teaching_enrichment_contexts=teaching_records,
         repair_contexts=repair_context_records,
         deck_brief=deck_brief,
         content_guard=content_guard,
@@ -299,10 +359,26 @@ def _generate_notes_with_lecture_weave(
         weave_records=weave_records,
         deck_brief=deck_brief,
     )
+    if teaching_records:
+        teaching_report = _build_teaching_enrichment_report(
+            deck=deck,
+            output_root=output_root,
+            note_context=resolved_note_context,
+            note_profile=note_profile,
+            note_depth=note_depth,
+            note_language=note_language,
+            term_policy=term_policy,
+            contexts=weave_contexts,
+            final_chunks=final_chunks,
+            page_markdown_by_slide=page_markdown_by_slide,
+            teaching_records=teaching_records,
+            deck_brief=deck_brief,
+        )
     return NoteGenerationResult(
         markdown=markdown,
         llm_usage=usage_report,
         page_notes=page_notes,
         page_notes_markdown=_render_page_notes_markdown(deck, page_notes),
         weave_report=weave_report,
+        teaching_report=teaching_report,
     )

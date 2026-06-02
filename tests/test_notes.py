@@ -639,6 +639,92 @@ def test_article_prompt_prefers_study_notes_over_slide_translation():
     assert "都要进入讲解" not in prompt
 
 
+def test_lecture_notes_profile_prompt_requests_teaching_reconstruction():
+    from slidenote.notes.assembly import NoteContext
+    from slidenote.notes.prompts import _llm_page_lecture_prompt
+
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                title="Quorum",
+                text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Quorum requires intersecting read and write sets.")],
+            )
+        ],
+    )
+    context = NoteContext(id="p1", kind="page_note", title="Quorum", pages=deck.pages)
+
+    prompt = _llm_page_lecture_prompt(
+        deck=deck,
+        context=context,
+        supports_image_input=False,
+        asset_map={},
+        source_display="hidden",
+        note_style="article",
+        note_profile="lecture-notes",
+        note_depth="very-detailed",
+        note_language="zh",
+        term_policy="bilingual",
+        page_neighborhood=1,
+        section_title=None,
+        screenshot_policy="fallback",
+        figure_placement="inline",
+        source_type="pdf",
+    )
+
+    assert "不是在总结幻灯片" in prompt
+    assert "教学重构" in prompt
+    assert "是什么、为什么重要、如何运作" in prompt
+    assert "coverage 只是最后质检" in prompt
+
+
+def test_note_quality_report_scores_teaching_features():
+    from slidenote.notes.quality import build_note_quality_report
+
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Quorum")],
+                images=[ImageAsset(id="s1_img1", path="images/quorum.png")],
+            )
+        ],
+    )
+    markdown = (
+        "### 本节核心问题\n\n"
+        "为了帮助理解，Quorum 的关键问题是为什么读集合和写集合必须相交，以及它如何影响一致性。 "
+        "<!-- slidenote-source: p1:s1_t1 -->\n\n"
+        "![Quorum diagram](notes.assets/images/quorum.png) <!-- slidenote-source: p1:s1_img1 -->\n\n"
+        "### 易错点\n\n"
+        "常见误解是把副本数量等同于一致性，例如忽略读写集合是否相交。 <!-- slidenote-source: p1:s1_t1 -->\n\n"
+        "### 自测问题\n\n"
+        "如果读集合和写集合不相交，会出现什么风险？ <!-- slidenote-source: p1:s1_t1 -->"
+    )
+
+    report = build_note_quality_report(
+        deck=deck,
+        notes_markdown=markdown,
+        coverage_report={"missing": 0, "required_visible_coverage": {"missing": 0}},
+        note_profile="lecture-notes",
+        note_context="section",
+        note_strategy="lecture-weave",
+        note_depth="very-detailed",
+    )
+
+    assert "mechanical_page_listing_score" in report
+    assert "explanation_depth_score" in report
+    assert "figure_integration_score" in report
+    assert report["mechanical_page_listing_score"] < 0.2
+    assert report["example_score"] > 0
+    assert report["self_test_score"] > 0
+    assert report["pitfall_score"] > 0
+    assert report["summary"]["source_images"] == 1
+
+
 def test_llm_auto_context_uses_document_for_short_deck(tmp_path, monkeypatch):
     deck = Deck(
         source_path="short.pdf",
@@ -834,6 +920,80 @@ def test_lecture_weave_generates_page_notes_then_weaves_sections(tmp_path, monke
     assert sum(1 for line in result.markdown.splitlines() if line.startswith("# ")) == 1
     assert "<!-- slidenote-source: p1:s1_t1 -->" in result.markdown
     assert "<!-- slidenote-source: p2:s2_t1 -->" in result.markdown
+    assert analyze_coverage(deck, result.markdown)["missing"] == 0
+
+
+def test_lecture_notes_profile_runs_teaching_enrichment_after_weave(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(slide_id=1, title="Replication", text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Replica")]),
+            SlidePage(slide_id=2, title="Quorum", text_blocks=[TextBlock(id="s2_t1", type="paragraph", content="Quorum")]),
+        ],
+    )
+    prompts = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            prompts.append(prompt)
+
+            class Result:
+                usage = {"input_tokens": 3, "output_tokens": 4, "total_tokens": 7}
+
+            result = Result()
+            if '"task": "page_lecture"' in prompt and '"context_id": "p1"' in prompt:
+                result.text = "Replication improves availability. <!-- slidenote-source: p1:s1_t1 -->"
+            elif '"task": "page_lecture"' in prompt and '"context_id": "p2"' in prompt:
+                result.text = "Quorum explains read/write overlap. <!-- slidenote-source: p2:s2_t1 -->"
+            elif '"task": "weave_page_lectures"' in prompt:
+                result.text = (
+                    "Replication sets up the availability problem. <!-- slidenote-source: p1:s1_t1 -->\n\n"
+                    "Quorum then explains overlap. <!-- slidenote-source: p2:s2_t1 -->"
+                )
+            elif '"task": "teaching_enrichment"' in prompt:
+                result.text = (
+                    "### 本节核心问题\n\n"
+                    "本节要解释为什么复制之后还需要 quorum 来维持读写可见性。 <!-- slidenote-source: p1:s1_t1,s2_t1 -->\n\n"
+                    "### 易错点\n\n"
+                    "不要把副本数量简单等同于一致性；关键是读集合和写集合是否相交。 <!-- slidenote-source: p2:s2_t1 -->\n\n"
+                    "### 自测问题\n\n"
+                    "如果读集合和写集合不相交，会出现什么风险？ <!-- slidenote-source: p1:s1_t1,s2_t1 -->"
+                )
+            else:
+                result.text = "unexpected"
+            return result
+
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
+
+    result = generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="openai",
+        api_key="test",
+        note_strategy="lecture-weave",
+        note_profile="lecture-notes",
+        note_context="document",
+    )
+
+    prompt_tasks = [
+        "page" if '"task": "page_lecture"' in prompt else
+        "weave" if '"task": "weave_page_lectures"' in prompt else
+        "teaching" if '"task": "teaching_enrichment"' in prompt else
+        "other"
+        for prompt in prompts
+    ]
+    assert prompt_tasks == ["page", "page", "weave", "teaching"]
+    assert result.teaching_report is not None
+    assert result.llm_usage["summary"]["teaching_enrichment_calls"] == 1
+    assert result.llm_usage["request"]["note_profile"] == "lecture-notes"
+    assert result.llm_usage["request"]["note_depth"] == "very-detailed"
+    assert "### 本节核心问题" in result.markdown
+    assert "### 自测问题" in result.markdown
     assert analyze_coverage(deck, result.markdown)["missing"] == 0
 
 
