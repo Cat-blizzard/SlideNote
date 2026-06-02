@@ -889,6 +889,12 @@ PPT/PDF -> 结构化解析 -> 内容清单 -> 笔记生成 -> 覆盖率校验 ->
 
 内部实现正在逐步整理成显式 Pipeline Stage：每个阶段声明名称、依赖和产物，`run_summary.json` 会汇总 artifact registry；`element_ir.json` 则作为 prompt payload、coverage、`source_map.json` 的共享结构契约。这样默认 CLI 行为保持稳定，同时为后续 GUI、局部重写和交互式编辑降低耦合。
 
+## 致谢
+
+- SlideNote 可选的 Review / Exam 复习包工作流在产品思路上受到 [ExamPass Assistant](https://github.com/WUBING2023/ExamPass-Assistant) 启发。SlideNote 没有复用 ExamPass Assistant 的代码、模板、prompt 或素材。
+- 感谢 [hongzuoj-pixel](https://github.com/hongzuoj-pixel) 对 GUI 开发的贡献。
+- 感谢 [MOm0-000](https://github.com/MOm0-000) 对测试工作的贡献。
+
 ## 参考文档
 
 - [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat/create)
