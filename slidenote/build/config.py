@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any
 
 from slidenote.llm import get_provider_spec
 
@@ -93,6 +94,61 @@ def _apply_note_profile_defaults(args: argparse.Namespace) -> None:
             args.note_depth = "very-detailed"
         else:
             args.note_depth = "detailed"
+
+
+BUILD_PRESET_DEFAULTS: dict[str, dict[str, Any]] = {
+    "fast": {
+        "speed_mode": "fast",
+        "note_context": "auto",
+        "note_style": "article",
+        "note_profile": "auto",
+        "note_strategy": "direct",
+        "note_depth": "balanced",
+        "teaching_enrichment": "off",
+        "deck_brief": "off",
+        "content_guard": "off",
+        "section_detection": "local",
+        "ocr": "off",
+        "vision": "off",
+        "figure_crop": "off",
+        "semantic_layout": "local",
+    },
+    "faithful": {
+        "speed_mode": "quality",
+        "note_context": "section",
+        "note_style": "faithful",
+        "note_profile": "auto",
+        "note_strategy": "lecture-weave",
+        "note_depth": "detailed",
+        "teaching_enrichment": "off",
+        "deck_brief": "auto",
+        "content_guard": "auto",
+        "section_detection": "auto",
+    },
+    "lecture": {
+        "speed_mode": "quality",
+        "note_context": "section",
+        "note_style": "article",
+        "note_profile": "lecture-notes",
+        "note_strategy": "lecture-weave",
+        "teaching_enrichment": "auto",
+        "deck_brief": "auto",
+        "content_guard": "auto",
+        "section_detection": "auto",
+        "source_display": "hidden",
+    },
+}
+
+
+def _apply_build_preset_defaults(args: argparse.Namespace) -> None:
+    preset = getattr(args, "preset", "auto")
+    if preset == "auto":
+        return
+    preset_defaults = BUILD_PRESET_DEFAULTS[preset]
+    explicit_options = set(getattr(args, "_explicit_options", set()) or set())
+    for name, value in preset_defaults.items():
+        if name not in explicit_options:
+            setattr(args, name, value)
 
 
 def _apply_speed_mode_defaults(args: argparse.Namespace) -> None:

@@ -6,43 +6,113 @@ SlideNote 当前的核心定位仍然是：
 
 > 保真型课程笔记生成器：不是简单总结 PPT/PDF，而是先解析、再生成、再检查覆盖率。
 
-## 当前已经具备的基础
+## 当前已经具备的基础：五阶段产品流水线
+
+SlideNote 的底层能力可以继续细粒度拆分，便于缓存、调试和局部刷新；但用户侧和 LLM 工作流应该按产品阶段收束：
+
+```text
+Ingest -> Understand -> Write -> Guard -> Export
+```
+
+### 1. Ingest：可靠解析层
+
+目标：把 PPT/PDF 变成稳定、可追溯、可复现的结构化材料。这一层不应该交给 LLM 主导。
+
+已实现：
 
 - 支持 `.pptx` / `.pdf` 解析，`.ppt` 可尝试借助 LibreOffice 转 PDF。
-- 能生成逐页结构化 `content.json`。
-- 能提取标题、文本块、表格、嵌入图片和部分页面截图。
-- 能生成 Markdown 笔记 `notes.md`。
-- 能保留来源页码和元素 ID。
-- 有覆盖率检查 `coverage.json` / `coverage.md`。
-- 支持多家文本 LLM：OpenAI、DeepSeek、Qwen、豆包/火山方舟、GLM、Gemini、Claude。
-- 支持独立 OCR：百度 OCR、Mathpix、Google Vision OCR。
-- 支持独立视觉解析：OpenAI、Qwen-VL、豆包/火山方舟等视觉模型。
-- 有 LLM / OCR / Vision 缓存和结构化用量报告，便于 CLI/GUI 展示成本和缓存命中。
-- 有基础运行进度文件 `progress.json` 和运行总览 `run_summary.json`。
-- 支持基础 `--speed-mode` 预设、总并发与 LLM/Vision/OCR/Figure 细分并发、`--vision-max-targets` / `--vision-max-edge` / `--vision-detail` 视觉预算控制、`--global-cache-dir` 全局缓存目录，并对临时 API 错误做退避重试。
-- 支持 `--refresh-pages` 对指定页绕过本地缓存进行局部刷新。
-- 支持 `slidenote doctor` 环境检测。
-- 支持疑似小图标/装饰图标记，默认从笔记、覆盖率、OCR fallback 和视觉目标中过滤。
-- 支持标准化 `element_ir.json` 和 `source_map.json`：Element IR 已包含原始 `bbox`、归一化 `bbox_normalized`、主 `role`、详细 `roles`、`confidence`、`reading_order`、`coverage_state`、`evidence` 和 `source_ids`；coverage 阶段会刷新最终 IR，写入 covered / missing / marker-only 等实际覆盖状态。
-- 支持 `notes.assets/` 图片资产目录，默认让 `notes.md` 使用便携相对图片路径。
-- 支持表格理解 `table_understanding.json`，输出 table summary / conclusion / key rows，避免只机械覆盖单元格。
-- 支持 `--note-context auto|document|section|page`，短材料整份生成，长材料按章节/分组生成，逐页模式保留为调试选项。
-- 支持 `--source-display hidden|footnote|inline`，默认隐藏正文来源但保留覆盖率和溯源。
-- 支持 `--note-style article|faithful`、`--note-profile auto|lecture-notes|study-guide` 和 `--note-depth concise|balanced|detailed|very-detailed`。默认仍保持 `auto + article + detailed + lecture-weave`；`lecture-notes` 会把目标升级为“像老师重新讲一遍”的教师讲义式路线。
-- 支持基础局部图裁剪 `--figure-crop auto|vision|off`，可用视觉模型定位整页截图中的局部图并裁剪到 `figures/`。
-- 支持组合图识别 `--composite-figures auto|off`，可把多个嵌入小图片拼成的流程图/结构图裁成整体图，并把子图片保留为隐藏来源。
-- 支持 `--screenshot-policy fallback|always|never`，默认有局部图/嵌入图时不在笔记里重复插入整页截图。
-- 支持基础图片学习价值排序 `--image-ranking local|off`，输出 `image_importance.json`，供视觉目标选择、笔记插图和 GUI 使用。
-- 支持语义版面增强：`--semantic-layout auto|local|vision` 先用本地规则生成 blocks/groups/relations，再按需用视觉模型增强代码示例、图文混排、因果注释等复杂页面。输出 `semantic_layout.json`，并复用现有 vision provider/cache/concurrency。
-- 支持章节计划输出 `sections.json`，并提供 `--section-detection auto|local|llm` 与 `--section-cache on|off|refresh`；开启章节式 LLM 笔记时可用模型辅助识别章节边界，并缓存 LLM 章节识别结果。
-- 支持 `--note-language auto|zh|en` 和 `--term-policy preserve|translate|bilingual`，可让英文课件输出中文/英文笔记，并控制专业术语保留方式。
-- 支持 Lecture-Weave 分层生成策略：`--note-strategy lecture-weave`（默认），先逐页让模型"讲课"，再按章节编织成连贯笔记。`lecture-notes` profile 下会在 weave 之后、coverage repair 之前增加 teaching enrichment pass，让正文围绕核心问题、背景直觉、图表/公式解读、易错点和自测问题展开。输出中间产物 `page_notes.json`、`page_notes.md`、`weave_report.json` 和按需生成的 `teaching_enrichment.json`。
-- 支持 Deck Brief 课程全景图：`--deck-brief auto` 可用 LLM 生成课程主题、核心问题、概念依赖关系和页面角色划分，作为后续笔记生成的全局导航。
-- 支持 Figure Grounding 图文锚定：`--figure-grounding local|vision` 将图片锚定到页面内最近的文本、表格或语义组元素，让笔记中的图片出现在相关概念附近而非堆积在页尾。输出 `figure_grounding.json`，低置信视觉结果会自动回退到本地锚点。
-- 支持 Content Guard：`--content-guard auto` 识别高置信关键学习内容，并对 required visible coverage 做一次自然修复。
-- 支持本地学习质量报告：每次 build 生成 `quality_report.json`，记录 coherence、explanation depth、example、figure integration、mechanical page listing、self-test、pitfall 和 hallucination risk 等启发式指标；后续可继续扩展 LLM quality reviewer。
-- 支持额外导出：带目录 Markdown、Word、PDF、LaTeX；Word/LaTeX 通过 Pandoc，PDF 通过 DOCX → LibreOffice 转换以改善中文/CJK 排版。
-- 支持基础 SlideNote Studio GUI 和成本报告：上传文件、配置 provider、查看进度、预览输出和 token/cost dashboard。
+- 生成逐页结构化 `content.json`，提取标题、文本块、表格、嵌入图片和页面截图。
+- 生成标准化 `element_ir.json` 和 `source_map.json`；Element IR 已包含原始 `bbox`、`bbox_normalized`、主 `role`、详细 `roles`、`confidence`、`reading_order`、`coverage_state`、`evidence` 和 `source_ids`，coverage 阶段会刷新 covered / missing / marker-only 等最终状态。
+- 支持 `notes.assets/` 图片资产目录、截图兜底、疑似装饰图过滤、组合图识别和局部图裁剪。
+- 支持缓存、`progress.json`、`run_summary.json`、`--refresh-pages`、`--global-cache-dir`、并发与 API 重试、`slidenote doctor` 环境检测。
+
+下一步：
+
+- 设计 MarkItDown 式 parser adapter，让内置解析器、Docling、Marker、MinerU 等作为可选 adapter 接入，而不是把核心 pipeline 绑死在某个解析库上。
+
+### 2. Understand：课件理解包
+
+目标：回答“这份课件到底在讲什么，每页/每图/每表在知识结构里起什么作用”。这一层适合本地规则、Vision LLM 和文本 LLM 混合完成。
+
+已实现：
+
+- `page_modalities.json` 页面类型路由，决定 OCR、Vision、figure crop 是否值得运行。
+- `semantic_layout.json` 语义版面增强，支持 blocks/groups/relations 和可选 vision refinement。
+- `sections.json` 章节计划，支持 `--section-detection auto|local|llm` 与章节识别缓存。
+- `table_understanding.json` 表格摘要、结论和 key rows。
+- `image_importance.json` 图片学习价值排序。
+- `figure_grounding.json` 图文锚定，让图表出现在相关概念附近。
+- `deck_brief.json` / `deck_brief.md` 全局课程脉络，用于导航，不替代逐页证据。
+
+下一步：
+
+- 收束 Deck Brief、section detection、page role、figure/table understanding、image ranking 为更统一的 `deck_understanding.json`。
+- 把逐页理解、图表含义、must-include 学习点和页面角色整理成 `page_understanding.json`，作为最终写作和 GUI 审阅的共享输入。
+
+### 3. Write：讲义生成包
+
+目标：把结构化材料写成可以直接学习的笔记，而不是逐页搬运 PPT。
+
+已实现：
+
+- 支持 `--note-context auto|document|section|page`、`--source-display hidden|footnote|inline`。
+- 支持 `--note-style article|faithful`、`--note-profile auto|lecture-notes|study-guide`、`--note-depth concise|balanced|detailed|very-detailed`。
+- 支持 `--note-language auto|zh|en` 和 `--term-policy preserve|translate|bilingual`。
+- 支持 Lecture-Weave：`--note-strategy lecture-weave` 默认先逐页“讲课”，再按章节编织成连贯笔记，输出 `page_notes.json`、`page_notes.md` 和 `weave_report.json`。
+- `lecture-notes` profile 会在 weave 之后、coverage repair 之前运行 teaching enrichment pass，输出 `teaching_enrichment.json`，把正文组织成核心问题、背景直觉、图表/公式解读、易错点、小结和自测问题。
+
+下一步：
+
+- 继续把 `study-guide` 和 `exam-review` 做成更明确的复习/考试路线，而不是只复用讲义 prompt。
+- 在 GUI 中把底层写作参数收束成用户可理解的工作流 preset。
+
+### 4. Guard：保真质检包
+
+目标：coverage 负责“不漏”，Content Guard 负责“关键学习内容必须可见”，质量报告负责“像不像讲义、好不好学”。
+
+已实现：
+
+- `coverage.json` / `coverage.md` 覆盖率检查。
+- `content_guard.json` 识别高置信关键学习内容，并对 required visible coverage 做自然修复。
+- `quality_report.json` 本地学习质量报告，记录 coherence、explanation depth、example、figure integration、mechanical page listing、self-test、pitfall 和 hallucination risk 等启发式指标。
+- Review / Exam 模式可生成 `review.md`、`exam.md`、`exam.json` 和交互式 `exam.html`。
+
+下一步：
+
+- 增加 source verification 和 hallucination check，让具体事实、数字、结论可以更明确地追溯到源材料。
+- 后续可加入独立 LLM quality reviewer，但不要让写作模型完全自审。
+
+### 5. Export：发布与报告层
+
+目标：把最终结果交付成学生能阅读、复习、下载和审阅的材料。这一层也应该保持工程确定性。
+
+已实现：
+
+- 输出 `notes.md`，并支持带目录 Markdown、Word、PDF、LaTeX 导出。
+- Word/LaTeX 通过 Pandoc，PDF 通过 DOCX -> LibreOffice 转换以改善中文/CJK 排版。
+- 支持基础 SlideNote Studio GUI：上传文件、配置 provider、查看进度、预览输出、查看 token/cost dashboard、下载生成结果。
+- 结构化 usage、缓存命中和成本报告便于 CLI/GUI 展示。
+
+下一步：
+
+- 强化 GUI 中的 pipeline stage 展示、artifact registry 浏览、局部刷新和人工修正入口。
+
+### 用户侧 Preset
+
+已实现顶层 `--preset auto|fast|faithful|lecture`。它是产品工作流入口，和写作层的 `--note-profile` 分开：
+
+- `fast`：快速草稿、低成本、本地优先；映射到 `--speed-mode fast`、direct 写作、本地章节识别，并关闭额外 Deck Brief / Content Guard / teaching pass。
+- `faithful`：保真覆盖和来源追踪优先；映射到 faithful 写作、Lecture-Weave、section context、Deck Brief auto、Content Guard auto。
+- `lecture`：教师讲义式详细笔记；映射到 `--note-profile lecture-notes`、Lecture-Weave、section context、Deck Brief auto、Content Guard auto、teaching enrichment auto，未显式指定深度时使用 `very-detailed`。
+
+用户显式传入的底层参数优先，例如 `--preset lecture --teaching-enrichment off` 会保留用户覆盖。
+
+### 下一步优先级收束
+
+1. `deck_understanding.json`：先统一全局理解产物，把 Deck Brief、section plan、page role、concept map、key terms 和重要元素收束起来。
+2. `page_understanding.json`：再统一逐页理解产物，把页面角色、关键点、图表含义、must_include 和 source ids 组织成写作/GUI 共用输入。
+3. MarkItDown 式 parser adapter：先定义 adapter 协议和内部 parser adapter，保证核心 pipeline 不直接依赖外部解析器。
+4. Docling / Marker / MinerU 接入：在 adapter 协议稳定后逐个接入，优先做实验开关、质量对比和失败回退，不急着替换默认解析器。
 
 ## 1. 上下文策略增强
 

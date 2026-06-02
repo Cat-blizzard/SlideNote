@@ -4,7 +4,15 @@ from pathlib import Path
 
 import fitz
 
-from slidenote.cli import _apply_note_profile_defaults, _apply_speed_mode_defaults, _parse_slide_ranges, _resolve_api_concurrency, main
+from slidenote.cli import (
+    _apply_build_preset_defaults,
+    _apply_note_profile_defaults,
+    _apply_speed_mode_defaults,
+    _explicit_cli_options,
+    _parse_slide_ranges,
+    _resolve_api_concurrency,
+    main,
+)
 from slidenote.notes import NoteGenerationResult
 
 
@@ -126,6 +134,7 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert figure_grounding["summary"]["candidate_images"] == 0
     assert run_summary["artifacts"]["note_assets"] == "notes.assets"
     assert source_map["default_display_mode"] == "hidden"
+    assert run_summary["run"]["preset"] == "auto"
     assert run_summary["run"]["note_language"] == "zh"
     assert run_summary["run"]["note_profile"] == "auto"
     assert run_summary["run"]["teaching_enrichment"] == "auto"
@@ -264,6 +273,7 @@ def test_quality_first_defaults_are_exposed_by_parser():
     args = _build_parser().parse_args(["build", "lecture.pdf"])
 
     assert args.speed_mode == "quality"
+    assert args.preset == "auto"
     assert args.vision == "auto"
     assert args.vision_provider == "qwen"
     _apply_note_profile_defaults(args)
@@ -289,6 +299,74 @@ def test_quality_first_defaults_are_exposed_by_parser():
     assert args.exam_question_count == 12
     assert args.export is None
     assert args.export_toc == "auto"
+
+
+def test_lecture_preset_maps_to_teacher_style_pipeline():
+    from slidenote.cli import _build_parser
+
+    argv = ["build", "lecture.pdf", "--preset", "lecture"]
+    args = _build_parser().parse_args(argv)
+    args._explicit_options = _explicit_cli_options(argv)
+    _apply_build_preset_defaults(args)
+    _apply_note_profile_defaults(args)
+
+    assert args.preset == "lecture"
+    assert args.speed_mode == "quality"
+    assert args.note_profile == "lecture-notes"
+    assert args.note_strategy == "lecture-weave"
+    assert args.note_context == "section"
+    assert args.note_style == "article"
+    assert args.note_depth == "very-detailed"
+    assert args.teaching_enrichment == "auto"
+    assert args.deck_brief == "auto"
+    assert args.content_guard == "auto"
+    assert args.source_display == "hidden"
+
+
+def test_preset_respects_explicit_lower_level_overrides():
+    from slidenote.cli import _build_parser
+
+    argv = [
+        "build",
+        "lecture.pdf",
+        "--preset",
+        "lecture",
+        "--note-depth",
+        "balanced",
+        "--teaching-enrichment",
+        "off",
+        "--deck-brief",
+        "off",
+    ]
+    args = _build_parser().parse_args(argv)
+    args._explicit_options = _explicit_cli_options(argv)
+    _apply_build_preset_defaults(args)
+    _apply_note_profile_defaults(args)
+
+    assert args.note_profile == "lecture-notes"
+    assert args.note_depth == "balanced"
+    assert args.teaching_enrichment == "off"
+    assert args.deck_brief == "off"
+
+
+def test_fast_preset_minimizes_extra_passes():
+    from slidenote.cli import _build_parser
+
+    argv = ["build", "lecture.pdf", "--preset", "fast"]
+    args = _build_parser().parse_args(argv)
+    args._explicit_options = _explicit_cli_options(argv)
+    _apply_build_preset_defaults(args)
+
+    assert args.speed_mode == "fast"
+    assert args.note_strategy == "direct"
+    assert args.note_depth == "balanced"
+    assert args.teaching_enrichment == "off"
+    assert args.deck_brief == "off"
+    assert args.content_guard == "off"
+    assert args.section_detection == "local"
+    assert args.vision == "off"
+    assert args.ocr == "off"
+    assert args.figure_crop == "off"
 
 
 def test_lecture_notes_profile_defaults_to_very_detailed():

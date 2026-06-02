@@ -83,28 +83,35 @@ GUI 亮点：
 
 > GUI 导出说明：Markdown 目录版不需要额外依赖；Word 和 LaTeX 使用 Pandoc；PDF 会先生成 `notes.docx`，再通过 LibreOffice 转成 `notes.pdf`；`export_report.json` 会记录成功/失败原因。PDF 导出不再默认走 Markdown → LaTeX → PDF，而是优先走 DOCX → LibreOffice PDF，这样中文和图片排版更稳定；LaTeX 仍保留为技术型源码导出。
 
-## 功能
+## SlideNote Pipeline
 
-- 支持 `.pptx` 和 `.pdf`，`.ppt` 会尝试通过 LibreOffice 转成 PDF 后解析。
-- 逐页抽取标题、正文文本块、表格、嵌入图片。
-- 自动识别页面类型：原生文字页、图文混合页、整页图片页、形状图页、装饰页，并据此路由 OCR、视觉解析和局部图裁剪。
-- 自动给图片做学习价值排序，让视觉调用和笔记优先使用图表、流程图、局部裁剪图和高信息量图片。
-- 生成 `semantic_layout.json`：先用本地规则组织页面语义块/语义组/关系，再按需用视觉模型增强代码+输出、注释框、图文混排等复杂页面，供裁图、图文对齐和写笔记复用。
-- 自动识别由多个嵌入小图片拼成的组合图，从整页截图裁出整体区域，并把小图保留为隐藏来源。
-- 生成 `sections.json`；开启 LLM 时，`--section-detection auto` 可以用模型辅助修正章节边界，再交给 Lecture-Weave 编织。
-- 在高质量 Lecture-Weave 模式下生成 `deck_brief.json` / `deck_brief.md`：先形成全局课程脉络，但只作为导航，不替代逐页覆盖。
-- 生成 `content_guard.json`：记录页面角色、高置信学习内容、required visible coverage、修复尝试和残余风险。
-- 每页尽量保存页面截图：PDF 原生支持；PPTX 需要本机安装 LibreOffice 或 PowerPoint COM 可用。
-- 生成 `content.json` 作为原始内容清单。
-- 生成 `notes.md`，默认隐藏来源标记，也可选择显示简洁页码或详细元素 ID。
-- 生成 `coverage.json` / `coverage.md`，检查哪些元素没有出现在笔记中。
-- 可选导出 `notes.toc.md`、`notes.docx`、`notes.pdf` 和 `notes.tex`；Word/LaTeX 需要安装 Pandoc；PDF 需要 Pandoc 和 LibreOffice。
-- 可选 Review / Exam 模式：从已生成笔记继续生成 `review.md`、`exam.md`、结构化 `exam.json` 和可交互批改的 `exam.html` 自测页。
-- 支持多家 LLM：ChatGPT/OpenAI、DeepSeek、通义千问、豆包、GLM、Gemini、Claude。
-- 支持 `lecture-weave` 高质量笔记策略：先逐页深讲，再按章节编织成连贯笔记。
-- 支持控制笔记输出语言和术语策略：英文课件可以生成中文或英文笔记，中文笔记可保留英文专业术语。
-- 结构化 usage、缓存和成本报告让 token/API 成本可见，并能在 SlideNote Studio 中查看。
-- 提供可选 Streamlit GUI：上传文件、配置 provider、查看进度、预览结果和 token/cost dashboard。
+SlideNote 按五个产品阶段组织。底层模块可以继续保持细粒度，方便缓存、调试和局部刷新；但用户侧应该先看到一条清楚的流水线，而不是一长串彼此独立的开关。
+
+| 阶段 | 作用 | 当前产物 / 能力 |
+| --- | --- | --- |
+| **1. Ingest** | 稳定解析输入材料，并保留可追溯来源。 | `.pptx` / `.pdf` 输入、`.ppt` 借 LibreOffice 转 PDF、`content.json`、`element_ir.json`、`source_map.json`、页面截图、抽取图片、`notes.assets/`、缓存和进度文件。 |
+| **2. Understand** | 用本地规则、OCR、视觉模型和 LLM 理解课件在讲什么。 | 页面类型路由、`semantic_layout.json`、`sections.json`、`table_understanding.json`、`image_importance.json`、组合图、局部图裁剪、`figure_grounding.json`、可选 `deck_brief.json` / `deck_brief.md`。 |
+| **3. Write** | 把结构化材料写成可读学习笔记。 | `notes.md`、`--note-context`、`--note-style`、`--note-profile`、`--note-depth`、Lecture-Weave 逐页讲解、章节编织、可选 teaching enrichment、输出语言和术语策略。 |
+| **4. Guard** | 检查生成结果是否保真、是否好学。 | `coverage.json` / `coverage.md`、`content_guard.json`、required visible coverage 修复、source marker、`quality_report.json`、Review/Exam 学习包检查。 |
+| **5. Export** | 发布最终结果并报告运行过程。 | `notes.toc.md`、`notes.docx`、`notes.pdf`、`notes.tex`、`review.md`、`exam.md`、`exam.json`、`exam.html`、`run_summary.json`、usage/cost 报告、SlideNote Studio GUI。 |
+
+元素 ID、图片路径、缓存 key、成本统计和导出转换保持工程确定性；LLM 主要负责语义判断和写作：章节规划、页面角色、图表含义、讲义式正文、复习题和质量修复。
+
+## 用户侧 Preset
+
+顶层 `--preset` 是用户工作流入口。它会映射到底层的 `--note-profile`、`--note-strategy`、`--deck-brief`、`--content-guard` 等参数；如果用户显式传了底层参数，则以用户显式参数为准。
+
+| Preset | 适合场景 | 背后映射 |
+| --- | --- | --- |
+| `fast` | 快速草稿、低成本、本地优先。 | 使用 `--speed-mode fast`、direct 写作、本地章节识别，并关闭额外 Deck Brief / Content Guard / teaching pass；用户仍可手动重新打开。 |
+| `faithful` | 最在意覆盖率、来源追踪和保真。 | 使用 faithful 写作、Lecture-Weave、section context、Deck Brief auto、Content Guard auto。 |
+| `lecture` | 想要“像老师重新讲一遍”的详细讲义。 | 映射到 `--note-profile lecture-notes`、Lecture-Weave、section context、Deck Brief auto、Content Guard auto、teaching enrichment auto。 |
+
+```powershell
+python -m slidenote build lecture.pdf --out outputs\fast --preset fast
+python -m slidenote build lecture.pdf --out outputs\faithful --preset faithful --use-llm --provider deepseek
+python -m slidenote build lecture.pdf --out outputs\lecture --preset lecture --use-llm --provider deepseek
+```
 
 ## 起源
 
@@ -419,6 +426,7 @@ python -m slidenote build lecture.pdf `
 默认输出是“详细讲义式学习笔记”：按知识点组织，而不是逐页翻译 PPT；同时保留定义、公式、例子、条件和图表结论的讲解深度。正文不会反复显示元素 ID，也不会为没有视觉解析的图片写大段说明：
 
 ```powershell
+--preset auto             # 默认：保留下面这些底层显式参数
 --note-style article       # 默认：按知识点组织学习笔记，不等于摘要
 --note-profile auto        # 默认：保持当前 article + lecture-weave 行为
 --source-display hidden    # 默认：来源写入 HTML 隐藏注释和 source_map.json
@@ -432,6 +440,8 @@ python -m slidenote build lecture.pdf `
 --term-policy bilingual    # 默认：中文笔记中保留关键英文专业术语
 ```
 
+常规产品工作流优先用 `--preset fast|faithful|lecture`。本节这些底层选项适合在 preset 之上继续微调或覆盖。`--preset` 是完整工作流 bundle；`--note-profile` 只控制 Write 阶段的写作路线。
+
 `lecture-weave` 现在是默认 LLM 笔记策略。这个模式会更耗时、更耗 token，但更接近“逐页问 AI：请你讲讲这一页”的效果：先可生成 Deck Brief 作为全局导航，再为每页生成详细讲解，最后把逐页讲解编织成连贯章节。Deck Brief 有明确约束：不能替代当前页证据，也不能让逐页讲解变短。
 
 如果想优先生成“像老师重新讲一遍”的高质量讲义，可以使用 `lecture-notes`。它不会让覆盖率决定正文形状，而是把 coverage 留作最后质检；正文会围绕本节核心问题、背景直觉、详细讲解、图表/公式解读、易错点、小结和自测问题来组织。
@@ -441,12 +451,11 @@ python -m slidenote build lecture.pdf `
   --out outputs\lecture_notes `
   --use-llm `
   --provider deepseek `
-  --note-profile lecture-notes `
-  --note-context section `
+  --preset lecture `
   --max-output-tokens 12000
 ```
 
-`lecture-notes` 会在用户没有显式指定深度时自动使用 `--note-depth very-detailed`，并在章节编织之后、最终 content guard repair 之前运行 teaching enrichment pass。构建会写出 `quality_report.json`，用本地启发式检查解释深度、图文整合、自测/易错点和机械逐页复述风险。
+`--preset lecture` 会映射到 `--note-profile lecture-notes`、section-context Lecture-Weave、Deck Brief auto、Content Guard auto 和 teaching enrichment auto。`lecture-notes` 会在用户没有显式指定深度时自动使用 `--note-depth very-detailed`。构建会写出 `quality_report.json`，用本地启发式检查解释深度、图文整合、自测/易错点和机械逐页复述风险。
 
 `--content-guard auto` 默认开启。它会把 `learning_items` 交给笔记 prompt，并在生成后检查关键元素是否出现在可见正文中，而不是只藏在 HTML source marker 里。需要恢复旧行为或尽量减少额外 LLM 调用时，可以用 `--content-guard off`。
 
