@@ -1,0 +1,27 @@
+SlideNote Licensing Notice
+===========================
+
+Copyright (c) 2026 SlideNote contributors.
+
+Unless otherwise noted, this repository uses the following licensing
+structure:
+
+- Source code is licensed under the GNU Affero General Public License
+  v3.0 or later (AGPL-3.0-or-later). See LICENSE.
+
+- Documentation and example educational materials are licensed under
+  the Creative Commons Attribution 4.0 International Public License
+  (CC BY 4.0). See LICENSES/CC-BY-4.0.txt.
+
+Documentation includes README files, configuration guides, roadmap
+documents, and other prose project documentation.
+
+The SlideNote name, logo, and other brand assets, including
+assets/slidenote-logo.png, are not licensed for standalone reuse under
+CC BY 4.0 or AGPL-3.0-or-later. You may keep them only as needed when
+sharing unmodified copies of this repository, unless separate permission
+is granted.
+
+Third-party dependencies, license texts, links, generated outputs, and
+user-provided input materials remain under their own applicable licenses
+or terms.
