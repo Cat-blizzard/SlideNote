@@ -29,6 +29,9 @@ def test_command_builds_gui_options_and_redacts_keys(tmp_path: Path):
         figure_concurrency=2,
         global_cache_dir=tmp_path / "cache",
         note_strategy="direct",
+        review_mode="llm",
+        exam_mode="llm",
+        exam_question_count=18,
     )
     cmd = build_slidenote_command(cfg)
     assert cmd[:3] == [sys.executable, "-m", "slidenote"]
@@ -40,6 +43,9 @@ def test_command_builds_gui_options_and_redacts_keys(tmp_path: Path):
     assert cmd[cmd.index("--ocr-concurrency") + 1] == "3"
     assert cmd[cmd.index("--figure-concurrency") + 1] == "2"
     assert cmd[cmd.index("--global-cache-dir") + 1] == str(tmp_path / "cache")
+    assert cmd[cmd.index("--review-mode") + 1] == "llm"
+    assert cmd[cmd.index("--exam-mode") + 1] == "llm"
+    assert cmd[cmd.index("--exam-question-count") + 1] == "18"
     assert "--api-key" not in cmd
     assert "--vision-api-key" not in cmd
     assert "--ocr-api-key" not in cmd
@@ -53,6 +59,26 @@ def test_command_builds_gui_options_and_redacts_keys(tmp_path: Path):
     assert env["QWEN_API_KEY"] == "qwen-secret"
     assert env["BAIDU_OCR_API_KEY"] == "ocr-secret"
     assert env["BAIDU_OCR_SECRET_KEY"] == "ocr-secret-2"
+
+
+def test_study_pack_llm_mode_uses_text_env_without_llm_notes(tmp_path: Path):
+    cfg = StudioConfig(
+        input_path=tmp_path / "a.pdf",
+        output_dir=tmp_path / "out",
+        progress_json=tmp_path / "out" / "progress.json",
+        use_llm=False,
+        provider="deepseek",
+        api_key="deep-key",
+        review_mode="llm",
+        exam_mode="off",
+    )
+
+    cmd = build_slidenote_command(cfg)
+    env = build_env({}, cfg)
+
+    assert "--use-llm" not in cmd
+    assert cmd[cmd.index("--provider") + 1] == "deepseek"
+    assert env["DEEPSEEK_API_KEY"] == "deep-key"
 
 
 def test_vision_key_env_is_used_for_figure_vision_mode(tmp_path: Path):

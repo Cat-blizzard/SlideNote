@@ -43,6 +43,7 @@ class BuildState:
     notes_markdown: str = ""
     coverage_report: dict[str, Any] | None = None
     source_map: dict[str, Any] | None = None
+    study_pack_report: dict[str, Any] | None = None
     export_report: dict[str, Any] | None = None
     export_exit_code: int = 0
 

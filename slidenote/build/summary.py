@@ -37,6 +37,7 @@ def _build_run_summary(
     progress: ProgressReporter,
     note_asset_warnings: list[str],
     export_report: dict[str, Any] | None = None,
+    study_pack_report: dict[str, Any] | None = None,
     artifact_registry: ArtifactRegistry | None = None,
     api_concurrency: dict[str, int] | None = None,
 ) -> dict[str, Any]:
@@ -63,6 +64,9 @@ def _build_run_summary(
             "note_depth": args.note_depth,
             "deck_brief": args.deck_brief,
             "content_guard": args.content_guard,
+            "review_mode": args.review_mode,
+            "exam_mode": args.exam_mode,
+            "exam_question_count": args.exam_question_count,
             "export": parse_export_formats(args.export),
             "export_toc": args.export_toc,
             "weave_dedup": args.weave_dedup,
@@ -98,6 +102,7 @@ def _build_run_summary(
         "ocr": ocr_report.get("summary") if ocr_report else None,
         "vision": vision_report.get("summary") if vision_report else None,
         "content_guard": content_guard_report.get("summary") if content_guard_report else None,
+        "study_pack": study_pack_report.get("summary") if study_pack_report else None,
         "llm": llm_usage.get("summary") if llm_usage else None,
         "coverage": {
             "total": coverage_report.get("total"),
@@ -119,6 +124,7 @@ def _build_run_summary(
         "warnings": {
             "note_assets": note_asset_warnings,
             "content_guard": content_guard_warnings(content_guard_report),
+            "study_pack": study_pack_report.get("warnings") if study_pack_report else [],
             "export": export_warnings(export_report),
         },
         "artifacts": {
@@ -139,6 +145,11 @@ def _build_run_summary(
             "deck_brief": "deck_brief.json" if deck_brief_report else None,
             "deck_brief_markdown": "deck_brief.md" if deck_brief_report else None,
             "content_guard": "content_guard.json" if content_guard_report else None,
+            "study_pack": "study_pack.json" if study_pack_report else None,
+            "review_markdown": "review.md" if study_pack_report and study_pack_report.get("review") else None,
+            "exam_markdown": "exam.md" if study_pack_report and study_pack_report.get("exam") else None,
+            "exam_json": "exam.json" if study_pack_report and study_pack_report.get("exam") else None,
+            "exam_html": "exam.html" if study_pack_report and study_pack_report.get("exam") else None,
             "export_report": "export_report.json" if export_report else None,
             "notes_toc": _export_artifact_path(export_report, "markdown-toc"),
             "notes_docx": _export_artifact_path(export_report, "docx"),

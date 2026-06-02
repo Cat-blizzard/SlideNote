@@ -90,6 +90,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Comma-separated extra export formats: markdown-toc, docx, pdf, latex, or all.",
     )
     build.add_argument(
+        "--review-mode",
+        choices=["off", "auto", "local", "llm"],
+        default="off",
+        help="Generate an exam-oriented review checklist. auto uses LLM when --use-llm is enabled, otherwise local.",
+    )
+    build.add_argument(
+        "--exam-mode",
+        choices=["off", "auto", "local", "llm"],
+        default="off",
+        help="Generate self-test questions and an interactive exam.html. auto uses LLM when --use-llm is enabled, otherwise local.",
+    )
+    build.add_argument(
+        "--exam-question-count",
+        type=int,
+        default=12,
+        help="Target number of self-test questions when --exam-mode is enabled.",
+    )
+    build.add_argument(
         "--export-toc",
         choices=["auto", "off"],
         default="auto",

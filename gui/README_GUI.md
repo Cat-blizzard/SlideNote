@@ -34,6 +34,7 @@ SlideNote Studio is a Streamlit UI around the existing `python -m slidenote buil
   - `notes.md`, `coverage.md`, `run_summary.json`, usage files, and raw outputs
 - Save outputs to the default `gui_runs/outputs` workspace or a custom local folder.
 - Download `notes.md`, `coverage.md`, `cost_report.md`, or the full result ZIP from the page.
+- Optionally generate and download a review/exam study pack: `review.md`, `exam.md`, `exam.json`, and interactive `exam.html`.
 
 ## Install
 
@@ -102,9 +103,20 @@ After a successful run, the GUI generates and displays:
 Prices are read from `pricing.template.json`. Keep the prices updated manually using official provider pricing pages.
 
 
+## Review / Exam Study Pack
+
+The sidebar section **5. Review / Exam** can generate optional study-pack artifacts after `notes.md` is complete:
+
+- `review.md`: exam-oriented checklist with importance labels, logic chains, pitfalls, and page references.
+- `exam.md`: self-test questions with answers and explanations.
+- `exam.json`: structured question data for downstream tools.
+- `exam.html`: interactive self-test page with objective-question auto-grading.
+
+Use `local` generation for a deterministic no-API pack, or `auto`/`llm` to reuse the text provider for stronger questions.
+
 ## Export Word / PDF / LaTeX
 
-The sidebar section **5. Exports** can request optional final artifacts:
+The sidebar section **6. Exports** can request optional final artifacts:
 
 - `notes.toc.md`: Markdown with table of contents; Pandoc is not required.
 - `notes.docx`: Word document; requires Pandoc.
