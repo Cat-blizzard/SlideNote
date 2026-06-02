@@ -98,6 +98,9 @@ class StudioConfig:
     screenshot_policy: str = "fallback"
     source_display: str = "hidden"
     asset_mode: str = "bundle"
+    review_mode: str = "off"
+    exam_mode: str = "off"
+    exam_question_count: int = 12
     export: str | None = None
     quiet: bool = True
 
@@ -124,9 +127,13 @@ def needs_vision_api(config: StudioConfig) -> bool:
     return config.vision != "off" or config.figure_crop == "vision" or config.figure_grounding == "vision"
 
 
+def needs_text_api(config: StudioConfig) -> bool:
+    return config.use_llm or config.review_mode == "llm" or config.exam_mode == "llm"
+
+
 def build_env(base_env: dict[str, str] | None, config: StudioConfig) -> dict[str, str]:
     env = dict(base_env or os.environ)
-    if config.use_llm and config.api_key:
+    if needs_text_api(config) and config.api_key:
         env[provider_env_key(config.provider)] = config.api_key
     if needs_vision_api(config) and config.vision_api_key:
         env[provider_env_key(config.vision_provider)] = config.vision_api_key
@@ -217,6 +224,12 @@ def build_slidenote_command(config: StudioConfig) -> list[str]:
         config.source_display,
         "--asset-mode",
         config.asset_mode,
+        "--review-mode",
+        config.review_mode,
+        "--exam-mode",
+        config.exam_mode,
+        "--exam-question-count",
+        str(max(1, int(config.exam_question_count))),
     ]
     for flag, value in (
         ("--llm-concurrency", config.llm_concurrency),
@@ -234,6 +247,7 @@ def build_slidenote_command(config: StudioConfig) -> list[str]:
         cmd.extend(["--refresh-pages", config.refresh_pages])
     if config.use_llm:
         cmd.append("--use-llm")
+    if needs_text_api(config):
         cmd.extend(["--provider", config.provider])
         if config.model:
             cmd.extend(["--model", config.model])
@@ -307,7 +321,7 @@ def progress_percent(progress: dict[str, Any]) -> float:
     current = progress.get("current_stage") or {}
     stages = progress.get("stages") or []
     completed = len(stages)
-    total_known_stages = 12
+    total_known_stages = 13
     base = min(completed / total_known_stages, 0.95)
     stage_total = current.get("total") or 0
     stage_current = current.get("current") or 0
@@ -333,5 +347,10 @@ def discover_outputs(output_dir: Path) -> dict[str, Path]:
         "ocr_usage": "ocr_usage.json",
         "content": "content.json",
         "progress": "progress.json",
+        "study_pack": "study_pack.json",
+        "review": "review.md",
+        "exam": "exam.md",
+        "exam_json": "exam.json",
+        "exam_html": "exam.html",
     }
     return {key: output_dir / filename for key, filename in names.items() if (output_dir / filename).exists()}

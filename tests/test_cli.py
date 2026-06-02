@@ -260,6 +260,9 @@ def test_quality_first_defaults_are_exposed_by_parser():
     assert args.figure_placement == "inline"
     assert args.figure_audit == "local"
     assert args.content_guard == "auto"
+    assert args.review_mode == "off"
+    assert args.exam_mode == "off"
+    assert args.exam_question_count == 12
     assert args.export is None
     assert args.export_toc == "auto"
 
@@ -321,6 +324,48 @@ def test_build_can_export_markdown_with_toc_without_pandoc(tmp_path, monkeypatch
     assert run_summary["artifacts"]["notes_toc"] == "notes.toc.md"
     assert run_summary["warnings"]["export"] == []
     assert not (out / "notes.docx").exists()
+
+
+def test_build_can_generate_local_review_and_exam_pack(tmp_path):
+    source = tmp_path / "lecture.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Transport Layer\nTCP provides reliable ordered delivery.")
+    doc.save(source)
+    doc.close()
+    out = tmp_path / "out"
+
+    exit_code = main(
+        [
+            "build",
+            str(source),
+            "--out",
+            str(out),
+            "--quiet",
+            "--vision",
+            "off",
+            "--review-mode",
+            "local",
+            "--exam-mode",
+            "local",
+            "--exam-question-count",
+            "4",
+        ]
+    )
+
+    assert exit_code == 0
+    run_summary = json.loads((out / "run_summary.json").read_text(encoding="utf-8"))
+    study_pack = json.loads((out / "study_pack.json").read_text(encoding="utf-8"))
+    assert (out / "review.md").exists()
+    assert (out / "exam.md").exists()
+    assert (out / "exam.json").exists()
+    assert (out / "exam.html").exists()
+    assert run_summary["run"]["review_mode"] == "local"
+    assert run_summary["run"]["exam_mode"] == "local"
+    assert run_summary["artifacts"]["study_pack"] == "study_pack.json"
+    assert run_summary["artifacts"]["review_markdown"] == "review.md"
+    assert run_summary["artifacts"]["exam_html"] == "exam.html"
+    assert study_pack["summary"]["questions_total"] == 4
 
 
 def test_build_returns_nonzero_when_requested_pandoc_export_is_missing(tmp_path, monkeypatch):

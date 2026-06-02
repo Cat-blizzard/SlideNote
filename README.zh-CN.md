@@ -99,6 +99,7 @@ GUI 亮点：
 - 生成 `notes.md`，默认隐藏来源标记，也可选择显示简洁页码或详细元素 ID。
 - 生成 `coverage.json` / `coverage.md`，检查哪些元素没有出现在笔记中。
 - 可选导出 `notes.toc.md`、`notes.docx`、`notes.pdf` 和 `notes.tex`；Word/LaTeX 需要安装 Pandoc；PDF 需要 Pandoc 和 LibreOffice。
+- 可选 Review / Exam 模式：从已生成笔记继续生成 `review.md`、`exam.md`、结构化 `exam.json` 和可交互批改的 `exam.html` 自测页。
 - 支持多家 LLM：ChatGPT/OpenAI、DeepSeek、通义千问、豆包、GLM、Gemini、Claude。
 - 支持 `lecture-weave` 高质量笔记策略：先逐页深讲，再按章节编织成连贯笔记。
 - 支持控制笔记输出语言和术语策略：英文课件可以生成中文或英文笔记，中文笔记可保留英文专业术语。
@@ -307,6 +308,19 @@ outputs/lecture/
 `content_guard.json` 默认由 `--content-guard auto` 生成。不开 `--use-llm` 时，它只记录本地启发式审查；开启 `--use-llm` 后，SlideNote 会先本地预筛表格、公式、定义、条件、OCR 关键文本、视觉摘要和非装饰图片，再让文本模型判断页面角色和元素级学习角色。只有高置信 `must_explain` 元素会进入 `required_visible_coverage` 并触发最多一次自然修复；低置信元素只保留在审查报告里。
 
 额外导出默认关闭。`--export markdown-toc` 不需要 Pandoc，会写出带目录的 `notes.toc.md`。`--export docx,pdf,latex` 会调用 Pandoc 生成 `notes.docx` 和 `notes.tex`，并用 LibreOffice 将 `notes.docx` 转为 `notes.pdf`；转换结果和错误摘要会写入 `export_report.json`。
+
+Review / Exam 模式也默认关闭。开启后会把最终 `notes.md` 转成复习包：`review.md` 是带重要程度标签、逻辑链、易错点和页码来源的考点清单；`exam.md`、`exam.json` 和 `exam.html` 是自测题与可交互批改页面。本地模式不调用 API：
+
+```powershell
+python -m slidenote build path\to\lecture.pdf --out outputs\lecture --vision off --review-mode local --exam-mode local
+```
+
+LLM/auto 模式复用正文笔记的文本 provider，题目和解析质量更高：
+
+```powershell
+$env:DEEPSEEK_API_KEY="..."
+python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --provider deepseek --review-mode auto --exam-mode auto --exam-question-count 20
+```
 
 ## 环境检测
 

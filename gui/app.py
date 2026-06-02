@@ -32,6 +32,7 @@ from gui.studio_core import (
     build_slidenote_command,
     command_for_display,
     discover_outputs,
+    needs_text_api,
     performance_tips,
     progress_percent,
     provider_env_key,
@@ -164,7 +165,20 @@ def main() -> None:
             help="Recommended. Keeps each run separated and prevents old results from being overwritten.",
         )
 
-        st.header("5. Exports")
+        st.header("5. Review / Exam")
+        study_generation = st.selectbox(
+            "Study pack generation",
+            ["auto", "local", "llm"],
+            index=0,
+            help="auto uses the text LLM when note generation uses an LLM; otherwise it falls back to local generation.",
+        )
+        review_enabled = st.checkbox("Review checklist (review.md)", value=False)
+        exam_enabled = st.checkbox("Self-test pack (exam.md + exam.html)", value=False)
+        exam_question_count = st.slider("Question count", 4, 40, 12, step=2, disabled=not exam_enabled)
+        review_mode = study_generation if review_enabled else "off"
+        exam_mode = study_generation if exam_enabled else "off"
+
+        st.header("6. Exports")
         st.caption("Optional final files generated from notes.md. Word/LaTeX need Pandoc; PDF is generated from Word via LibreOffice for stable Chinese/CJK layout. Markdown TOC works without Pandoc.")
         export_markdown_toc = st.checkbox("Markdown with table of contents (.md)", value=True)
         export_docx = st.checkbox("Word document (.docx)", value=False)
@@ -280,12 +294,15 @@ def main() -> None:
         figure_grounding="auto",
         source_display=source_display,
         screenshot_policy=screenshot_policy,
+        review_mode=review_mode,
+        exam_mode=exam_mode,
+        exam_question_count=int(exam_question_count),
         export=",".join(export_options) if export_options else None,
     )
 
     with col_right:
         st.subheader("Connection and runtime overview")
-        text_status = _api_status(use_llm, api_key, provider)
+        text_status = _api_status(needs_text_api(preview_config), api_key, provider)
         vision_status = _api_status(_needs_vision_api(preview_config), preview_config.vision_api_key, vision_provider)
         cache_status = _cache_status(cache_mode, use_global_cache)
         concurrency_status = _concurrency_status(concurrency)
@@ -313,7 +330,7 @@ def main() -> None:
 
         run_clicked = st.button("🚀 Run SlideNote build", type="primary", use_container_width=True, disabled=uploaded is None)
 
-    if use_llm and not api_key and not os.getenv(provider_env_key(provider)):
+    if needs_text_api(preview_config) and not api_key and not os.getenv(provider_env_key(provider)):
         st.warning("Text LLM is enabled but no API key is entered or configured in the environment.")
     if _needs_vision_api(preview_config) and vision_status[0] == "Missing key":
         st.warning("Vision is enabled but no vision API key was entered or found in the environment.")
@@ -586,7 +603,7 @@ def _render_results(output_dir: Path) -> None:
     st.markdown(f"<div class='output-path'>Output saved to<br><code>{output_dir}</code></div>", unsafe_allow_html=True)
     outputs = discover_outputs(output_dir)
     _render_quick_downloads(output_dir, outputs)
-    tab_names = ["Quality", "Page explorer", "Token & cost", "Exports", "Notes", "Coverage", "Run summary", "Files"]
+    tab_names = ["Quality", "Page explorer", "Token & cost", "Study pack", "Exports", "Notes", "Coverage", "Run summary", "Files"]
     tabs = st.tabs(tab_names)
 
     with tabs[0]:
@@ -596,14 +613,16 @@ def _render_results(output_dir: Path) -> None:
     with tabs[2]:
         _render_cost_tab(output_dir)
     with tabs[3]:
-        _render_exports_tab(output_dir)
+        _render_study_pack_tab(output_dir)
     with tabs[4]:
-        _render_markdown_file(output_dir / "notes.md", "notes.md")
+        _render_exports_tab(output_dir)
     with tabs[5]:
-        _render_markdown_file(output_dir / "coverage.md", "coverage.md")
+        _render_markdown_file(output_dir / "notes.md", "notes.md")
     with tabs[6]:
-        _render_run_summary_tab(output_dir)
+        _render_markdown_file(output_dir / "coverage.md", "coverage.md")
     with tabs[7]:
+        _render_run_summary_tab(output_dir)
+    with tabs[8]:
         st.write(f"Output directory: `{output_dir}`")
         for path in sorted(output_dir.glob("*")):
             if path.is_file():
@@ -633,6 +652,44 @@ def _render_quick_downloads(output_dir: Path, outputs: dict[str, Path]) -> None:
         cols = st.columns(min(4, len(available)))
         for col, (label, path) in zip(cols, available):
             col.download_button(f"Download {label}", data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path), use_container_width=True)
+    study_files = [("Review", outputs.get("review")), ("Exam", outputs.get("exam")), ("Exam HTML", outputs.get("exam_html"))]
+    available_study = [(label, path) for label, path in study_files if path]
+    if available_study:
+        st.caption("Study pack")
+        cols = st.columns(min(3, len(available_study)))
+        for col, (label, path) in zip(cols, available_study):
+            col.download_button(f"Download {label}", data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path), use_container_width=True)
+
+
+def _render_study_pack_tab(output_dir: Path) -> None:
+    outputs = discover_outputs(output_dir)
+    report = _read_json(output_dir / "study_pack.json")
+    rows = [
+        ("Review checklist", outputs.get("review"), "review.md"),
+        ("Self-test Markdown", outputs.get("exam"), "exam.md"),
+        ("Interactive self-test", outputs.get("exam_html"), "exam.html"),
+        ("Question JSON", outputs.get("exam_json"), "exam.json"),
+    ]
+    st.dataframe(
+        [{"artifact": label, "file": filename, "status": "ready" if path else "not generated"} for label, path, filename in rows],
+        use_container_width=True,
+        hide_index=True,
+    )
+    ready = [(label, path) for label, path, _ in rows if path]
+    if ready:
+        cols = st.columns(min(4, len(ready)))
+        for col, (label, path) in zip(cols, ready):
+            col.download_button(f"Download {label}", data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path), use_container_width=True)
+    else:
+        st.info("No study pack was generated. Enable Review / Exam in the sidebar before running the build.")
+
+    if outputs.get("review"):
+        _render_markdown_file(outputs["review"], "review.md")
+    if outputs.get("exam"):
+        _render_markdown_file(outputs["exam"], "exam.md")
+    if report:
+        with st.expander("study_pack.json", expanded=False):
+            st.json(report)
 
 
 def _render_exports_tab(output_dir: Path) -> None:

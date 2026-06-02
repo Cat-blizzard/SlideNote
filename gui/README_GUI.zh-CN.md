@@ -34,6 +34,7 @@ SlideNote Studio 是一个基于 Streamlit 的图形界面。它包装现有的 
   - `notes.md`、`coverage.md`、`run_summary.json`、usage 文件和原始输出文件
 - 支持默认 `gui_runs/outputs` 工作区，也支持自定义本地输出目录。
 - 页面内一键下载 `notes.md`、`coverage.md`、`cost_report.md` 或完整结果 ZIP。
+- 可选生成并下载复习/自测包：`review.md`、`exam.md`、`exam.json` 和可交互批改的 `exam.html`。
 
 ## 安装
 
@@ -104,9 +105,20 @@ GUI 会把 API key 通过子进程环境变量传给本次运行，不会把 key
 成本估算会读取 `pricing.template.json`。模板里的价格需要你按官方价格页面手动更新；默认价格可能是 0，所以默认报告更适合作为统计框架，而不是准确账单。
 
 
+## Review / Exam 复习包
+
+GUI 侧边栏的 **5. Review / Exam** 可以在 `notes.md` 完成后继续生成复习包：
+
+- `review.md`：带重要程度标签、逻辑链、易错点和页码来源的考点清单。
+- `exam.md`：带答案和解析的自测题。
+- `exam.json`：结构化题目数据，便于后续接题库或 Anki。
+- `exam.html`：可交互自测页面，选择/判断题支持一键批改。
+
+`local` 模式不调用 API；`auto` / `llm` 模式会复用文本 provider，题目和解析通常更强。
+
 ## 导出 Word / PDF / LaTeX
 
-GUI 侧边栏的 **5. Exports** 可以直接勾选额外导出格式：
+GUI 侧边栏的 **6. Exports** 可以直接勾选额外导出格式：
 
 - `notes.toc.md`：带目录 Markdown，不需要 Pandoc。
 - `notes.docx`：Word 文档，需要 Pandoc。
