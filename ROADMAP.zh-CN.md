@@ -74,13 +74,15 @@ Ingest -> Understand -> Write -> Guard -> Export
 
 - `coverage.json` / `coverage.md` 覆盖率检查。
 - `content_guard.json` 识别高置信关键学习内容，并对 required visible coverage 做自然修复。
-- `quality_report.json` 本地学习质量报告，记录 coherence、explanation depth、example、figure integration、mechanical page listing、self-test、pitfall 和 hallucination risk 等启发式指标。
-- Review / Exam 模式可生成 `review.md`、`exam.md`、`exam.json` 和交互式 `exam.html`。
+- `quality_report.json` 本地学习质量报告，记录 coherence、explanation depth、example、figure integration、mechanical page listing、self-test、pitfall、hallucination risk 和题目质量等启发式指标。
+- Review / Exam 模式可生成 `review.md`、`exam.md`、`exam.json`、交互式 `exam.html`、`section_study_pack.json`、`exam_review_pack.json`、`final_exam.md`、`final_exam.answers.md` 和 `wrong_answer_review_prompt.md`。
+- 自测题已加入本地质量检查：选择题干扰项质量、解析/易错点覆盖、来源页覆盖、题型混合度和图文就地引用。
 
 下一步：
 
 - 增加 source verification 和 hallucination check，让具体事实、数字、结论可以更明确地追溯到源材料。
 - 后续可加入独立 LLM quality reviewer，但不要让写作模型完全自审。
+- 后续可加入真实答题记录持久化、错题长期追踪、LLM 阅卷和按薄弱知识点自动生成变式题。
 
 ### 5. Export：发布与报告层
 

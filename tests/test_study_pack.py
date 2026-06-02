@@ -1,7 +1,15 @@
 import json
 
-from slidenote.models import Deck, SlidePage, TableBlock, TextBlock
-from slidenote.study_pack import build_study_pack, render_exam_html, render_exam_markdown, render_review_markdown
+from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
+from slidenote.study_pack import (
+    build_study_pack,
+    render_exam_html,
+    render_exam_markdown,
+    render_final_exam_answers_markdown,
+    render_final_exam_markdown,
+    render_review_markdown,
+    render_wrong_answer_review_prompt,
+)
 
 
 def test_local_study_pack_generates_review_and_exam(tmp_path):
@@ -17,6 +25,7 @@ def test_local_study_pack_generates_review_and_exam(tmp_path):
                     TextBlock(id="s1_t2", type="bullet", content="TCP provides reliable ordered delivery."),
                 ],
                 tables=[TableBlock(id="s1_tbl1", rows=[["Protocol", "Property"], ["UDP", "Best effort"]], table_conclusion="TCP and UDP trade reliability for cost.")],
+                images=[ImageAsset(id="s1_img1", path="images/transport.png", caption="Transport diagram", visual_summary="The diagram contrasts reliable and best-effort transport.")],
             )
         ],
     )
@@ -27,9 +36,18 @@ def test_local_study_pack_generates_review_and_exam(tmp_path):
     assert report["generator"] == "local"
     assert report["summary"]["review_items_total"] >= 2
     assert report["summary"]["questions_total"] == 4
+    assert report["summary"]["question_quality_score"] is not None
+    assert report["section_study_pack"]["sections"]
+    assert report["exam_review_pack"]["question_quality"]["overall_score"] >= 0
+    assert report["final_exam"]["mode"] == "mock_final"
+    assert report["wrong_answer_review"]["prompt_template"]
     assert "Transport" in render_review_markdown(report)
     assert "答案与解析" in render_exam_markdown(report)
+    assert "期末模拟卷" in render_final_exam_markdown(report)
+    assert "答案与评分提示" in render_final_exam_answers_markdown(report)
+    assert "错题复盘" in render_wrong_answer_review_prompt(report)
     assert "一键批改" in render_exam_html(report)
+    assert "错题复盘" in render_exam_html(report)
 
 
 def test_llm_study_pack_generates_report_and_uses_cache(tmp_path, monkeypatch):
