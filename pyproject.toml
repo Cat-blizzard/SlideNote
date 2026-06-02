@@ -8,6 +8,10 @@ version = "0.1.0"
 description = "Coverage-aware course note generator from lecture slides."
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "AGPL-3.0-or-later" }
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+]
 dependencies = [
     "python-pptx>=0.6.23",
     "PyMuPDF>=1.24.0",

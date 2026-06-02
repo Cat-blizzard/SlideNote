@@ -852,6 +852,15 @@ PPT/PDF -> 结构化解析 -> 内容清单 -> 笔记生成 -> 覆盖率校验 ->
 
 内部实现正在逐步整理成显式 Pipeline Stage：每个阶段声明名称、依赖和产物，`run_summary.json` 会汇总 artifact registry；`element_ir.json` 则作为 prompt payload、coverage、`source_map.json` 的共享结构契约。这样默认 CLI 行为保持稳定，同时为后续 GUI、局部重写和交互式编辑降低耦合。
 
+## 许可证
+
+SlideNote 采用双许可证结构：
+
+- 源代码使用 GNU Affero General Public License v3.0 or later（`AGPL-3.0-or-later`）。完整文本见 [LICENSE](LICENSE)。
+- 文档和示例教学材料使用 Creative Commons Attribution 4.0 International（`CC BY 4.0`）。完整文本见 [LICENSES/CC-BY-4.0.txt](LICENSES/CC-BY-4.0.txt)。
+
+SlideNote 名称、logo 和其它品牌素材不授权作独立复用。具体范围见 [NOTICE](NOTICE)。
+
 ## 致谢
 
 - SlideNote 可选的 Review / Exam 复习包工作流在产品思路上受到 [ExamPass Assistant](https://github.com/WUBING2023/ExamPass-Assistant) 启发。SlideNote 没有复用 ExamPass Assistant 的代码、模板、prompt 或素材。

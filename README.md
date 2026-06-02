@@ -848,6 +848,15 @@ The local rule-based draft is only a baseline for debugging extraction and cover
 
 Internally, the build is being organized around explicit pipeline stages with named dependencies and artifacts. `run_summary.json` includes the registered artifact map, while `element_ir.json` is the shared contract for prompt payloads, coverage, and `source_map.json`. This keeps the current CLI behavior stable while making GUI features and partial-revise work less brittle.
 
+## License
+
+SlideNote uses a dual-license structure:
+
+- Source code is licensed under the GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`). See [LICENSE](LICENSE).
+- Documentation and example educational materials are licensed under Creative Commons Attribution 4.0 International (`CC BY 4.0`). See [LICENSES/CC-BY-4.0.txt](LICENSES/CC-BY-4.0.txt).
+
+The SlideNote name, logo, and other brand assets are not licensed for standalone reuse. See [NOTICE](NOTICE) for the exact scope.
+
 ## Acknowledgements
 
 - SlideNote's optional review/exam study-pack workflow was conceptually inspired by [ExamPass Assistant](https://github.com/WUBING2023/ExamPass-Assistant). SlideNote does not reuse ExamPass Assistant code, templates, prompts, or assets.
