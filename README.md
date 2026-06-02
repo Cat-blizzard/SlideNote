@@ -43,6 +43,7 @@
 - [Speed And Partial Refresh](#speed-progress-and-partial-refresh)
 - [Note Quality Controls](#note-rendering-options)
 - [Vision, OCR, And Figures](#image-filtering-and-source-map)
+- [Future Outlook](#future-outlook)
 - [License And Acknowledgements](#license)
 
 ## Quick Start
@@ -902,6 +903,20 @@ python -m slidenote build lecture.pptx --use-llm --provider deepseek --cache-dir
 - `deck_brief`, `page_note_calls`, and `weave_calls` when `--note-strategy lecture-weave` is enabled
 - Provider-reported input/output/total tokens
 - Provider-side cached input tokens, when returned by the API
+
+## Future Outlook
+
+SlideNote is built with a hopeful assumption: future AI systems will become stronger, faster, cheaper, and easier to orchestrate through mature open-source agent frameworks. If that happens, this project should not merely run the same prompts for less money. Its ceiling should rise.
+
+Models and providers such as DeepSeek are one example of the direction that makes this exciting: better price/performance, broader access, and a more open ecosystem can make high-quality multi-pass workflows practical for ordinary study materials. When API latency drops and agent frameworks become more reliable, SlideNote can afford to run richer stages by default: deeper deck understanding, page-level visual reasoning, teacher-style section writing, teaching enrichment, coverage repair, exam generation, wrong-answer review, and source verification.
+
+The reason this matters is that SlideNote's bottleneck is not only "can the model summarize a slide?" The harder problem is coordinating parsing, vision, writing, grounding, quality checks, and revision without losing traceability. That is why the project invests in `element_ir.json`, `source_map.json`, coverage reports, artifact registries, presets, cache keys, and review/exam packs. Those structures let SlideNote absorb future model gains without being tied to one model, provider, or agent runtime.
+
+The long-term vision is:
+
+> SlideNote should grow from a courseware converter into a course learning operating system.
+
+In that version, slides, readings, personal notes, figures, formulas, quizzes, mistakes, and revisions all live in one traceable learning workflow.
 
 ## Design Principle
 

@@ -80,7 +80,7 @@ SlideNote 必须保留：
 ## 目录
 
 - [五阶段产品流水线](#当前已经具备的基础五阶段产品流水线)
-- [下一步优先级](#建议优先级)
+- [下一步优先级与长期愿景](#建议优先级)
 - [上下文、覆盖率与章节切分](#1-上下文策略增强)
 - [教材、知识库与 GUI](#4-教材--参考书作为知识库)
 - [交互编辑、进度与加速](#7-交互式编辑与对话式微调)
@@ -1669,6 +1669,25 @@ CLI 对新手不够友好，尤其是多个服务商都要 key。
 - 本地 OCR 或更多 OCR API。
 - Rust 局部重写或桌面端工程化。
 - 如果 Claude backend 稳定胜出，再讨论 `build` 是否 Claude-first。
+
+## 长期愿景：吃到未来 AI 红利
+
+SlideNote 的长期上限和 AI 基础设施的进步强相关。一个值得期待的方向是：模型更强，API 更便宜，API 速度更快，开源智能体框架底座更成熟。以 DeepSeek 这类强调性价比、可获得性和开放生态的模型 / 服务为例，当高质量模型调用不再那么贵、不再那么慢，很多今天只能作为“质量优先可选项”的多 pass 流程，就有机会变成默认体验。
+
+这会直接抬高几个能力上限：
+
+- 更强的模型能让 `lecture` 模式更像老师重新讲课，而不是重写幻灯片。
+- 更快更便宜的 API 能让 deck understanding、page understanding、teaching enrichment、coverage repair、题目生成、错题复盘和 source verification 串成稳定流水线。
+- 更成熟的开源 agent 框架能让 Claude backend 这种实验思路变成更通用的 agent backend，不绑定某一家模型或某一个闭源 runtime。
+- 更好的多模态能力能降低 `vision all`、复杂图表理解、公式解释和截图理解的成本，让图文课程不再被当成纯文本材料处理。
+
+因此，SlideNote 现在要持续打的基础不是某一个 prompt，而是能承接未来模型红利的结构：`element_ir.json`、`source_map.json`、coverage、artifact registry、cache key、preset、study pack、agent pack、parser adapter 和可评测样例集。只要这些结构稳定，未来模型一旦变强、变快、变便宜，SlideNote 就能自然升级，而不是重写整个项目。
+
+最终愿景是：
+
+> SlideNote 从课件转换器，成长为课程学习操作系统。
+
+在这个愿景里，PPT/PDF、教材、个人笔记、图表、公式、讲义、复习题、错题和局部修订都在同一条可检查、可追溯、可复习的学习工作流中协同。
 
 ## 关键原则
 
