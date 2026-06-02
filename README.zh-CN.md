@@ -42,6 +42,7 @@
 - [速度与局部刷新](#速度进度与局部刷新)
 - [笔记质量控制](#笔记呈现选项)
 - [图片、OCR 与视觉解析](#图片过滤与来源映射)
+- [未来展望](#未来展望)
 - [许可证与致谢](#许可证)
 
 ## 快速开始
@@ -876,6 +877,20 @@ python -m slidenote build lecture.pptx --use-llm --provider deepseek --cache-dir
 - `lecture-weave` 模式下的 Deck Brief、`page_note_calls` 和 `weave_calls`
 - provider 返回的 input/output/total tokens
 - provider 侧 cached input tokens，如果该平台返回此字段
+
+## 未来展望
+
+SlideNote 带着一个乐观前提在建设：未来 AI 会更强、更快、更便宜，也会更容易通过成熟的开源智能体框架来组织复杂工作流。如果这件事发生，SlideNote 不应该只是“用更低成本跑同一套 prompt”，而应该让项目上限被真正抬高。
+
+以 DeepSeek 这类强调性价比、可获得性和开放生态的模型 / 服务为例，它让人看到一种很值得期待的方向：当高质量 API 的价格、速度和可用性继续改善，多 pass 的高质量流程就不再只是少数重型场景才能负担的奢侈品。SlideNote 可以把更深的课件理解、逐页视觉推理、教师讲义式写作、teaching enrichment、coverage repair、考试题生成、错题复盘和来源校验变成更自然的默认能力。
+
+这件事之所以重要，是因为 SlideNote 的难点不只是“模型能不能总结一页 PPT”。真正难的是在解析、视觉理解、写作、图文锚定、质量检查和局部修订之间保持协调，同时不丢失可追溯性。所以项目会持续投入 `element_ir.json`、`source_map.json`、coverage、artifact registry、preset、cache key 和 review/exam 学习包这些工程结构。它们让 SlideNote 能吃到未来模型进步的红利，而不是被某一个模型、某一家 provider 或某一种 agent runtime 绑死。
+
+长期愿景是：
+
+> SlideNote 从课件转换器，成长为课程学习操作系统。
+
+在这个愿景里，课件、教材、个人笔记、图表、公式、测验、错题和局部修订都处在同一条可检查、可追溯、可复习的学习工作流里。
 
 ## 设计原则
 
