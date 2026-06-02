@@ -323,7 +323,7 @@ def _stage_export_content(state: BuildState) -> None:
     deck = _require_deck(state)
     state.progress.start_stage("export_content", message="Writing structured content")
     state.artifacts.write_json("content", "content.json", deck.to_dict())
-    state.artifacts.write_json("element_ir", "element_ir.json", build_deck_ir(deck))
+    state.artifacts.write_json("element_ir", "element_ir.json", build_deck_ir(deck, content_guard=state.content_guard_report))
     if state.image_importance_report is not None:
         state.artifacts.write_json("image_importance", "image_importance.json", state.image_importance_report)
     if state.figure_report is not None:
@@ -400,6 +400,11 @@ def _stage_coverage(state: BuildState) -> None:
         state.artifacts.write_json("content_guard", "content_guard.json", state.content_guard_report)
     state.artifacts.write_json("coverage_json", "coverage.json", state.coverage_report)
     state.artifacts.write_text("coverage", "coverage.md", render_coverage_markdown(state.coverage_report))
+    state.artifacts.write_json(
+        "element_ir",
+        "element_ir.json",
+        build_deck_ir(deck, content_guard=state.content_guard_report, coverage_report=state.coverage_report),
+    )
     state.source_map = build_source_map(deck, state.notes_markdown, state.output_root)
     state.artifacts.write_json("source_map", "source_map.json", state.source_map)
     state.progress.finish_stage("Coverage complete")

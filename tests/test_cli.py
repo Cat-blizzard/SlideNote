@@ -99,7 +99,20 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["table_understanding"]["tables_total"] == 0
     assert semantic_layout["summary"]["pages_total"] == 1
     assert element_ir["schema_version"] == 1
+    assert "normalized_bbox" in element_ir["schema_features"]
     assert element_ir["pages"][0]["slide_id"] == 1
+    first_element = element_ir["pages"][0]["elements"][0]
+    assert first_element["role"]
+    assert first_element["confidence"] >= 0.0
+    assert first_element["reading_order"] == 1
+    assert first_element["coverage_state"] in {
+        "covered",
+        "visible_covered",
+        "marker_only",
+        "missing",
+        "missing_required",
+    }
+    assert "trace_covered" in first_element["coverage"]
     assert run_summary["semantic_layout"]["pages_total"] == 1
     assert sections["summary"]["sections_total"] == 1
     assert image_importance["summary"]["images_total"] == 0
