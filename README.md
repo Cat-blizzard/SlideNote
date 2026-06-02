@@ -899,6 +899,7 @@ The SlideNote name, logo, and other brand assets are not licensed for standalone
 - SlideNote's optional review/exam study-pack workflow was conceptually inspired by [ExamPass Assistant](https://github.com/WUBING2023/ExamPass-Assistant). SlideNote does not reuse ExamPass Assistant code, templates, prompts, or assets.
 - GUI development contributions from [hongzuoj-pixel](https://github.com/hongzuoj-pixel).
 - Testing contributions from [MOm0-000](https://github.com/MOm0-000).
+- The Claude-oriented agent workflow explored on the `experiment/claude-backend` branch was inspired by [koriyoshi2041](https://github.com/koriyoshi2041).
 
 ## References
 
