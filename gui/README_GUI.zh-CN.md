@@ -38,6 +38,14 @@ SlideNote Studio 是一个基于 Streamlit 的图形界面。它包装现有的 
 
 ## 安装
 
+在仓库根目录下，推荐直接运行：
+
+```powershell
+.\install.ps1
+```
+
+手动安装方式：
+
 ```bash
 python -m pip install -e .
 python -m pip install -r requirements-gui.txt
@@ -56,6 +64,12 @@ python -m pip install -e ".[dev,llm,gui]"
 ```
 
 ## 启动
+
+```powershell
+.\run_gui.ps1
+```
+
+手动启动：
 
 ```bash
 streamlit run gui/app.py

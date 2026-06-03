@@ -51,6 +51,15 @@
 ```powershell
 git clone https://github.com/Cat-blizzard/SlideNote.git
 cd SlideNote
+.\install.ps1
+.\run_gui.ps1
+```
+
+安装脚本会创建 `.venv`、安装带 GUI/LLM 的依赖，并运行 `slidenote doctor`。GUI 可以在页面里临时填写 API key，所以新手不需要先理解终端环境变量。
+
+也可以手动安装：
+
+```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev,llm]"
@@ -79,8 +88,7 @@ python -m slidenote build path\to\lecture.pdf --out outputs\lecture --preset lec
 SlideNote Studio 是套在同一条 CLI pipeline 外面的 Streamlit 图形界面。它支持上传 PPT/PDF、在页面内配置 API key、选择运行 preset、查看进度和 ETA、查看 token / 成本报告、逐页检查来源，并下载生成结果。
 
 ```powershell
-python -m pip install -e ".[dev,llm,gui]"
-streamlit run gui/app.py
+.\run_gui.ps1
 ```
 
 GUI 详情见 [gui/README_GUI.zh-CN.md](gui/README_GUI.zh-CN.md) 和 [gui/README_GUI.md](gui/README_GUI.md)。
@@ -143,6 +151,7 @@ SlideNote 不需要本机 GPU。基础解析只需要 Python 依赖；LLM 改写
 
 - Python `3.10` 或更高版本。
 - 推荐使用虚拟环境。
+- 新手可以直接运行 `.\install.ps1`，然后运行 `.\run_gui.ps1`。
 - 本地解析：`python -m pip install -e ".[dev]"`。
 - LLM provider：`python -m pip install -e ".[dev,llm]"`。
 

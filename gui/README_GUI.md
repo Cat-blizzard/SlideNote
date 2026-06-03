@@ -38,6 +38,14 @@ SlideNote Studio is a Streamlit UI around the existing `python -m slidenote buil
 
 ## Install
 
+Simple setup from the repository root:
+
+```powershell
+.\install.ps1
+```
+
+Manual setup:
+
 ```bash
 python -m pip install -e .
 python -m pip install -r requirements-gui.txt
@@ -56,6 +64,12 @@ python -m pip install -e ".[dev,llm,gui]"
 ```
 
 ## Run
+
+```powershell
+.\run_gui.ps1
+```
+
+Manual run:
 
 ```bash
 streamlit run gui/app.py

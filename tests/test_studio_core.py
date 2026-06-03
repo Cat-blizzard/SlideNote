@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 from gui.studio_core import StudioConfig, build_env, build_slidenote_command, command_for_display, performance_tips, safe_run_name
 
 
@@ -122,3 +124,13 @@ def test_env_and_speed_tips(tmp_path: Path):
     assert "OCR=all" in tips
     assert "lecture-weave" in tips
     assert safe_run_name("我的 课件!!.pdf")
+
+
+def test_gui_api_status_accepts_provider_alias_env(monkeypatch):
+    pytest.importorskip("streamlit")
+    from gui.app import _api_status
+
+    monkeypatch.delenv("QWEN_API_KEY", raising=False)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-key")
+
+    assert _api_status(True, "", "qwen") == ("Ready", "DASHSCOPE_API_KEY", "good")

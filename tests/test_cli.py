@@ -400,11 +400,25 @@ def test_doctor_command_writes_json(tmp_path):
     assert report["schema_version"] == 1
     assert "checks" in report
     assert "recommended_actions" in report
+    assert "readiness" in report
+    assert "install_guide" in report
     assert "gui" in report
     assert all("category" in check and "impact" in check for check in report["checks"])
     assert isinstance(report["gui"]["ready_for_local_parse"], bool)
     assert isinstance(report["gui"]["ready_for_exports"], bool)
+    assert any(item["id"] == "local_parse" for item in report["readiness"])
     assert any(check["name"] == "Pandoc" and check["required"] is False for check in report["checks"])
+
+
+def test_doctor_report_renders_install_guide():
+    from slidenote.doctor import render_doctor_report, run_doctor
+
+    text = render_doctor_report(run_doctor())
+
+    assert "SlideNote setup guide" in text
+    assert "Readiness:" in text
+    assert "Install guide:" in text or "Local parsing is ready" in text
+    assert "./run_gui.ps1" in text
 
 
 def test_doctor_reports_pywin32_missing_when_parent_package_is_absent(monkeypatch):
