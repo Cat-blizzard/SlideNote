@@ -28,8 +28,8 @@ Ingest -> Understand -> Write -> Guard -> Export
 
 | 阶段 | 当前角色 | 下一步方向 |
 | --- | --- | --- |
-| **Ingest** | 解析 PPT/PDF，生成 `content.json`、`element_ir.json`、`source_map.json`、截图和图片资产。 | MarkItDown 式 parser adapter，允许 Docling、Marker、MinerU 等外部解析器作为可选 adapter。 |
-| **Understand** | 生成章节、页面类型、语义版面、图表理解、Deck Brief。 | 收束为 `deck_understanding.json` 和 `page_understanding.json`。 |
+| **Ingest** | 解析 PPT/PDF，生成 `content.json`、`element_ir.json`、`source_map.json`、截图和图片资产。 | 已引入 parser adapter 架构；内置解析器和 Docling / Marker / MinerU 外部 CLI adapter 通过统一 `Deck` 契约接入。 |
+| **Understand** | 生成章节、页面类型、语义版面、图表理解、Deck Brief。 | 已收束为 `deck_understanding.json` 和 `page_understanding.json`，作为 GUI、Agent 和局部 revise 的稳定认知入口。 |
 | **Write** | 生成 `notes.md`，支持 Lecture-Weave、section context、lecture-notes profile、teaching enrichment。 | 继续把默认高质量路线从“总结”推向“教学重构”。 |
 | **Guard** | coverage、content guard、quality report、review/exam 题目质量检查。 | 加强来源校验、幻觉风险检测和错题复盘闭环。 |
 | **Export** | Markdown、Word、PDF、LaTeX、review/exam pack、GUI 下载。 | 模板系统、课程级导出、多 PPT 整合。 |
@@ -40,9 +40,10 @@ Ingest -> Understand -> Write -> Guard -> Export
 
 已经具备的产品基础：
 
-- 支持 `.pptx` / `.pdf` 解析，`.ppt` 可尝试借助 LibreOffice 转 PDF。
+- 支持 `.pptx` / `.pdf` 解析，`.ppt` 可尝试借助 LibreOffice 转 PDF；解析入口已抽象为 parser adapter，外部 Docling / Marker / MinerU 可选接入。
 - 生成 `content.json`、`element_ir.json`、`source_map.json`、页面截图和图片资产。
 - 支持 OCR、Vision、语义版面增强、表格理解、图片重要性排序、组合图识别、局部图裁剪、图文锚定。
+- 生成 `deck_understanding.json` 和 `page_understanding.json`，统一承载 Deck Brief、章节、页面角色、图表理解和图片排序。
 - 支持 `--preset fast|faithful|lecture`，把底层参数收束成用户侧工作流。
 - 支持 Lecture-Weave、Deck Brief、Content Guard、teaching enrichment 和质量报告。
 - 支持 coverage 报告、review/exam 学习包、题目质量指标和错题复盘 prompt。
@@ -65,15 +66,15 @@ Ingest -> Understand -> Write -> Guard -> Export
    - 检查答案唯一性、干扰项质量、解析充分性和来源覆盖。
    - 图表题保持图文就地嵌入。
 
-3. **统一理解产物**
-   - 设计并落地 `deck_understanding.json`。
-   - 设计并落地 `page_understanding.json`。
-   - 让 Deck Brief、section detection、page role、figure/table understanding、image ranking 收束到更稳定的认知包。
+3. **统一理解产物（已落地，2026-06-03）**
+   - 已生成 `deck_understanding.json`：聚合 Deck Brief、章节、页面角色、关键概念、跨页关联、重要图表。
+   - 已生成 `page_understanding.json`：聚合每页 section、role、modality、key points、表格、图示、语义组和 required items。
+   - Deck Brief、section detection、page role、figure/table understanding、image ranking 已收束为稳定认知包，底层调试产物仍保留。
 
-4. **Parser Adapter 架构**
-   - 先定义内置解析器 adapter 接口。
-   - 再接 Docling / Marker / MinerU 等外部解析器。
-   - 核心 pipeline 不直接绑定某个解析库。
+4. **Parser Adapter 架构（已落地，2026-06-03）**
+   - 已定义内置解析器 adapter 接口，默认 `auto` 仍优先走内置 PPT/PDF 解析。
+   - 已注册 Docling / Marker / MinerU 外部 CLI adapter，可通过 `--parser docling|marker|mineru` 或命令模板环境变量接入。
+   - 核心 pipeline 只依赖统一 `Deck` 数据模型，不直接绑定某个外部解析库。
 
 ### P1：中期能力
 

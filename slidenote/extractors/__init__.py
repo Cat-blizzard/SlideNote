@@ -3,21 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from slidenote.models import Deck
+from slidenote.parser_adapters import (
+    available_parser_choices,
+    extract_deck as _extract_deck_via_adapter,
+    parser_adapter_infos,
+    resolve_parser_adapter,
+)
 
 
-def extract_deck(input_path: Path, output_root: Path) -> Deck:
-    suffix = input_path.suffix.lower()
-    if suffix == ".pptx":
-        from .pptx import extract_pptx
+def extract_deck(input_path: Path, output_root: Path, parser: str = "auto") -> Deck:
+    return _extract_deck_via_adapter(input_path, output_root, parser=parser)
 
-        return extract_pptx(input_path, output_root)
-    if suffix == ".pdf":
-        from .pdf import extract_pdf
 
-        return extract_pdf(input_path, output_root)
-    if suffix == ".ppt":
-        from .ppt import extract_ppt
-
-        return extract_ppt(input_path, output_root)
-    raise ValueError(f"Unsupported input format: {input_path.suffix}")
-
+__all__ = ["available_parser_choices", "extract_deck", "parser_adapter_infos", "resolve_parser_adapter"]
