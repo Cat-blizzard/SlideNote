@@ -53,6 +53,15 @@
 ```powershell
 git clone https://github.com/Cat-blizzard/SlideNote.git
 cd SlideNote
+.\install.ps1
+.\run_gui.ps1
+```
+
+The setup script creates `.venv`, installs SlideNote with GUI/LLM extras, and runs `slidenote doctor`. The GUI lets you paste API keys in the page for a single run, so you do not have to set terminal environment variables first.
+
+Manual setup is still available:
+
+```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev,llm]"
@@ -81,8 +90,7 @@ Open `outputs\lecture\notes.md` after generation. Images are copied into `output
 SlideNote Studio is a Streamlit interface around the same CLI pipeline. It supports uploading PPT/PDF files, entering API keys in the page, selecting presets, watching progress and ETA, reviewing token/cost reports, checking page-level sources, and downloading generated results.
 
 ```powershell
-python -m pip install -e ".[dev,llm,gui]"
-streamlit run gui/app.py
+.\run_gui.ps1
 ```
 
 See [gui/README_GUI.md](gui/README_GUI.md) and [gui/README_GUI.zh-CN.md](gui/README_GUI.zh-CN.md) for GUI details.
@@ -155,6 +163,7 @@ Minimum setup:
 
 - Python `3.10` or newer.
 - A virtual environment is recommended.
+- New users can run `.\install.ps1` and then `.\run_gui.ps1`.
 - `python -m pip install -e ".[dev]"` for local parsing.
 - `python -m pip install -e ".[dev,llm]"` for LLM providers.
 

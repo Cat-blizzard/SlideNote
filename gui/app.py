@@ -26,6 +26,7 @@ except Exception:  # pragma: no cover - GUI fallback only
 
 from gui.studio_core import (
     DEFAULT_MODELS,
+    PROVIDER_ENV_KEYS,
     VISION_DEFAULT_MODELS,
     StudioConfig,
     build_env,
@@ -304,16 +305,19 @@ def main() -> None:
         st.subheader("Connection and runtime overview")
         text_status = _api_status(needs_text_api(preview_config), api_key, provider)
         vision_status = _api_status(_needs_vision_api(preview_config), preview_config.vision_api_key, vision_provider)
+        ocr_status = _ocr_status(preview_config.ocr != "off", ocr_api_key, ocr_secret_key, ocr_provider)
         cache_status = _cache_status(cache_mode, use_global_cache)
         concurrency_status = _concurrency_status(concurrency)
-        grid = st.columns(4)
+        grid = st.columns(5)
         with grid[0]:
             _status_card("Text", *text_status, icon="✦")
         with grid[1]:
             _status_card("Vision", *vision_status, icon="◈")
         with grid[2]:
-            _status_card("Workers", *concurrency_status, icon="⇄")
+            _status_card("OCR", *ocr_status, icon="□")
         with grid[3]:
+            _status_card("Workers", *concurrency_status, icon="⇄")
+        with grid[4]:
             _status_card("Cache", *cache_status, icon="◎")
 
         tips = performance_tips(preview_config)
@@ -326,7 +330,7 @@ def main() -> None:
             st.code(command_for_display(build_slidenote_command(preview_config)), language="bash")
 
         with st.expander("Doctor panel", expanded=False):
-            _render_doctor_panel(text_status=text_status, vision_status=vision_status)
+            _render_doctor_panel(text_status=text_status, vision_status=vision_status, ocr_status=ocr_status)
 
         run_clicked = st.button("🚀 Run SlideNote build", type="primary", use_container_width=True, disabled=uploaded is None)
 
@@ -334,6 +338,8 @@ def main() -> None:
         st.warning("Text LLM is enabled but no API key is entered or configured in the environment.")
     if _needs_vision_api(preview_config) and vision_status[0] == "Missing key":
         st.warning("Vision is enabled but no vision API key was entered or found in the environment.")
+    if preview_config.ocr != "off" and ocr_status[0] == "Missing key":
+        st.warning("OCR is enabled but the selected OCR provider does not have the required key fields.")
 
     if run_clicked and uploaded is not None:
         output_base = OUTPUTS_DIR if save_mode == "Default workspace" else Path(custom_output_base_text).expanduser()
@@ -417,11 +423,28 @@ def _find_libreoffice() -> str | None:
 def _api_status(enabled: bool, typed_key: str | None, provider: str) -> tuple[str, str, str]:
     if not enabled:
         return "Off", "Not used", "muted"
-    env_key = provider_env_key(provider)
-    if typed_key or os.getenv(env_key):
-        source = "page key" if typed_key else env_key
+    env_keys = PROVIDER_ENV_KEYS.get(provider, (provider_env_key(provider),))
+    configured_env = next((key for key in env_keys if os.getenv(key)), None)
+    if typed_key or configured_env:
+        source = "page key" if typed_key else str(configured_env)
         return "Ready", source, "good"
-    return "Missing key", env_key, "bad"
+    return "Missing key", " / ".join(env_keys), "bad"
+
+
+def _ocr_status(enabled: bool, api_key: str | None, secret_key: str | None, provider: str) -> tuple[str, str, str]:
+    if not enabled:
+        return "Off", "Not used", "muted"
+    provider = provider.lower()
+    if provider == "baidu":
+        env_ready = bool(os.getenv("BAIDU_OCR_API_KEY") and os.getenv("BAIDU_OCR_SECRET_KEY"))
+        page_ready = bool(api_key and secret_key)
+        return ("Ready", "page keys" if page_ready else "BAIDU_*", "good") if (page_ready or env_ready) else ("Missing key", "API key + secret", "bad")
+    if provider == "mathpix":
+        env_ready = bool(os.getenv("MATHPIX_APP_ID") and os.getenv("MATHPIX_APP_KEY"))
+        page_ready = bool(api_key and secret_key)
+        return ("Ready", "page keys" if page_ready else "MATHPIX_*", "good") if (page_ready or env_ready) else ("Missing key", "app id + app key", "bad")
+    env_ready = bool(os.getenv("GOOGLE_VISION_API_KEY") or os.getenv("GOOGLE_API_KEY"))
+    return ("Ready", "page key" if api_key else "GOOGLE_*", "good") if (api_key or env_ready) else ("Missing key", "Google Vision key", "bad")
 
 
 def _cache_status(cache_mode: str, use_global_cache: bool) -> tuple[str, str, str]:
@@ -454,24 +477,35 @@ def _needs_vision_api(config: StudioConfig) -> bool:
     return config.vision != "off" or config.figure_crop == "vision" or config.figure_grounding == "vision"
 
 
-def _render_doctor_panel(text_status: tuple[str, str, str], vision_status: tuple[str, str, str]) -> None:
+def _render_doctor_panel(text_status: tuple[str, str, str], vision_status: tuple[str, str, str], ocr_status: tuple[str, str, str]) -> None:
     if run_doctor is None:
         st.warning("Doctor module is unavailable in this environment.")
         return
     report = run_doctor()
     summary = report.get("summary", {})
-    ready = report.get("gui", {})
     d1, d2, d3, d4 = st.columns(4)
     d1.metric("Required missing", summary.get("required_missing", 0))
     d2.metric("Warnings", summary.get("warn", 0))
-    d3.metric("Local parse", "Ready" if ready.get("ready_for_local_parse") else "Blocked")
+    d3.metric("Local parse", _readiness_label(report, "local_parse"))
     d4.metric("Text API", text_status[0])
 
     if summary.get("required_missing", 0):
         st.error("Required dependencies are missing. Local parsing may fail.")
     else:
         st.success("Required local parsing dependencies look ready.")
-    st.caption(f"Vision API: {vision_status[0]} · PPT screenshots: {'Ready' if ready.get('ready_for_ppt_screenshots') else 'Optional tool missing'} · Exports: {'Ready' if ready.get('ready_for_exports') else 'Pandoc optional'} · PDF prefers LibreOffice")
+    st.caption(f"Text API: {text_status[0]} · Vision API: {vision_status[0]} · OCR API: {ocr_status[0]}")
+
+    readiness = report.get("readiness") or []
+    if readiness:
+        st.markdown("**Setup readiness**")
+        cards = st.columns(3)
+        for index, item in enumerate(readiness):
+            ready = bool(item.get("ready"))
+            required = bool(item.get("required"))
+            tone = "good" if ready else ("bad" if required else "muted")
+            status = "Ready" if ready else ("Blocked" if required else "Optional")
+            with cards[index % 3]:
+                _status_card(str(item.get("label", "")), status, str(item.get("detail", "")), tone)
 
     checks = report.get("checks", [])
     if checks:
@@ -488,11 +522,20 @@ def _render_doctor_panel(text_status: tuple[str, str, str], vision_status: tuple
         st.dataframe(compact, use_container_width=True, hide_index=True)
     actions = report.get("recommended_actions") or []
     if actions:
-        with st.expander("Recommended fixes", expanded=False):
+        with st.expander("Install guide", expanded=bool(summary.get("required_missing", 0))):
             for action in actions:
                 st.markdown(f"**{action.get('title')}** — {action.get('detail')}")
+                if action.get("skip"):
+                    st.caption(f"Can skip: {action.get('skip')}")
                 if action.get("fix"):
                     st.code(str(action.get("fix")), language="bash")
+
+
+def _readiness_label(report: dict[str, Any], key: str) -> str:
+    for item in report.get("readiness") or []:
+        if item.get("id") == key:
+            return "Ready" if item.get("ready") else "Blocked"
+    return "Unknown"
 
 
 def _clone_config_for_run(config: StudioConfig, input_path: Path, output_dir: Path, progress_json: Path) -> StudioConfig:

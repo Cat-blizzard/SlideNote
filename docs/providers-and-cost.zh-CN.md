@@ -7,6 +7,7 @@
 最低运行环境：
 
 - Python `3.10+`。
+- 简单入口：在仓库根目录运行 `.\install.ps1`，然后运行 `.\run_gui.ps1`。
 - `python -m pip install -e ".[dev]"`：本地解析、规则草稿、测试依赖。
 - `python -m pip install -e ".[dev,llm]"`：LLM provider 支持。
 
