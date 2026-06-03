@@ -89,6 +89,22 @@ python -m slidenote build lecture.pdf `
 | `faithful` | 保真覆盖和来源追踪优先。 | `--note-style faithful`、`--note-strategy lecture-weave`、`--note-context section`、`--note-depth detailed`、`--deck-brief auto`、`--content-guard auto`。 |
 | `lecture` | 教师讲义式详细笔记。 | `--note-profile lecture-notes`、`--note-strategy lecture-weave`、`--note-context section`、`--deck-brief auto`、`--content-guard auto`、`--teaching-enrichment auto`；未显式指定 `--note-depth` 时使用 `very-detailed`。 |
 
+## 解析器 Adapter
+
+| 参数 | 默认值 | 可选值 / 格式 | 说明 |
+| --- | --- | --- | --- |
+| `--parser` | `auto` | `auto` / `builtin` / `docling` / `marker` / `mineru` | 解析器 adapter。`auto` 优先使用内置 PPTX/PPT/PDF 解析；外部 adapter 会调用对应 CLI，并把 JSON / Markdown 输出归一成 SlideNote 的 `Deck` 数据模型。 |
+
+外部 adapter 是可选能力，不会给默认安装增加依赖：
+
+| Adapter | 默认 CLI 候选 | 命令模板环境变量 | 说明 |
+| --- | --- | --- | --- |
+| `docling` | `docling` | `SLIDENOTE_DOCLING_COMMAND` | 可用于 PDF/PPTX/PPT/DOCX/HTML 等文档，输出会尝试读取 JSON 或 Markdown。 |
+| `marker` | `marker_single` / `marker` | `SLIDENOTE_MARKER_COMMAND` | 面向 PDF 的外部解析器 adapter。 |
+| `mineru` | `mineru` / `magic-pdf` | `SLIDENOTE_MINERU_COMMAND` | 面向 PDF 的外部解析器 adapter。 |
+
+命令模板支持 `{input}`、`{out}`、`{output}`、`{stem}` 占位符，例如把解析结果写入 `{out}` 目录。核心 pipeline 只依赖 adapter 返回的统一 `Deck`，不会直接绑定某个外部解析库。
+
 ## LLM 与笔记生成
 
 | 参数 | 默认值 | 可选值 / 格式 | 说明 |
@@ -320,6 +336,8 @@ image_importance.json
 sections.json
 deck_brief.md
 deck_brief.json
+deck_understanding.json
+page_understanding.json
 content_guard.json
 notes.md
 page_notes.md

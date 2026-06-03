@@ -117,8 +117,8 @@ Ingest -> Understand -> Write -> Guard -> Export
 
 | Stage | Purpose | Main artifacts |
 | --- | --- | --- |
-| **1. Ingest** | Parse PPT/PDF into stable, traceable structure. | `content.json`, `element_ir.json`, `source_map.json`, screenshots, assets |
-| **2. Understand** | Decide what the courseware is teaching. | `sections.json`, `deck_brief.json`, `semantic_layout.json`, figure/table understanding |
+| **1. Ingest** | Parse PPT/PDF into stable, traceable structure. | `content.json`, `element_ir.json`, `source_map.json`, screenshots, assets, parser adapters |
+| **2. Understand** | Decide what the courseware is teaching. | `deck_understanding.json`, `page_understanding.json`, `sections.json`, `deck_brief.json`, figure/table understanding |
 | **3. Write** | Turn structured material into readable study notes. | `notes.md`, Lecture-Weave page notes, teaching enrichment |
 | **4. Guard** | Check faithfulness, coverage, and study quality. | `coverage.json`, `coverage.md`, `content_guard.json`, `quality_report.json` |
 | **5. Export** | Publish notes and reports. | `notes.toc.md`, `notes.docx`, `notes.pdf`, `notes.tex`, review/exam packs |
@@ -235,7 +235,7 @@ README is intentionally kept as a landing page. Detailed behavior lives in the d
 | Experimental Claude backend | [docs/claude-backend.zh-CN.md](docs/claude-backend.zh-CN.md) |
 | Roadmap design notes | [docs/roadmap/extension-notes.zh-CN.md](docs/roadmap/extension-notes.zh-CN.md) |
 
-The main output is `notes.md`. Depending on options, SlideNote can also write `content.json`, `element_ir.json`, `source_map.json`, `coverage.md`, `quality_report.json`, `review.md`, `exam.md`, `exam.json`, `exam.html`, `notes.docx`, `notes.pdf`, and other reports.
+The main output is `notes.md`. Depending on options, SlideNote can also write `content.json`, `deck_understanding.json`, `page_understanding.json`, `element_ir.json`, `source_map.json`, `coverage.md`, `quality_report.json`, `review.md`, `exam.md`, `exam.json`, `exam.html`, `notes.docx`, `notes.pdf`, and other reports.
 
 ## Future Outlook
 

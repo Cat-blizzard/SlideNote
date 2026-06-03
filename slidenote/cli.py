@@ -16,6 +16,7 @@ from slidenote.build_pipeline import (
 from slidenote.agent_backend import AgentBackendError, run_agent_build, run_agent_pack, run_agent_run
 from slidenote.agent_eval import run_agent_eval
 from slidenote.doctor import render_doctor_report, run_doctor
+from slidenote.extractors import available_parser_choices
 from slidenote.llm import supported_provider_names
 from slidenote.utils import write_json
 
@@ -50,8 +51,14 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     build = subparsers.add_parser("build", help="Build notes from a PPTX/PPT/PDF file.")
-    build.add_argument("input", type=Path, help="Input .pptx, .ppt, or .pdf file.")
+    build.add_argument("input", type=Path, help="Input .pptx, .ppt, .pdf, or an external-parser-supported file.")
     build.add_argument("--out", type=Path, default=Path("outputs") / "slidenote", help="Output directory.")
+    build.add_argument(
+        "--parser",
+        choices=available_parser_choices(),
+        default="auto",
+        help="Parser adapter. auto uses the built-in PPT/PDF parser first; docling/marker/mineru use optional external CLI adapters.",
+    )
     build.add_argument(
         "--preset",
         choices=["auto", "fast", "faithful", "lecture"],

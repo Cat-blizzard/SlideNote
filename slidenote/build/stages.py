@@ -36,6 +36,7 @@ from slidenote.study_pack import (
     render_wrong_answer_review_prompt,
 )
 from slidenote.table_understanding import enrich_deck_with_table_understanding
+from slidenote.understanding import build_understanding_reports
 from slidenote.visual.crop import enrich_deck_with_composite_figures, enrich_deck_with_figures
 from slidenote.visual.grounding import enrich_deck_with_figure_grounding
 from slidenote.visual.semantic_layout import enrich_deck_with_semantic_layout
@@ -45,7 +46,7 @@ from slidenote.modality import enrich_deck_with_modalities
 
 def _stage_parse(state: BuildState) -> None:
     state.progress.start_stage("parse", message=f"Parsing {state.input_path.name}")
-    state.deck = extract_deck(state.input_path, state.output_root)
+    state.deck = extract_deck(state.input_path, state.output_root, parser=getattr(state.args, "parser", "auto"))
     state.progress.finish_stage(f"Parsed {len(state.deck.pages)} pages")
 
 
@@ -328,6 +329,27 @@ def _stage_content_guard(state: BuildState) -> None:
     state.progress.finish_stage("Content guard complete")
 
 
+def _stage_understanding(state: BuildState) -> None:
+    deck = _require_deck(state)
+    state.progress.start_stage("understanding", message="Building understanding packages")
+    deck_understanding, page_understanding = build_understanding_reports(
+        deck,
+        section_plan=state.section_report,
+        deck_brief_report=state.deck_brief_report,
+        modality_report=state.modality_report,
+        table_understanding_report=state.table_understanding_report,
+        semantic_layout_report=state.semantic_layout_report,
+        image_importance_report=state.image_importance_report,
+        figure_grounding_report=state.figure_grounding_report,
+        content_guard_report=state.content_guard_report,
+    )
+    state.deck_understanding_report = deck_understanding
+    state.page_understanding_report = page_understanding
+    state.artifacts.write_json("deck_understanding", "deck_understanding.json", deck_understanding)
+    state.artifacts.write_json("page_understanding", "page_understanding.json", page_understanding)
+    state.progress.finish_stage("Understanding packages complete")
+
+
 def _stage_export_content(state: BuildState) -> None:
     deck = _require_deck(state)
     state.progress.start_stage("export_content", message="Writing structured content")
@@ -533,6 +555,8 @@ def _stage_run_summary(state: BuildState) -> None:
         image_importance_report=state.image_importance_report,
         section_report=state.section_report or {},
         deck_brief_report=state.deck_brief_report,
+        deck_understanding_report=state.deck_understanding_report,
+        page_understanding_report=state.page_understanding_report,
         composite_figure_report=state.composite_figure_report,
         figure_report=state.figure_report,
         figure_grounding_report=state.figure_grounding_report,
@@ -576,6 +600,10 @@ def _print_build_outputs(state: BuildState) -> None:
         print(f"- deck brief: {output_root / 'deck_brief.json'}")
     if state.content_guard_report is not None:
         print(f"- content guard: {output_root / 'content_guard.json'}")
+    if state.deck_understanding_report is not None:
+        print(f"- deck understanding: {output_root / 'deck_understanding.json'}")
+    if state.page_understanding_report is not None:
+        print(f"- page understanding: {output_root / 'page_understanding.json'}")
     print(f"- progress: {state.progress.path}")
     print(f"- summary:  {output_root / 'run_summary.json'}")
     if state.image_importance_report is not None:
@@ -645,6 +673,7 @@ BUILD_STAGES = (
     _stage_sections,
     _stage_deck_brief,
     _stage_content_guard,
+    _stage_understanding,
     _stage_export_content,
     _stage_notes,
     _stage_coverage,

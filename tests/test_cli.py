@@ -82,6 +82,8 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     page_modalities = json.loads((out / "page_modalities.json").read_text(encoding="utf-8"))
     table_understanding = json.loads((out / "table_understanding.json").read_text(encoding="utf-8"))
     semantic_layout = json.loads((out / "semantic_layout.json").read_text(encoding="utf-8"))
+    deck_understanding = json.loads((out / "deck_understanding.json").read_text(encoding="utf-8"))
+    page_understanding = json.loads((out / "page_understanding.json").read_text(encoding="utf-8"))
     element_ir = json.loads((out / "element_ir.json").read_text(encoding="utf-8"))
     quality_report = json.loads((out / "quality_report.json").read_text(encoding="utf-8"))
     sections = json.loads((out / "sections.json").read_text(encoding="utf-8"))
@@ -95,6 +97,8 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["artifacts"]["page_modalities"] == "page_modalities.json"
     assert run_summary["artifacts"]["table_understanding"] == "table_understanding.json"
     assert run_summary["artifacts"]["semantic_layout"] == "semantic_layout.json"
+    assert run_summary["artifacts"]["deck_understanding"] == "deck_understanding.json"
+    assert run_summary["artifacts"]["page_understanding"] == "page_understanding.json"
     assert run_summary["artifacts"]["element_ir"] == "element_ir.json"
     assert run_summary["artifacts"]["quality_report"] == "quality_report.json"
     assert run_summary["artifacts"]["registered"]["quality_report"] == "quality_report.json"
@@ -109,6 +113,10 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert table_understanding["summary"]["tables_total"] == 0
     assert run_summary["table_understanding"]["tables_total"] == 0
     assert semantic_layout["summary"]["pages_total"] == 1
+    assert deck_understanding["summary"]["pages_total"] == 1
+    assert page_understanding["summary"]["pages_total"] == 1
+    assert run_summary["deck_understanding"]["pages_total"] == 1
+    assert run_summary["page_understanding"]["pages_total"] == 1
     assert element_ir["schema_version"] == 1
     assert "normalized_bbox" in element_ir["schema_features"]
     assert element_ir["pages"][0]["slide_id"] == 1
@@ -135,6 +143,7 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["artifacts"]["note_assets"] == "notes.assets"
     assert source_map["default_display_mode"] == "hidden"
     assert run_summary["run"]["preset"] == "auto"
+    assert run_summary["run"]["parser"] == "auto"
     assert run_summary["run"]["note_language"] == "zh"
     assert run_summary["run"]["note_profile"] == "auto"
     assert run_summary["run"]["teaching_enrichment"] == "auto"
@@ -274,6 +283,7 @@ def test_quality_first_defaults_are_exposed_by_parser():
 
     assert args.speed_mode == "quality"
     assert args.preset == "auto"
+    assert args.parser == "auto"
     assert args.vision == "auto"
     assert args.vision_provider == "qwen"
     _apply_note_profile_defaults(args)

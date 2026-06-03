@@ -39,6 +39,8 @@ class BuildState:
     section_report: dict[str, Any] | None = None
     deck_brief_report: dict[str, Any] | None = None
     content_guard_report: dict[str, Any] | None = None
+    deck_understanding_report: dict[str, Any] | None = None
+    page_understanding_report: dict[str, Any] | None = None
     notes_result: NoteGenerationResult | None = None
     notes_markdown: str = ""
     coverage_report: dict[str, Any] | None = None
