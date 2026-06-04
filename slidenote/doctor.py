@@ -143,7 +143,7 @@ def render_doctor_report(report: dict[str, Any]) -> str:
             "",
             "Useful starts:",
             "- GUI: ./run_gui.ps1",
-            "- Local preview: python -m slidenote build lecture.pdf --out outputs/lecture --vision off",
+            "- Local preview: python -m slidenote build lecture.pdf --out outputs/local --preset local --export markdown-zip",
             "- Recheck: python -m slidenote doctor",
         ]
     )

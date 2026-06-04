@@ -46,7 +46,7 @@ streamlit run gui/app.py
 
 ## First Test
 
-Start with **Local preview**. It checks parsing and basic output without any API calls.
+Start with **Local preview**. It checks parsing and basic output without any API calls. The first-run check passes when the results page shows both `notes.md` and the shareable `notes.zip`.
 
 For production notes, use **Lecture quality**, enter a Text API key, keep Vision=`auto` for image-heavy slides, and add a Qwen/DashScope vision key. Scanned PDFs may also need OCR credentials.
 
