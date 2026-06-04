@@ -121,7 +121,7 @@ Ingest -> Understand -> Write -> Guard -> Export
 | **2. Understand** | Decide what the courseware is teaching. | `deck_understanding.json`, `page_understanding.json`, `sections.json`, `deck_brief.json`, figure/table understanding |
 | **3. Write** | Turn structured material into readable study notes. | `notes.md`, Lecture-Weave page notes, teaching enrichment |
 | **4. Guard** | Check faithfulness, coverage, and study quality. | `coverage.json`, `coverage.md`, `content_guard.json`, `quality_report.json` |
-| **5. Export** | Publish notes and reports. | `notes.toc.md`, `notes.docx`, `notes.pdf`, `notes.tex`, review/exam packs |
+| **5. Export** | Publish notes and reports. | `notes.zip`, `notes.toc.md`, `notes.docx`, `notes.pdf`, `notes.tex`, review/exam packs |
 
 More detail: [SlideNote Pipeline](docs/pipeline.zh-CN.md).
 
@@ -235,7 +235,7 @@ README is intentionally kept as a landing page. Detailed behavior lives in the d
 | Experimental Claude backend | [docs/claude-backend.zh-CN.md](docs/claude-backend.zh-CN.md) |
 | Roadmap design notes | [docs/roadmap/extension-notes.zh-CN.md](docs/roadmap/extension-notes.zh-CN.md) |
 
-The main output is `notes.md`. Depending on options, SlideNote can also write `content.json`, `deck_understanding.json`, `page_understanding.json`, `element_ir.json`, `source_map.json`, `coverage.md`, `quality_report.json`, `review.md`, `exam.md`, `exam.json`, `exam.html`, `notes.docx`, `notes.pdf`, and other reports.
+The main output is `notes.md`. To share Markdown notes with images, export `notes.zip`; it contains `notes.md` and the `notes.assets/` image folder. Depending on options, SlideNote can also write `content.json`, `deck_understanding.json`, `page_understanding.json`, `element_ir.json`, `source_map.json`, `coverage.md`, `quality_report.json`, `review.md`, `exam.md`, `exam.json`, `exam.html`, `notes.docx`, `notes.pdf`, and other reports.
 
 ## Future Outlook
 

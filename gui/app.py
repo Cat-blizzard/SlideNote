@@ -180,12 +180,19 @@ def main() -> None:
         exam_mode = study_generation if exam_enabled else "off"
 
         st.header("6. Exports")
-        st.caption("Optional final files generated from notes.md. Word/LaTeX need Pandoc; PDF is generated from Word via LibreOffice for stable Chinese/CJK layout. Markdown TOC works without Pandoc.")
+        st.caption("Optional final files generated from notes.md. Markdown ZIP/TOC work without Pandoc; Word/LaTeX need Pandoc; PDF uses LibreOffice for stable Chinese/CJK layout.")
+        export_markdown_zip = st.checkbox(
+            "Markdown note package (.zip)",
+            value=True,
+            help="Recommended for sharing Markdown notes. The ZIP contains notes.md and notes.assets so images render on another computer.",
+        )
+        if export_markdown_zip:
+            st.info("Reminder: the shareable Markdown notes are inside notes.zip with their image assets.")
         export_markdown_toc = st.checkbox("Markdown with table of contents (.md)", value=True)
         export_docx = st.checkbox("Word document (.docx)", value=False)
         export_pdf = st.checkbox("PDF handout (.pdf)", value=False)
         export_latex = st.checkbox("LaTeX source (.tex)", value=False)
-        export_options = _selected_export_formats(export_markdown_toc, export_docx, export_pdf, export_latex)
+        export_options = _selected_export_formats(export_markdown_zip, export_markdown_toc, export_docx, export_pdf, export_latex)
         _render_export_readiness(export_options)
 
     col_left, col_right = st.columns([0.95, 1.05], gap="large")
@@ -246,7 +253,7 @@ def main() -> None:
         with st.expander("Export and display", expanded=False):
             source_display = st.selectbox("Source display", ["hidden", "footnote", "inline"], index=0)
             screenshot_policy = st.selectbox("Screenshot policy", ["fallback", "never", "always"], index=0)
-            st.caption("Export formats are configured in the sidebar under '5. Exports'.")
+            st.caption("Export formats are configured in the sidebar under '6. Exports'.")
             st.write(", ".join(export_options) if export_options else "No extra exports selected")
 
     preview_config = StudioConfig(
@@ -380,8 +387,10 @@ def _render_hero() -> None:
     )
 
 
-def _selected_export_formats(markdown_toc: bool, docx: bool, pdf: bool, latex: bool) -> list[str]:
+def _selected_export_formats(markdown_zip: bool, markdown_toc: bool, docx: bool, pdf: bool, latex: bool) -> list[str]:
     selected: list[str] = []
+    if markdown_zip:
+        selected.append("markdown-zip")
     if markdown_toc:
         selected.append("markdown-toc")
     if docx:
@@ -674,7 +683,10 @@ def _render_results(output_dir: Path) -> None:
 
 def _render_quick_downloads(output_dir: Path, outputs: dict[str, Path]) -> None:
     c1, c2, c3, c4 = st.columns(4)
-    if outputs.get("notes"):
+    if outputs.get("notes_zip"):
+        c1.download_button("Download Markdown notes ZIP", data=outputs["notes_zip"].read_bytes(), file_name="notes.zip", mime="application/zip", use_container_width=True)
+        st.info("Reminder: the shareable Markdown notes are inside notes.zip with their image assets.")
+    elif outputs.get("notes"):
         c1.download_button("Download notes.md", data=outputs["notes"].read_bytes(), file_name="notes.md", mime="text/markdown", use_container_width=True)
     else:
         c1.button("notes.md not found", disabled=True, use_container_width=True)
@@ -688,11 +700,11 @@ def _render_quick_downloads(output_dir: Path, outputs: dict[str, Path]) -> None:
         c3.button("cost_report.md not found", disabled=True, use_container_width=True)
     c4.download_button("Download all results (.zip)", data=_zip_output_dir(output_dir), file_name=f"{output_dir.name}.zip", mime="application/zip", use_container_width=True)
 
-    exported = [("Word", outputs.get("docx")), ("PDF", outputs.get("pdf")), ("LaTeX", outputs.get("latex")), ("TOC Markdown", outputs.get("notes_toc"))]
+    exported = [("Markdown ZIP", outputs.get("notes_zip")), ("Word", outputs.get("docx")), ("PDF", outputs.get("pdf")), ("LaTeX", outputs.get("latex")), ("TOC Markdown", outputs.get("notes_toc"))]
     available = [(label, path) for label, path in exported if path]
     if available:
         st.caption("Exported files")
-        cols = st.columns(min(4, len(available)))
+        cols = st.columns(min(5, len(available)))
         for col, (label, path) in zip(cols, available):
             col.download_button(f"Download {label}", data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path), use_container_width=True)
     study_files = [("Review", outputs.get("review")), ("Exam", outputs.get("exam")), ("Exam HTML", outputs.get("exam_html"))]
@@ -739,6 +751,7 @@ def _render_exports_tab(output_dir: Path) -> None:
     outputs = discover_outputs(output_dir)
     export_report = _read_json(output_dir / "export_report.json")
     export_paths = [
+        ("Markdown ZIP", outputs.get("notes_zip"), "notes.zip"),
         ("Markdown TOC", outputs.get("notes_toc"), "notes.toc.md"),
         ("Word", outputs.get("docx"), "notes.docx"),
         ("PDF", outputs.get("pdf"), "notes.pdf"),
@@ -751,9 +764,11 @@ def _render_exports_tab(output_dir: Path) -> None:
 
     ready = [(label, path) for label, path, _ in export_paths if path]
     if ready:
-        cols = st.columns(min(4, len(ready)))
+        cols = st.columns(min(5, len(ready)))
         for col, (label, path) in zip(cols, ready):
             col.download_button(f"Download {label}", data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path), use_container_width=True)
+        if outputs.get("notes_zip"):
+            st.info("Reminder: the Markdown notes are inside notes.zip with notes.assets.")
     else:
         st.info("No extra export files were generated. Select export formats in the sidebar before running the build.")
 
@@ -1024,6 +1039,8 @@ def _mime_for_path(path: Path) -> str:
         return "application/pdf"
     if suffix == ".tex":
         return "application/x-tex"
+    if suffix == ".zip":
+        return "application/zip"
     return "application/octet-stream"
 
 

@@ -169,6 +169,7 @@ def _build_run_summary(
             "final_exam_answers": "final_exam.answers.md" if study_pack_report and study_pack_report.get("final_exam") else None,
             "wrong_answer_review_prompt": "wrong_answer_review_prompt.md" if study_pack_report and study_pack_report.get("wrong_answer_review") else None,
             "export_report": "export_report.json" if export_report else None,
+            "notes_zip": _export_artifact_path(export_report, "markdown-zip"),
             "notes_toc": _export_artifact_path(export_report, "markdown-toc"),
             "notes_docx": _export_artifact_path(export_report, "docx"),
             "notes_pdf": _export_artifact_path(export_report, "pdf"),

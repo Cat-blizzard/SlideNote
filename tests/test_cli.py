@@ -1,4 +1,5 @@
 import json
+import zipfile
 from argparse import Namespace
 from pathlib import Path
 
@@ -450,7 +451,7 @@ def test_doctor_reports_pywin32_missing_when_parent_package_is_absent(monkeypatc
     assert pywin32_check["required"] is False
 
 
-def test_build_can_export_markdown_with_toc_without_pandoc(tmp_path, monkeypatch):
+def test_build_can_export_markdown_package_and_toc_without_pandoc(tmp_path, monkeypatch):
     monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: None)
     source = tmp_path / "lecture.pdf"
     doc = fitz.open()
@@ -460,16 +461,20 @@ def test_build_can_export_markdown_with_toc_without_pandoc(tmp_path, monkeypatch
     doc.close()
     out = tmp_path / "out"
 
-    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--vision", "off", "--export", "markdown-toc"])
+    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--vision", "off", "--export", "markdown-zip,markdown-toc"])
 
     assert exit_code == 0
     toc_markdown = (out / "notes.toc.md").read_text(encoding="utf-8")
     export_report = json.loads((out / "export_report.json").read_text(encoding="utf-8"))
     run_summary = json.loads((out / "run_summary.json").read_text(encoding="utf-8"))
     assert "## 目录" in toc_markdown
-    assert export_report["summary"]["succeeded"] == 1
+    assert export_report["summary"]["succeeded"] == 2
+    assert "Markdown notes are inside notes.zip" in export_report["messages"][0]
+    assert run_summary["artifacts"]["notes_zip"] == "notes.zip"
     assert run_summary["artifacts"]["notes_toc"] == "notes.toc.md"
     assert run_summary["warnings"]["export"] == []
+    with zipfile.ZipFile(out / "notes.zip") as archive:
+        assert "notes.md" in archive.namelist()
     assert not (out / "notes.docx").exists()
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from gui.studio_core import StudioConfig, build_env, build_slidenote_command, command_for_display, performance_tips, safe_run_name
+from gui.studio_core import StudioConfig, build_env, build_slidenote_command, command_for_display, discover_outputs, performance_tips, safe_run_name
 
 
 def test_command_builds_gui_options_and_redacts_keys(tmp_path: Path):
@@ -81,6 +81,19 @@ def test_study_pack_llm_mode_uses_text_env_without_llm_notes(tmp_path: Path):
     assert "--use-llm" not in cmd
     assert cmd[cmd.index("--provider") + 1] == "deepseek"
     assert env["DEEPSEEK_API_KEY"] == "deep-key"
+
+
+def test_discover_outputs_includes_markdown_zip_and_exports(tmp_path: Path):
+    for filename in ("notes.zip", "notes.toc.md", "notes.docx", "notes.pdf", "notes.tex"):
+        (tmp_path / filename).write_bytes(b"x")
+
+    outputs = discover_outputs(tmp_path)
+
+    assert outputs["notes_zip"] == tmp_path / "notes.zip"
+    assert outputs["notes_toc"] == tmp_path / "notes.toc.md"
+    assert outputs["docx"] == tmp_path / "notes.docx"
+    assert outputs["pdf"] == tmp_path / "notes.pdf"
+    assert outputs["latex"] == tmp_path / "notes.tex"
 
 
 def test_vision_key_env_is_used_for_figure_vision_mode(tmp_path: Path):

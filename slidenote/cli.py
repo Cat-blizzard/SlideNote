@@ -104,7 +104,7 @@ def _build_parser() -> argparse.ArgumentParser:
     build.add_argument(
         "--export",
         default=None,
-        help="Comma-separated extra export formats: markdown-toc, docx, pdf, latex, or all.",
+        help="Comma-separated extra export formats: markdown-zip, markdown-toc, docx, pdf, latex, or all.",
     )
     build.add_argument(
         "--review-mode",
