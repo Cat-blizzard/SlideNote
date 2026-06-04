@@ -72,6 +72,8 @@ For a local preview without API calls:
 python -m slidenote build path\to\lecture.pdf --out outputs\local --preset local --export markdown-zip
 ```
 
+After the first install, run this Local preview command first. Confirm that `notes.md` and the shareable `notes.zip` are generated before switching to the `lecture` quality workflow.
+
 For higher-quality notes with visual understanding:
 
 ```powershell

@@ -9,6 +9,9 @@ from slidenote.llm import get_provider_spec
 
 def _friendly_build_error(exc: Exception, args: argparse.Namespace) -> str | None:
     message = str(exc)
+    ocr_message = _friendly_ocr_key_error(message, args)
+    if ocr_message:
+        return ocr_message
     if "Missing API key for provider `" not in message:
         return None
     provider = _provider_from_missing_key_error(message)
@@ -38,8 +41,8 @@ def _friendly_build_error(exc: Exception, args: argparse.Namespace) -> str | Non
             feature_text = "/".join(features) or "vision"
             return (
                 f"当前启用了 {feature_text}，但视觉模型 provider `{vision_spec.canonical_name}` 没有可用 API key。\n"
-                f"请设置环境变量：{envs}。\n"
-                "如果暂时没有视觉 API key，请使用 `--vision off`；如果想完全离线生成，请使用 `--preset local`。"
+                f"请设置环境变量：{envs}，或在 GUI 页面里填写 Vision API key。\n"
+                "如果暂时没有视觉 API key，请使用 `--vision off`；如果想完全离线首跑，请使用 `--preset local`。"
             )
 
     if args.use_llm:
@@ -51,9 +54,33 @@ def _friendly_build_error(exc: Exception, args: argparse.Namespace) -> str | Non
             envs = ", ".join(text_spec.api_key_envs)
             return (
                 f"当前默认的 `lecture` preset 会启用文本模型，但 provider `{text_spec.canonical_name}` 没有可用 API key。\n"
-                f"请设置环境变量：{envs}。\n"
-                "如果只想先生成本地规则草稿，请使用 `--preset local`。"
+                f"请设置环境变量：{envs}，或在 GUI 页面里填写 Text API key。\n"
+                "如果只想先验证解析和本地输出，请使用 `--preset local`。"
             )
+    return None
+
+
+def _friendly_ocr_key_error(message: str, args: argparse.Namespace) -> str | None:
+    if getattr(args, "command", "build") != "build":
+        return None
+    if "Baidu OCR requires" in message:
+        return (
+            "当前 `lecture` preset 的 OCR auto 需要百度 OCR key，但没有找到可用凭据。\n"
+            "请设置环境变量：BAIDU_OCR_API_KEY 和 BAIDU_OCR_SECRET_KEY，或在 GUI 页面里填写 OCR API key 和 secret。\n"
+            "如果只是第一次验证本地解析和 Markdown 输出，请使用 `--preset local`。"
+        )
+    if "Mathpix OCR requires" in message:
+        return (
+            "当前 OCR auto 需要 Mathpix OCR key，但没有找到可用凭据。\n"
+            "请设置环境变量：MATHPIX_APP_ID 和 MATHPIX_APP_KEY，或在 GUI 页面里填写 OCR API key 和 secret。\n"
+            "如果只是第一次验证本地解析和 Markdown 输出，请使用 `--preset local`。"
+        )
+    if "Google Vision OCR requires" in message:
+        return (
+            "当前 OCR auto 需要 Google Vision OCR key，但没有找到可用凭据。\n"
+            "请设置环境变量：GOOGLE_VISION_API_KEY 或 GOOGLE_API_KEY，或在 GUI 页面里填写 OCR API key。\n"
+            "如果只是第一次验证本地解析和 Markdown 输出，请使用 `--preset local`。"
+        )
     return None
 
 

@@ -136,3 +136,13 @@ def test_gui_api_status_accepts_provider_alias_env(monkeypatch):
     monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-key")
 
     assert _api_status(True, "", "qwen") == ("Ready", "DASHSCOPE_API_KEY", "good")
+
+
+def test_gui_first_run_surface_has_two_presets_and_markdown_zip_default():
+    pytest.importorskip("streamlit")
+    from gui.app import PRESETS, _selected_export_formats
+
+    assert list(PRESETS) == ["Lecture quality", "Local preview"]
+    assert PRESETS["Lecture quality"] == {"preset": "lecture", "vision": "auto"}
+    assert PRESETS["Local preview"] == {"preset": "local", "vision": "off"}
+    assert _selected_export_formats(True, False, False, False, False) == ["markdown-zip"]

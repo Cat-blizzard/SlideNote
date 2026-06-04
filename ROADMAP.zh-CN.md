@@ -44,7 +44,7 @@ Ingest -> Understand -> Write -> Guard -> Export
 - 生成 `content.json`、`element_ir.json`、`source_map.json`、页面截图和图片资产。
 - 支持 OCR、Vision、语义版面增强、表格理解、图片重要性排序、组合图识别、局部图裁剪、图文锚定。
 - 生成 `deck_understanding.json` 和 `page_understanding.json`，统一承载 Deck Brief、章节、页面角色、图表理解和图片排序。
-- 支持 `--preset fast|faithful|lecture`，把底层参数收束成用户侧工作流。
+- 支持 `--preset lecture|local`，把底层参数收束成默认高质量讲义和无 API 本地预览两条用户侧工作流。
 - 支持 Lecture-Weave、Deck Brief、Content Guard、teaching enrichment 和质量报告。
 - 支持 coverage 报告、review/exam 学习包、题目质量指标和错题复盘 prompt。
 - 支持 LLM/OCR/Vision 缓存、并发、用量报告、`progress.json`、`run_summary.json` 和 GUI。
@@ -128,5 +128,5 @@ SlideNote 带着一个乐观前提在建设：未来 AI 会更强、更快、更
 - **不要把确定性工程交给 LLM。** 元素 ID、source map、缓存、导出、成本统计应保持稳定。
 - **让 LLM 做它擅长的事。** 章节理解、图表解释、讲义写作、易错点、自测题和语义修复适合模型参与。
 - **Coverage 是质检器，不是写作模板。** 正文应该像讲义，coverage 负责最后查漏和局部修补。
-- **Preset 是用户入口。** 底层参数保留给高级用户，普通用户应优先看到 `fast|faithful|lecture`。
+- **Preset 是用户入口。** 普通用户应优先看到 `lecture|local`；底层质量、缓存、并发、OCR/Vision 细节尽量留在内部默认里。
 - **保留项目气质。** 起源、愿景、致谢和对未来 AI 红利的期待属于 README，不是可以随手迁走的噪音。

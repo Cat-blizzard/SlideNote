@@ -72,6 +72,8 @@ python -m slidenote doctor
 python -m slidenote build path\to\lecture.pdf --out outputs\local --preset local --export markdown-zip
 ```
 
+第一次安装后建议先跑这条 Local preview 命令，确认 `notes.md` 和可分享的 `notes.zip` 都能生成，再切换到 `lecture` 质量模式。
+
 如果想生成带图片理解的高质量讲义式笔记：
 
 ```powershell

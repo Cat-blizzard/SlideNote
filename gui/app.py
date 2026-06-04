@@ -348,13 +348,13 @@ def _render_doctor_panel(text_status: tuple[str, str, str], vision_status: tuple
         st.dataframe(compact, use_container_width=True, hide_index=True)
     actions = report.get("recommended_actions") or []
     if actions:
-        with st.expander("Install guide", expanded=bool(summary.get("required_missing", 0))):
-            for action in actions:
-                st.markdown(f"**{action.get('title')}** — {action.get('detail')}")
-                if action.get("skip"):
-                    st.caption(f"Can skip: {action.get('skip')}")
-                if action.get("fix"):
-                    st.code(str(action.get("fix")), language="bash")
+        st.markdown("**Install guide**")
+        for action in actions:
+            st.markdown(f"**{action.get('title')}** — {action.get('detail')}")
+            if action.get("skip"):
+                st.caption(f"Can skip: {action.get('skip')}")
+            if action.get("fix"):
+                st.code(str(action.get("fix")), language="bash")
 
 
 def _readiness_label(report: dict[str, Any], key: str) -> str:

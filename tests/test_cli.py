@@ -261,8 +261,79 @@ def test_missing_default_vision_key_prints_text_mode_hint(tmp_path, monkeypatch,
     assert exit_code == 2
     assert "当前启用了 vision" in captured.err
     assert "DASHSCOPE_API_KEY" in captured.err
+    assert "GUI 页面里填写 Vision API key" in captured.err
     assert "--vision off" in captured.err
     assert "--preset local" in captured.err
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+
+
+def test_missing_default_text_key_prints_env_gui_or_local_hint(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    source = tmp_path / "lecture.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "This slide has enough native text to skip OCR auto before text model setup is checked.")
+    doc.save(source)
+    doc.close()
+    out = tmp_path / "out"
+
+    exit_code = main(
+        [
+            "build",
+            str(source),
+            "--out",
+            str(out),
+            "--quiet",
+            "--provider",
+            "deepseek",
+            "--vision",
+            "off",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "lecture" in captured.err
+    assert "DEEPSEEK_API_KEY" in captured.err
+    assert "GUI 页面里填写 Text API key" in captured.err
+    assert "--preset local" in captured.err
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+
+
+def test_missing_default_ocr_key_prints_env_gui_or_local_hint(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("BAIDU_OCR_API_KEY", raising=False)
+    monkeypatch.delenv("BAIDU_OCR_SECRET_KEY", raising=False)
+    source = tmp_path / "lecture.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Tiny")
+    doc.save(source)
+    doc.close()
+    out = tmp_path / "out"
+
+    exit_code = main(
+        [
+            "build",
+            str(source),
+            "--out",
+            str(out),
+            "--quiet",
+            "--provider",
+            "deepseek",
+            "--vision",
+            "off",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "OCR auto" in captured.err
+    assert "BAIDU_OCR_API_KEY" in captured.err
+    assert "GUI 页面里填写 OCR API key" in captured.err
+    assert "--preset local" in captured.err
+    assert "--ocr-api-key" not in captured.err
     assert "Traceback" not in captured.err
     assert "Traceback" not in captured.out
 
@@ -332,6 +403,24 @@ def test_build_rejects_removed_lower_level_options():
         _build_parser().parse_args(["build", "lecture.pdf", "--note-depth", "balanced"])
 
 
+@pytest.mark.parametrize(
+    "option",
+    [
+        "--speed-mode",
+        "--api-key",
+        "--vision-provider",
+        "--ocr-api-key",
+        "--review-mode",
+        "--exam-mode",
+    ],
+)
+def test_build_rejects_removed_first_run_options(option):
+    from slidenote.cli import _build_parser
+
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(["build", "lecture.pdf", option, "auto"])
+
+
 def test_local_preset_minimizes_api_passes():
     from slidenote.cli import _build_parser
 
@@ -397,6 +486,7 @@ def test_doctor_report_renders_install_guide():
     assert "Readiness:" in text
     assert "Install guide:" in text or "Local parsing is ready" in text
     assert "./run_gui.ps1" in text
+    assert "--preset local --export markdown-zip" in text
 
 
 def test_doctor_reports_pywin32_missing_when_parent_package_is_absent(monkeypatch):
@@ -474,6 +564,54 @@ def test_study_pack_command_generates_local_review_and_exam_pack(tmp_path):
     assert run_summary["artifacts"]["study_pack"] is None
     assert study_pack["summary"]["questions_total"] == 4
     assert study_pack["question_quality"]["overall_score"] >= 0
+
+
+def test_first_run_local_workflow_creates_shareable_notes_and_study_pack(tmp_path, monkeypatch):
+    for key in (
+        "DEEPSEEK_API_KEY",
+        "QWEN_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "BAIDU_OCR_API_KEY",
+        "BAIDU_OCR_SECRET_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    source = tmp_path / "first-run.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Transport Layer")
+    page.insert_text((72, 104), "TCP provides reliable ordered delivery.")
+    page.insert_text((72, 136), "UDP is lightweight and connectionless.")
+    doc.save(source)
+    doc.close()
+    out = tmp_path / "out"
+
+    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--preset", "local", "--export", "markdown-zip"])
+    assert exit_code == 0
+    exit_code = main(["study-pack", str(out), "--question-count", "4", "--quiet"])
+
+    assert exit_code == 0
+    for filename in (
+        "notes.md",
+        "notes.zip",
+        "content.json",
+        "coverage.json",
+        "coverage.md",
+        "source_map.json",
+        "review.md",
+        "exam.md",
+        "exam.json",
+        "exam.html",
+        "study_pack.json",
+    ):
+        assert (out / filename).exists(), filename
+    with zipfile.ZipFile(out / "notes.zip") as archive:
+        assert {"notes.md", "README.txt"}.issubset(set(archive.namelist()))
+    run_summary = json.loads((out / "run_summary.json").read_text(encoding="utf-8"))
+    study_pack = json.loads((out / "study_pack.json").read_text(encoding="utf-8"))
+    assert run_summary["run"]["preset"] == "local"
+    assert run_summary["run"]["vision"] == "off"
+    assert run_summary["artifacts"]["notes_zip"] == "notes.zip"
+    assert study_pack["summary"]["questions_total"] == 4
 
 
 def test_build_returns_nonzero_when_requested_pandoc_export_is_missing(tmp_path, monkeypatch):

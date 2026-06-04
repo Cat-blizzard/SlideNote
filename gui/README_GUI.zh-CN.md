@@ -46,7 +46,7 @@ streamlit run gui/app.py
 
 ## 第一次测试
 
-先选择 **Local preview**，上传一个课件并运行。这个模式只测试本地解析和基础输出，不会调用 API。
+先选择 **Local preview**，上传一个课件并运行。这个模式只测试本地解析和基础输出，不会调用 API。第一次验证通过的标准是结果页能看到 `notes.md` 和可分享的 `notes.zip`。
 
 正式生成时选择 **Lecture quality**，填写 Text API key；如果课件图表多，保留 Vision=`auto` 并填写 Qwen/DashScope key。扫描版 PDF 可能还需要 OCR key 和 secret。
 
