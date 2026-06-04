@@ -12,8 +12,8 @@ SlideNote Studio is a Streamlit interface for `python -m slidenote build` and `p
   - `Local preview`: local parsing preview, no API calls.
 - Enter Text / Vision / OCR API keys on the page. Keys are passed only through the child-process environment, not command-line flags.
 - Select extra exports: Markdown ZIP, TOC Markdown, Word, PDF, or LaTeX.
-- Monitor progress, ETA, Doctor readiness, quality / coverage / source map / page explorer / cost reports.
-- Generate a study pack from an existing output directory: `review.md`, `exam.md`, `exam.json`, `exam.html`, and related files.
+- Keep progress, ETA, Doctor readiness, usage, and cost details in compact diagnostics panels.
+- Generate a study pack from the Notes workspace: `review.md`, `exam.md`, `exam.json`, `exam.html`, and related files.
 - Download `notes.zip`, `notes.md`, `coverage.md`, export files, or the complete output ZIP.
 
 For sharing Markdown notes, prefer `notes.zip`; it contains both `notes.md` and `notes.assets/` so images render on another computer.
@@ -46,13 +46,13 @@ streamlit run gui/app.py
 
 ## First Test
 
-Start with **Local preview**. It checks parsing and basic output without any API calls. The first-run check passes when the results page shows both `notes.md` and the shareable `notes.zip`.
+Start with **Local preview**. It checks parsing and basic output without any API calls. The first-run check passes when the Notes workspace shows both `notes.md` and the shareable `notes.zip`.
 
 For production notes, use **Lecture quality**, enter a Text API key, keep Vision=`auto` for image-heavy slides, and add a Qwen/DashScope vision key. Scanned PDFs may also need OCR credentials.
 
 ## Study Pack
 
-After a build finishes, open the **Study pack** tab in the results area and click **Generate study pack from this output**. The GUI runs:
+After a build finishes, open **Study pack** in the Notes workspace and click **Generate study pack**. The GUI runs:
 
 ```powershell
 python -m slidenote study-pack <output-dir> --question-count 12
@@ -62,7 +62,7 @@ It uses the Text provider key when available and falls back to local rules other
 
 ## Exports
 
-The **Exports** sidebar section can generate:
+The left **Run** panel's **Exports** section can generate:
 
 - `notes.zip`: Markdown package with image assets, no Pandoc needed.
 - `notes.toc.md`: TOC Markdown, no Pandoc needed.
