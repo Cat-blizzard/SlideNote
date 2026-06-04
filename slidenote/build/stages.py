@@ -26,15 +26,6 @@ from slidenote.notes.quality import build_note_quality_report
 from slidenote.ocr import enrich_deck_with_ocr
 from slidenote.sections import build_section_plan
 from slidenote.source_map import build_source_map
-from slidenote.study_pack import (
-    build_study_pack,
-    render_exam_html,
-    render_exam_markdown,
-    render_final_exam_answers_markdown,
-    render_final_exam_markdown,
-    render_review_markdown,
-    render_wrong_answer_review_prompt,
-)
 from slidenote.table_understanding import enrich_deck_with_table_understanding
 from slidenote.understanding import build_understanding_reports
 from slidenote.visual.crop import enrich_deck_with_composite_figures, enrich_deck_with_figures
@@ -474,55 +465,6 @@ def _stage_quality_report(state: BuildState) -> None:
     state.progress.finish_stage("Quality report complete")
 
 
-def _stage_study_pack(state: BuildState) -> None:
-    args = state.args
-    if args.review_mode == "off" and args.exam_mode == "off":
-        return
-    deck = _require_deck(state)
-    state.progress.start_stage("study_pack", message="Generating review and exam pack")
-    state.study_pack_report = build_study_pack(
-        deck=deck,
-        notes_markdown=state.notes_markdown,
-        output_root=state.output_root,
-        review_mode=args.review_mode,
-        exam_mode=args.exam_mode,
-        question_count=args.exam_question_count,
-        use_llm=args.use_llm,
-        provider=args.provider,
-        model=args.model,
-        api_key=args.api_key,
-        base_url=args.base_url,
-        cache_mode=args.cache,
-        cache_dir=state.cache_dirs["llm"],
-        max_output_tokens=min(args.max_output_tokens or 4096, 7000),
-        temperature=args.temperature if args.temperature is not None else 0.0,
-        note_language=args.note_language,
-        section_plan=state.section_report,
-        deck_brief=state.deck_brief_report,
-        content_guard=state.content_guard_report,
-        coverage_report=state.coverage_report,
-        source_map=state.source_map,
-    )
-    if state.study_pack_report is not None:
-        state.artifacts.write_json("study_pack", "study_pack.json", state.study_pack_report)
-        if state.study_pack_report.get("review"):
-            state.artifacts.write_text("review_markdown", "review.md", render_review_markdown(state.study_pack_report))
-        if state.study_pack_report.get("exam"):
-            state.artifacts.write_json("exam_json", "exam.json", state.study_pack_report["exam"])
-            state.artifacts.write_text("exam_markdown", "exam.md", render_exam_markdown(state.study_pack_report))
-            state.artifacts.write_text("exam_html", "exam.html", render_exam_html(state.study_pack_report))
-        if state.study_pack_report.get("section_study_pack"):
-            state.artifacts.write_json("section_study_pack", "section_study_pack.json", state.study_pack_report["section_study_pack"])
-        if state.study_pack_report.get("exam_review_pack"):
-            state.artifacts.write_json("exam_review_pack", "exam_review_pack.json", state.study_pack_report["exam_review_pack"])
-        if state.study_pack_report.get("final_exam"):
-            state.artifacts.write_text("final_exam_markdown", "final_exam.md", render_final_exam_markdown(state.study_pack_report))
-            state.artifacts.write_text("final_exam_answers", "final_exam.answers.md", render_final_exam_answers_markdown(state.study_pack_report))
-        if state.study_pack_report.get("wrong_answer_review"):
-            state.artifacts.write_text("wrong_answer_review_prompt", "wrong_answer_review_prompt.md", render_wrong_answer_review_prompt(state.study_pack_report))
-    state.progress.finish_stage("Review and exam pack complete")
-
-
 def _stage_export(state: BuildState) -> None:
     args = state.args
     if not state.export_formats:
@@ -634,13 +576,6 @@ def _print_build_outputs(state: BuildState) -> None:
         if notes_zip.exists():
             print(f"- note package: {notes_zip}")
             print("  Reminder: Markdown notes are inside notes.zip with image assets.")
-    if state.study_pack_report is not None:
-        print(f"- study:    {output_root / 'study_pack.json'}")
-        if state.study_pack_report.get("review"):
-            print(f"- review:   {output_root / 'review.md'}")
-        if state.study_pack_report.get("exam"):
-            print(f"- exam:     {output_root / 'exam.md'}")
-            print(f"- exam html:{output_root / 'exam.html'}")
     for stage in _slowest_stages(state.progress, limit=3):
         print(f"- slow stage: {stage['name']} {stage['elapsed_seconds']:.1f}s")
 
@@ -681,7 +616,6 @@ BUILD_STAGES = (
     _stage_export_content,
     _stage_notes,
     _stage_coverage,
-    _stage_study_pack,
     _stage_quality_report,
     _stage_export,
     _stage_run_summary,

@@ -4,6 +4,7 @@ from argparse import Namespace
 from pathlib import Path
 
 import fitz
+import pytest
 
 from slidenote.cli import (
     _apply_build_preset_defaults,
@@ -74,7 +75,7 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     doc.close()
     out = tmp_path / "out"
 
-    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--vision", "off"])
+    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--preset", "local"])
 
     assert exit_code == 0
     progress = json.loads((out / "progress.json").read_text(encoding="utf-8"))
@@ -143,20 +144,22 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert figure_grounding["summary"]["candidate_images"] == 0
     assert run_summary["artifacts"]["note_assets"] == "notes.assets"
     assert source_map["default_display_mode"] == "hidden"
-    assert run_summary["run"]["preset"] == "auto"
+    assert run_summary["run"]["preset"] == "local"
+    assert run_summary["run"]["provider"] == "deepseek"
+    assert run_summary["run"]["vision"] == "off"
     assert run_summary["run"]["parser"] == "auto"
     assert run_summary["run"]["note_language"] == "zh"
     assert run_summary["run"]["note_profile"] == "auto"
-    assert run_summary["run"]["teaching_enrichment"] == "auto"
+    assert run_summary["run"]["teaching_enrichment"] == "off"
     assert run_summary["run"]["term_policy"] == "bilingual"
-    assert run_summary["run"]["deck_brief"] == "auto"
-    assert run_summary["run"]["semantic_layout"] == "auto"
+    assert run_summary["run"]["deck_brief"] == "off"
+    assert run_summary["run"]["semantic_layout"] == "local"
     assert run_summary["run"]["api_concurrency"] == {"llm": 1, "vision": 1, "ocr": 1, "figure": 1}
     assert "slowest_stages" in run_summary["stage_timings"]
     assert not (out / "export_report.json").exists()
 
 
-def test_api_concurrency_is_wired_to_build_stages(tmp_path, monkeypatch):
+def test_internal_quality_concurrency_is_wired_to_build_stages(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
     doc = fitz.open()
     page = doc.new_page()
@@ -170,6 +173,10 @@ def test_api_concurrency_is_wired_to_build_stages(tmp_path, monkeypatch):
         seen["ocr"] = kwargs["concurrency"]
         return {"summary": {"api_calls": 0}}
 
+    def fake_semantic_layout(*args, **kwargs):
+        seen.setdefault("semantic", kwargs["concurrency"])
+        return {"summary": {"pages_total": 1}}
+
     def fake_vision(*args, **kwargs):
         seen["vision"] = kwargs["concurrency"]
         return {"summary": {"llm_calls": 0}}
@@ -182,9 +189,15 @@ def test_api_concurrency_is_wired_to_build_stages(tmp_path, monkeypatch):
         seen["llm"] = kwargs["concurrency"]
         return NoteGenerationResult(markdown="Transport Layer. <!-- slidenote-source: p1:s1_t1 -->")
 
+    monkeypatch.setattr("slidenote.build.stages.enrich_deck_with_semantic_layout", fake_semantic_layout)
     monkeypatch.setattr("slidenote.build.stages.enrich_deck_with_ocr", fake_ocr)
     monkeypatch.setattr("slidenote.build.stages.enrich_deck_with_vision", fake_vision)
     monkeypatch.setattr("slidenote.build.stages.enrich_deck_with_figures", fake_figures)
+    monkeypatch.setattr("slidenote.build.stages.enrich_deck_with_figure_grounding", lambda *args, **kwargs: {"summary": {"candidate_images": 0}})
+    monkeypatch.setattr("slidenote.build.stages.build_section_plan", lambda *args, **kwargs: {"summary": {"sections_total": 1}})
+    monkeypatch.setattr("slidenote.build.stages.build_deck_brief", lambda *args, **kwargs: {"summary": {"llm_call": False}})
+    monkeypatch.setattr("slidenote.build.stages.render_deck_brief_markdown", lambda report: "# Deck brief\n")
+    monkeypatch.setattr("slidenote.build.stages.build_content_guard", lambda *args, **kwargs: None)
     monkeypatch.setattr("slidenote.build.stages.generate_notes_result", fake_notes)
 
     exit_code = main(
@@ -194,40 +207,17 @@ def test_api_concurrency_is_wired_to_build_stages(tmp_path, monkeypatch):
             "--out",
             str(out),
             "--quiet",
-            "--use-llm",
-            "--ocr",
-            "auto",
-            "--vision",
-            "auto",
-            "--figure-crop",
-            "vision",
-            "--content-guard",
-            "off",
-            "--deck-brief",
-            "off",
-            "--section-detection",
-            "local",
-            "--concurrency",
-            "9",
-            "--llm-concurrency",
-            "5",
-            "--vision-concurrency",
-            "4",
-            "--ocr-concurrency",
-            "2",
-            "--figure-concurrency",
-            "3",
         ]
     )
 
     assert exit_code == 0
-    assert seen == {"figure": 3, "ocr": 2, "vision": 4, "llm": 5}
+    assert seen == {"semantic": 3, "figure": 3, "ocr": 3, "vision": 3, "llm": 3}
     run_summary = json.loads((out / "run_summary.json").read_text(encoding="utf-8"))
-    assert run_summary["run"]["concurrency"] == 9
-    assert run_summary["run"]["api_concurrency"] == {"llm": 5, "vision": 4, "ocr": 2, "figure": 3}
+    assert run_summary["run"]["concurrency"] == 3
+    assert run_summary["run"]["api_concurrency"] == {"llm": 3, "vision": 3, "ocr": 3, "figure": 3}
 
 
-def test_auto_figure_crop_with_vision_off_does_not_call_api(tmp_path):
+def test_local_preset_does_not_call_figure_crop_api(tmp_path):
     source = tmp_path / "lecture.pdf"
     doc = fitz.open()
     page = doc.new_page()
@@ -236,7 +226,7 @@ def test_auto_figure_crop_with_vision_off_does_not_call_api(tmp_path):
     doc.close()
     out = tmp_path / "out"
 
-    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--figure-crop", "auto", "--vision", "off"])
+    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--preset", "local"])
 
     assert exit_code == 0
     assert not (out / "figure_usage.json").exists()
@@ -262,7 +252,6 @@ def test_missing_default_vision_key_prints_text_mode_hint(tmp_path, monkeypatch,
             "--out",
             str(out),
             "--quiet",
-            "--use-llm",
             "--provider",
             "deepseek",
         ]
@@ -270,9 +259,10 @@ def test_missing_default_vision_key_prints_text_mode_hint(tmp_path, monkeypatch,
 
     captured = capsys.readouterr()
     assert exit_code == 2
-    assert "当前开启了 vision/figure-crop" in captured.err
+    assert "当前启用了 vision" in captured.err
     assert "DASHSCOPE_API_KEY" in captured.err
-    assert "--vision off --figure-crop off" in captured.err
+    assert "--vision off" in captured.err
+    assert "--preset local" in captured.err
     assert "Traceback" not in captured.err
     assert "Traceback" not in captured.out
 
@@ -282,17 +272,21 @@ def test_quality_first_defaults_are_exposed_by_parser():
 
     args = _build_parser().parse_args(["build", "lecture.pdf"])
 
-    assert args.speed_mode == "quality"
-    assert args.preset == "auto"
+    assert args.preset == "lecture"
     assert args.parser == "auto"
+    assert args.provider == "deepseek"
     assert args.vision == "auto"
-    assert args.vision_provider == "qwen"
+    args._explicit_options = set()
+    _apply_build_preset_defaults(args)
     _apply_note_profile_defaults(args)
+    assert args.speed_mode == "quality"
+    assert args.use_llm is True
+    assert args.vision_provider == "qwen"
     assert args.note_strategy == "lecture-weave"
     assert args.note_context == "section"
     assert args.note_style == "article"
-    assert args.note_profile == "auto"
-    assert args.note_depth == "detailed"
+    assert args.note_profile == "lecture-notes"
+    assert args.note_depth == "very-detailed"
     assert args.teaching_enrichment == "auto"
     assert args.deck_brief == "auto"
     assert args.note_language == "zh"
@@ -305,9 +299,6 @@ def test_quality_first_defaults_are_exposed_by_parser():
     assert args.figure_placement == "inline"
     assert args.figure_audit == "local"
     assert args.content_guard == "auto"
-    assert args.review_mode == "off"
-    assert args.exam_mode == "off"
-    assert args.exam_question_count == 12
     assert args.export is None
     assert args.export_toc == "auto"
 
@@ -334,41 +325,23 @@ def test_lecture_preset_maps_to_teacher_style_pipeline():
     assert args.source_display == "hidden"
 
 
-def test_preset_respects_explicit_lower_level_overrides():
+def test_build_rejects_removed_lower_level_options():
     from slidenote.cli import _build_parser
 
-    argv = [
-        "build",
-        "lecture.pdf",
-        "--preset",
-        "lecture",
-        "--note-depth",
-        "balanced",
-        "--teaching-enrichment",
-        "off",
-        "--deck-brief",
-        "off",
-    ]
-    args = _build_parser().parse_args(argv)
-    args._explicit_options = _explicit_cli_options(argv)
-    _apply_build_preset_defaults(args)
-    _apply_note_profile_defaults(args)
-
-    assert args.note_profile == "lecture-notes"
-    assert args.note_depth == "balanced"
-    assert args.teaching_enrichment == "off"
-    assert args.deck_brief == "off"
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(["build", "lecture.pdf", "--note-depth", "balanced"])
 
 
-def test_fast_preset_minimizes_extra_passes():
+def test_local_preset_minimizes_api_passes():
     from slidenote.cli import _build_parser
 
-    argv = ["build", "lecture.pdf", "--preset", "fast"]
+    argv = ["build", "lecture.pdf", "--preset", "local", "--vision", "auto"]
     args = _build_parser().parse_args(argv)
     args._explicit_options = _explicit_cli_options(argv)
     _apply_build_preset_defaults(args)
 
     assert args.speed_mode == "fast"
+    assert args.use_llm is False
     assert args.note_strategy == "direct"
     assert args.note_depth == "balanced"
     assert args.teaching_enrichment == "off"
@@ -381,9 +354,7 @@ def test_fast_preset_minimizes_extra_passes():
 
 
 def test_lecture_notes_profile_defaults_to_very_detailed():
-    from slidenote.cli import _build_parser
-
-    args = _build_parser().parse_args(["build", "lecture.pdf", "--note-profile", "lecture-notes"])
+    args = Namespace(note_profile="lecture-notes", note_depth=None)
     _apply_note_profile_defaults(args)
 
     assert args.note_profile == "lecture-notes"
@@ -391,11 +362,7 @@ def test_lecture_notes_profile_defaults_to_very_detailed():
 
 
 def test_explicit_note_depth_overrides_lecture_notes_profile():
-    from slidenote.cli import _build_parser
-
-    args = _build_parser().parse_args(
-        ["build", "lecture.pdf", "--note-profile", "lecture-notes", "--note-depth", "balanced"]
-    )
+    args = Namespace(note_profile="lecture-notes", note_depth="balanced")
     _apply_note_profile_defaults(args)
 
     assert args.note_depth == "balanced"
@@ -461,7 +428,7 @@ def test_build_can_export_markdown_package_and_toc_without_pandoc(tmp_path, monk
     doc.close()
     out = tmp_path / "out"
 
-    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--vision", "off", "--export", "markdown-zip,markdown-toc"])
+    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--preset", "local", "--export", "markdown-zip,markdown-toc"])
 
     assert exit_code == 0
     toc_markdown = (out / "notes.toc.md").read_text(encoding="utf-8")
@@ -478,7 +445,7 @@ def test_build_can_export_markdown_package_and_toc_without_pandoc(tmp_path, monk
     assert not (out / "notes.docx").exists()
 
 
-def test_build_can_generate_local_review_and_exam_pack(tmp_path):
+def test_study_pack_command_generates_local_review_and_exam_pack(tmp_path):
     source = tmp_path / "lecture.pdf"
     doc = fitz.open()
     page = doc.new_page()
@@ -487,23 +454,9 @@ def test_build_can_generate_local_review_and_exam_pack(tmp_path):
     doc.close()
     out = tmp_path / "out"
 
-    exit_code = main(
-        [
-            "build",
-            str(source),
-            "--out",
-            str(out),
-            "--quiet",
-            "--vision",
-            "off",
-            "--review-mode",
-            "local",
-            "--exam-mode",
-            "local",
-            "--exam-question-count",
-            "4",
-        ]
-    )
+    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--preset", "local"])
+    assert exit_code == 0
+    exit_code = main(["study-pack", str(out), "--question-count", "4", "--quiet"])
 
     assert exit_code == 0
     run_summary = json.loads((out / "run_summary.json").read_text(encoding="utf-8"))
@@ -517,19 +470,10 @@ def test_build_can_generate_local_review_and_exam_pack(tmp_path):
     assert (out / "final_exam.md").exists()
     assert (out / "final_exam.answers.md").exists()
     assert (out / "wrong_answer_review_prompt.md").exists()
-    assert run_summary["run"]["review_mode"] == "local"
-    assert run_summary["run"]["exam_mode"] == "local"
-    assert run_summary["artifacts"]["study_pack"] == "study_pack.json"
-    assert run_summary["artifacts"]["review_markdown"] == "review.md"
-    assert run_summary["artifacts"]["exam_html"] == "exam.html"
-    assert run_summary["artifacts"]["section_study_pack"] == "section_study_pack.json"
-    assert run_summary["artifacts"]["exam_review_pack"] == "exam_review_pack.json"
-    assert run_summary["artifacts"]["final_exam_markdown"] == "final_exam.md"
-    assert run_summary["artifacts"]["wrong_answer_review_prompt"] == "wrong_answer_review_prompt.md"
+    assert "review_mode" not in run_summary["run"]
+    assert run_summary["artifacts"]["study_pack"] is None
     assert study_pack["summary"]["questions_total"] == 4
     assert study_pack["question_quality"]["overall_score"] >= 0
-    quality_report = json.loads((out / "quality_report.json").read_text(encoding="utf-8"))
-    assert quality_report["question_quality_score"] is not None
 
 
 def test_build_returns_nonzero_when_requested_pandoc_export_is_missing(tmp_path, monkeypatch):
@@ -542,7 +486,7 @@ def test_build_returns_nonzero_when_requested_pandoc_export_is_missing(tmp_path,
     doc.close()
     out = tmp_path / "out"
 
-    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--vision", "off", "--export", "docx"])
+    exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--preset", "local", "--export", "docx"])
 
     assert exit_code == 1
     assert (out / "notes.md").exists()
@@ -601,6 +545,10 @@ def test_deck_brief_auto_runs_before_lecture_weave(tmp_path, monkeypatch):
 
     monkeypatch.setattr("slidenote.deck_brief.LLMClient", FakeDeckBriefClient)
     monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeNotesClient)
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    monkeypatch.setattr("slidenote.build.stages.build_section_plan", lambda *args, **kwargs: {"summary": {"sections_total": 1}})
+    monkeypatch.setattr("slidenote.build.stages.build_content_guard", lambda *args, **kwargs: None)
+    monkeypatch.setattr("slidenote.build.stages.enrich_deck_with_ocr", lambda *args, **kwargs: {"summary": {"api_calls": 0}})
 
     exit_code = main(
         [
@@ -611,20 +559,15 @@ def test_deck_brief_auto_runs_before_lecture_weave(tmp_path, monkeypatch):
             "--quiet",
             "--vision",
             "off",
-            "--figure-crop",
-            "off",
-            "--use-llm",
             "--provider",
             "openai",
-            "--api-key",
-            "test",
-            "--note-context",
-            "document",
         ]
     )
 
     assert exit_code == 0
-    assert calls == ["deck_brief", "page_note", "weave"]
+    assert calls[0] == "deck_brief"
+    assert "page_note" in calls
+    assert "weave" in calls
     assert (out / "deck_brief.json").exists()
     assert (out / "deck_brief.md").exists()
     run_summary = json.loads((out / "run_summary.json").read_text(encoding="utf-8"))

@@ -68,7 +68,7 @@ figures/
 screenshots/
 ```
 
-不是每次运行都会生成所有文件。具体取决于 `--preset`、`--use-llm`、`--vision`、`--ocr`、`--review-mode`、`--exam-mode` 和导出选项。
+不是每次运行都会生成所有文件。具体取决于 `--preset`、`--vision`、`--export`，以及是否单独运行 `slidenote study-pack`。
 
 ## 稳定认知包
 

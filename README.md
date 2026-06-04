@@ -68,11 +68,10 @@ python -m pip install -e ".[dev,llm]"
 python -m slidenote doctor
 ```
 
-For a text-first LLM note run:
+For a local preview without API calls:
 
 ```powershell
-$env:DEEPSEEK_API_KEY="..."
-python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --provider deepseek --vision off --figure-crop off
+python -m slidenote build path\to\lecture.pdf --out outputs\local --preset local --export markdown-zip
 ```
 
 For higher-quality notes with visual understanding:
@@ -80,7 +79,7 @@ For higher-quality notes with visual understanding:
 ```powershell
 $env:DASHSCOPE_API_KEY="..."
 $env:DEEPSEEK_API_KEY="..."
-python -m slidenote build path\to\lecture.pdf --out outputs\lecture --preset lecture --use-llm --provider deepseek
+python -m slidenote build path\to\lecture.pdf --out outputs\lecture --provider deepseek --export markdown-zip
 ```
 
 Open `outputs\lecture\notes.md` after generation. Images are copied into `outputs\lecture\notes.assets\` by default.
@@ -121,24 +120,22 @@ Ingest -> Understand -> Write -> Guard -> Export
 | **2. Understand** | Decide what the courseware is teaching. | `deck_understanding.json`, `page_understanding.json`, `sections.json`, `deck_brief.json`, figure/table understanding |
 | **3. Write** | Turn structured material into readable study notes. | `notes.md`, Lecture-Weave page notes, teaching enrichment |
 | **4. Guard** | Check faithfulness, coverage, and study quality. | `coverage.json`, `coverage.md`, `content_guard.json`, `quality_report.json` |
-| **5. Export** | Publish notes and reports. | `notes.zip`, `notes.toc.md`, `notes.docx`, `notes.pdf`, `notes.tex`, review/exam packs |
+| **5. Export** | Publish notes and reports. | `notes.zip`, `notes.toc.md`, `notes.docx`, `notes.pdf`, `notes.tex`; review/exam packs are generated separately by `study-pack` |
 
 More detail: [SlideNote Pipeline](docs/pipeline.zh-CN.md).
 
 ## User Presets
 
-Use top-level `--preset` for product workflows. It maps to lower-level options such as `--note-profile`, `--note-strategy`, `--deck-brief`, and `--content-guard`; explicit user options still override preset defaults.
+Use top-level `--preset` for product workflows. Everyday users now only need two modes: the default `lecture` mode and the no-API `local` mode.
 
 | Preset | Best for | Behavior |
 | --- | --- | --- |
-| `fast` | Quick drafts, low cost, local-first runs. | Fewer heavy stages and shorter outputs. |
-| `faithful` | Source traceability and coverage-first notes. | Lecture-Weave, section context, deck brief, content guard. |
-| `lecture` | Teacher-style detailed lecture notes. | `--note-profile lecture-notes`, Lecture-Weave, deck brief, content guard, teaching enrichment. |
+| `lecture` | Teacher-style detailed lecture notes. | Enables LLM, OCR auto, Vision auto, Lecture-Weave, deck brief, content guard, and teaching enrichment. |
+| `local` | No API key, offline preview, parser checks. | Uses local rules only and does not call text, vision, or OCR APIs. |
 
 ```powershell
-python -m slidenote build lecture.pdf --out outputs\fast --preset fast
-python -m slidenote build lecture.pdf --out outputs\faithful --preset faithful --use-llm --provider deepseek
-python -m slidenote build lecture.pdf --out outputs\lecture --preset lecture --use-llm --provider deepseek
+python -m slidenote build lecture.pdf --out outputs\lecture --provider deepseek
+python -m slidenote build lecture.pdf --out outputs\local --preset local
 ```
 
 More detail: [User Presets](docs/presets.zh-CN.md).
@@ -176,14 +173,14 @@ Optional software:
 | Pandoc | Word and LaTeX export. |
 | LibreOffice + Pandoc | PDF export from `notes.docx`, usually more stable for CJK layout. |
 
-Configuration details live in [CONFIG.zh-CN.md](CONFIG.zh-CN.md) and [Providers, OCR, Vision, Cache, And Cost](docs/providers-and-cost.zh-CN.md).
+Configuration details live in [CONFIG.zh-CN.md](CONFIG.zh-CN.md). The `build` entrypoint is intentionally small; provider, OCR, Vision, and cache details are handled mostly through strong defaults and environment variables.
 
 ## Common Workflows
 
 Local rule-based draft:
 
 ```powershell
-python -m slidenote build path\to\lecture.pptx --out outputs\lecture --vision off
+python -m slidenote build path\to\lecture.pptx --out outputs\local --preset local --export markdown-zip
 ```
 
 Teacher-style lecture notes:
@@ -191,10 +188,8 @@ Teacher-style lecture notes:
 ```powershell
 python -m slidenote build path\to\lecture.pdf `
   --out outputs\lecture-notes `
-  --preset lecture `
-  --use-llm `
   --provider deepseek `
-  --max-output-tokens 12000
+  --export markdown-zip
 ```
 
 Review and exam pack:
@@ -202,22 +197,17 @@ Review and exam pack:
 ```powershell
 python -m slidenote build path\to\lecture.pdf `
   --out outputs\lecture-review `
-  --use-llm `
-  --provider deepseek `
-  --review-mode auto `
-  --exam-mode auto `
-  --exam-question-count 20
+  --provider deepseek
+python -m slidenote study-pack outputs\lecture-review --question-count 20
 ```
 
-Faster reruns with shared cache and modest concurrency:
+Text-only lecture notes:
 
 ```powershell
 python -m slidenote build path\to\lecture.pdf `
-  --out outputs\lecture `
-  --use-llm `
+  --out outputs\text-only `
   --provider deepseek `
-  --concurrency 3 `
-  --global-cache-dir .slidenote-cache
+  --vision off
 ```
 
 ## Technical Docs
@@ -265,7 +255,7 @@ Instead, it follows:
 PPT/PDF -> structured extraction -> source inventory -> note generation -> coverage check -> export
 ```
 
-The local rule-based draft is only a baseline for debugging extraction and coverage. Production notes should use `--use-llm`, while coverage checks still rely on element IDs so the model cannot silently summarize away details.
+The local rule-based draft is only a baseline for debugging extraction and coverage. Production notes should use the default `lecture` preset, while coverage checks still rely on element IDs so the model cannot silently summarize away details.
 
 ## License
 

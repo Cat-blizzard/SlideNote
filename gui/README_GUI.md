@@ -1,63 +1,32 @@
 # SlideNote Studio GUI
 
-[中文说明](README_GUI.zh-CN.md)
+[中文](README_GUI.zh-CN.md)
 
-SlideNote Studio is a Streamlit UI around the existing `python -m slidenote build` pipeline. It does not replace or modify the core parser, OCR, vision, or LLM pipeline.
+SlideNote Studio is a Streamlit interface for `python -m slidenote build` and `python -m slidenote study-pack`. It keeps the everyday UI small instead of exposing every internal tuning knob.
 
-## What it adds
+## What It Does
 
-- Upload PPTX / PPT / PDF without touching the command line.
-- Paste API keys inside the page for one run; keys are passed through subprocess environment variables and are not written to source code or command-line arguments.
-- Choose workflow presets:
-  - Fast API draft
-  - Balanced study notes
-  - Quality detailed notes
-  - Local safe preview
-- Control runtime speed and cost:
-  - `--speed-mode`
-  - global `--concurrency`
-  - separate LLM / Vision / OCR / Figure API concurrency
-  - shared global cache
-  - OCR/Vision target limits
-  - `direct` vs `lecture-weave`
-  - deck brief/content guard switches
-  - page-level `--refresh-pages`
-- Readable runtime cards: `Off`, `Missing key`, or `Ready` for text/vision APIs, plus concurrency and cache state.
-- Doctor panel that reuses `slidenote doctor` checks for Python, packages, optional tools, and API key readiness.
-- Live progress with ETA estimate, stage detail, and console logs.
-- Result workspace with:
-  - quality/coverage summary
-  - missing-element repair queue
-  - page explorer linking screenshot, parsed elements, page modality, and note block
-  - manual modality correction manifest (`page_modalities.overrides.json`)
-  - token/cost dashboard
-  - `notes.md`, `coverage.md`, `run_summary.json`, usage files, and raw outputs
-- Save outputs to the default `gui_runs/outputs` workspace or a custom local folder.
-- Download `notes.zip`, `notes.md`, `coverage.md`, `cost_report.md`, or the full result ZIP from the page. Share `notes.zip` when sending Markdown notes because the notes and image assets are inside the package.
-- Optionally generate and download a review/exam study pack: `review.md`, `exam.md`, `exam.json`, and interactive `exam.html`.
+- Upload PPTX / PPT / PDF files.
+- Choose one of two workflows:
+  - `Lecture quality`: strong default note generation, requires API keys.
+  - `Local preview`: local parsing preview, no API calls.
+- Enter Text / Vision / OCR API keys on the page. Keys are passed only through the child-process environment, not command-line flags.
+- Select extra exports: Markdown ZIP, TOC Markdown, Word, PDF, or LaTeX.
+- Monitor progress, ETA, Doctor readiness, quality / coverage / source map / page explorer / cost reports.
+- Generate a study pack from an existing output directory: `review.md`, `exam.md`, `exam.json`, `exam.html`, and related files.
+- Download `notes.zip`, `notes.md`, `coverage.md`, export files, or the complete output ZIP.
+
+For sharing Markdown notes, prefer `notes.zip`; it contains both `notes.md` and `notes.assets/` so images render on another computer.
 
 ## Install
 
-Simple setup from the repository root:
+Recommended:
 
 ```powershell
 .\install.ps1
 ```
 
-Manual setup:
-
-```bash
-python -m pip install -e .
-python -m pip install -r requirements-gui.txt
-```
-
-If you use LLM providers:
-
-```bash
-python -m pip install -e ".[llm]"
-```
-
-Or install everything for development:
+Manual:
 
 ```bash
 python -m pip install -e ".[dev,llm,gui]"
@@ -69,73 +38,36 @@ python -m pip install -e ".[dev,llm,gui]"
 .\run_gui.ps1
 ```
 
-Manual run:
+Manual:
 
 ```bash
 streamlit run gui/app.py
 ```
 
-## First safe test
+## First Test
 
-Use **Local safe preview** first:
+Start with **Local preview**. It checks parsing and basic output without any API calls.
 
-- Use text LLM: off
-- OCR mode: off
-- Vision mode: off
-- Save: Default workspace or Custom folder
+For production notes, use **Lecture quality**, enter a Text API key, keep Vision=`auto` for image-heavy slides, and add a Qwen/DashScope vision key. Scanned PDFs may also need OCR credentials.
 
-This checks local parsing and output rendering without API calls or token cost.
+## Study Pack
 
-## API keys
+After a build finishes, open the **Study pack** tab in the results area and click **Generate study pack from this output**. The GUI runs:
 
-The GUI passes API keys to one run through subprocess environment variables, not command-line arguments. This avoids asking users to set terminal environment variables manually while keeping keys out of process argv.
+```powershell
+python -m slidenote study-pack <output-dir> --question-count 12
+```
 
-Do not commit keys to GitHub.
+It uses the Text provider key when available and falls back to local rules otherwise.
 
-## Speed tips
+## Exports
 
-For first API tests, use **Fast API draft** with OCR and Vision off.
+The **Exports** sidebar section can generate:
 
-To reduce runtime:
+- `notes.zip`: Markdown package with image assets, no Pandoc needed.
+- `notes.toc.md`: TOC Markdown, no Pandoc needed.
+- `notes.docx`: Word document, requires Pandoc.
+- `notes.pdf`: PDF handout, requires Pandoc + LibreOffice.
+- `notes.tex`: LaTeX source, requires Pandoc.
 
-1. Use `direct` note strategy for drafts; use `lecture-weave` when you need higher quality connected notes.
-2. Use `vision=auto`, not `vision=all`.
-3. Use `ocr=auto`, not `ocr=all`.
-4. Set `Vision max targets` and `OCR max targets` to small numbers for testing.
-5. Keep cache enabled and use the shared global cache.
-6. Increase concurrency to 3-6 only when the API provider rate limit allows it.
-7. Use `Refresh only these pages` for small reruns instead of rerunning the whole deck.
-
-## Token and cost report
-
-After a successful run, the GUI generates and displays:
-
-- `cost_report.json`
-- `cost_report.md`
-- `cost_dashboard.html`
-
-Prices are read from `pricing.template.json`. Keep the prices updated manually using official provider pricing pages.
-
-
-## Review / Exam Study Pack
-
-The sidebar section **5. Review / Exam** can generate optional study-pack artifacts after `notes.md` is complete:
-
-- `review.md`: exam-oriented checklist with importance labels, logic chains, pitfalls, and page references.
-- `exam.md`: self-test questions with answers and explanations.
-- `exam.json`: structured question data for downstream tools.
-- `exam.html`: interactive self-test page with objective-question auto-grading.
-
-Use `local` generation for a deterministic no-API pack, or `auto`/`llm` to reuse the text provider for stronger questions.
-
-## Export Markdown / Word / PDF / LaTeX
-
-The sidebar section **6. Exports** can request optional final artifacts:
-
-- `notes.toc.md`: Markdown with table of contents; Pandoc is not required.
-- `notes.zip`: Markdown note package with `notes.md` and `notes.assets/`; Pandoc is not required.
-- `notes.docx`: Word document; requires Pandoc.
-- `notes.pdf`: PDF handout; generated by converting `notes.docx` with LibreOffice for better Chinese/CJK layout. Requires Pandoc plus LibreOffice.
-- `notes.tex`: LaTeX source; requires Pandoc.
-
-After a run, the results area shows an **Exports** tab and quick download buttons for available Markdown ZIP / Word / PDF / LaTeX files. Export status is written to `export_report.json`. If Pandoc or LibreOffice is missing from PATH, the GUI warns before the run while still allowing the base `notes.md` build to complete.
+Export status is written to `export_report.json`. If Pandoc or LibreOffice is missing, the GUI shows install hints before the run.

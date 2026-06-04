@@ -1,48 +1,35 @@
-# SlideNote 配置指南与完整参考
+# SlideNote 配置指南
 
-> 这份文档分两层：前半部分回答“我该怎么跑”，后半部分保留 `python -m slidenote build` 的完整参数参考。普通用户不需要从头读完；高级用户可以直接跳到“高级参数参考”查具体开关。
+SlideNote 现在把普通用户入口收敛到两个 preset：`lecture` 和 `local`。底层仍然保留 OCR、Vision、图文锚定、Lecture-Weave、缓存和质量报告等能力，但这些不再作为 `slidenote build` 的日常参数暴露。
 
 ## 我该怎么跑？
 
-快速草稿，先确认课件能正常解析：
-
-```powershell
-python -m slidenote build lecture.pdf --out outputs\fast --preset fast --vision off
-```
-
-高质量讲义，适合正式学习和长期保存：
+高质量讲义，默认推荐：
 
 ```powershell
 $env:DEEPSEEK_API_KEY="..."
 $env:DASHSCOPE_API_KEY="..."
-python -m slidenote build lecture.pdf `
-  --out outputs\lecture `
-  --preset lecture `
-  --use-llm `
-  --provider deepseek `
-  --vision auto `
-  --vision-provider qwen `
-  --export markdown-zip
+python -m slidenote build lecture.pdf --out outputs\lecture --provider deepseek --export markdown-zip
 ```
 
-保真复习，优先覆盖率和来源追踪：
+没有 API key，先确认课件能解析：
 
 ```powershell
-python -m slidenote build lecture.pdf `
-  --out outputs\faithful `
-  --preset faithful `
-  --use-llm `
-  --provider deepseek `
-  --export markdown-zip
+python -m slidenote build lecture.pdf --out outputs\local --preset local --export markdown-zip
 ```
 
-分享 Markdown 笔记给别人：
+关闭视觉理解，只用文本模型写讲义：
 
 ```powershell
-python -m slidenote build lecture.pdf --out outputs\share --export markdown-zip
+$env:DEEPSEEK_API_KEY="..."
+python -m slidenote build lecture.pdf --out outputs\text-only --provider deepseek --vision off
 ```
 
-`notes.zip` 里包含 `notes.md` 和 `notes.assets/`，对方解压后打开 `notes.md` 才能看到图片。只发单独 `notes.md` 时图片可能无法显示。
+从已有笔记生成复习包：
+
+```powershell
+python -m slidenote study-pack outputs\lecture --question-count 12
+```
 
 生成 Word / PDF：
 
@@ -50,409 +37,97 @@ python -m slidenote build lecture.pdf --out outputs\share --export markdown-zip
 python -m slidenote build lecture.pdf --out outputs\paper --export docx,pdf
 ```
 
-Word 需要 Pandoc；PDF 会先生成 `notes.docx`，再用 LibreOffice 转换。
+分享 Markdown 给别人时，优先使用 `--export markdown-zip`。`notes.zip` 里包含 `notes.md` 和 `notes.assets/`，对方解压后打开 `notes.md` 才能看到图片。
 
-## 普通学生和高级用户怎么读
+## Build 参数
 
-| 读者 | 推荐阅读方式 |
+`slidenote build` 的公开参数现在只保留这些：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `input` | 必填 | 输入 `.pptx` / `.ppt` / `.pdf`。 |
+| `--out` | `outputs/slidenote` | 输出目录。 |
+| `--preset` | `lecture` | `lecture` 走强质量 AI 讲义流程；`local` 不调用 API。 |
+| `--provider` | `deepseek` | 文本模型 provider。支持 `deepseek`、`openai`、`qwen`、`doubao`、`glm`、`gemini`、`claude`。 |
+| `--vision` | `auto` | `auto` 启用视觉理解；`off` 跳过视觉 API。`local` preset 会强制关闭。 |
+| `--export` | 无 | 额外导出：`markdown-zip`、`markdown-toc`、`docx`、`pdf`、`latex`、`all`。 |
+| `--parser` | `auto` | 可选解析器入口，普通用户不用改。 |
+| `--progress-json` | `<out>/progress.json` | GUI/自动化使用的进度文件。 |
+| `--quiet` | 关闭 | 不打印实时进度，但仍写 `progress.json`。 |
+
+## Preset
+
+| Preset | 适合场景 | 行为 |
+| --- | --- | --- |
+| `lecture` | 正式学习、长期保存、希望笔记像讲义。 | 默认启用 LLM、OCR auto、Vision auto、图文锚定、Deck Brief、Content Guard、Lecture-Weave、teaching enrichment 和本地缓存。需要 provider API key。 |
+| `local` | 没有 API key、离线预览、检查解析是否正常。 | 不调用文本模型、视觉模型或 OCR API，只用本地规则生成基础 Markdown 和质量报告。 |
+
+## 环境变量
+
+CLI 不再接收 `--api-key` / `--base-url` / `--model` 这类细节参数。请用环境变量配置 provider。GUI 用户可以直接在页面里填写 key，GUI 会只对当前运行注入环境变量。
+
+| Provider | 文本 API key |
 | --- | --- |
-| 普通学生 | 只看“我该怎么跑”“按问题找参数”“常用配置”。优先用 `--preset fast/faithful/lecture`，不要先调底层参数。 |
-| 高级用户 | 先用 preset 建立默认路线，再到“高级参数参考”覆盖 Vision、OCR、缓存、章节、写作深度和导出细节。 |
-
-## 推荐最小参数集
-
-多数运行只需要理解这几项：
-
-| 参数 | 作用 | 常用选择 |
-| --- | --- | --- |
-| `input` | 输入课件。 | `.pptx` / `.ppt` / `.pdf` |
-| `--out` | 输出目录。 | `outputs\lecture` |
-| `--preset` | 工作流入口。 | `fast` 快速、`faithful` 保真、`lecture` 详细讲义 |
-| `--use-llm` | 是否启用文本模型写作。 | 高质量笔记建议开启 |
-| `--provider` | 文本模型服务商。 | 国内常用 `deepseek`，也可用 `openai` / `qwen` 等 |
-| `--vision` | 是否理解图表、流程和截图。 | 普通课件 `auto`，纯文本或省钱用 `off` |
-| `--export` | 额外导出格式。 | 分享 Markdown 用 `markdown-zip`，交付文档用 `docx,pdf` |
-
-## 按问题找参数
-
-| 我想要 | 先看这些参数 | 建议 |
-| --- | --- | --- |
-| 更快出结果 | `--preset fast`、`--speed-mode fast`、`--concurrency` | 第一次试跑先用 `fast`；并发从 2-4 慢慢加。 |
-| 质量更好 | `--preset lecture`、`--use-llm`、`--vision auto` | 图表多的课件要开 `vision auto`，不要只依赖文本。 |
-| 图片在别人电脑上看不到 | `--export markdown-zip`、`--asset-mode bundle` | 优先发 `notes.zip`，不要只发 `notes.md`。 |
-| 扫描版 PDF / 图片型课件 | `--ocr auto`、`--vision auto` | OCR 读文字，Vision 解释图像关系，两者不是一回事。 |
-| 想省钱 | `--vision off/auto`、`--speed-mode fast/balanced`、缓存参数 | 不要默认 `vision all`；保留缓存，重复运行会省 API 调用。 |
-| 想调试来源和覆盖率 | `--source-display inline`、`--note-context page`、`--content-guard auto` | 调试时可以牺牲正文美观，先看来源标记和 coverage。 |
-
-## 常用配置
-
-### 场景和质量
-
-| 参数 | 默认值 | 常用值 | 说明 |
-| --- | --- | --- | --- |
-| `--preset` | `auto` | `fast` / `faithful` / `lecture` | 用户侧工作流预设。普通用户优先选这个。 |
-| `--speed-mode` | `quality` | `fast` / `balanced` / `quality` | 控制 token、OCR/Vision 数量和图片缩放上限。 |
-
-### 模型、OCR 和视觉
-
-| 参数 | 默认值 | 常用值 | 说明 |
-| --- | --- | --- | --- |
-| `--use-llm` | 关闭 | 开启 | 使用文本模型生成更完整的学习笔记。 |
-| `--provider` | `openai` | `deepseek` / `qwen` / `openai` | 文本模型服务商。 |
-| `--vision` | `auto` | `off` / `auto` | `auto` 只解析高价值图片；`off` 更省钱。 |
-| `--ocr` | `off` | `auto` | 扫描版 PDF 或图片型课件再开。 |
-
-### 分享和导出
-
-| 参数 | 默认值 | 常用值 | 说明 |
-| --- | --- | --- | --- |
-| `--export` | 无 | `markdown-zip` / `docx,pdf` | Markdown 分享用 ZIP；正式文档用 Word/PDF。 |
-| `--asset-mode` | `bundle` | `bundle` | 默认会把图片复制到 `notes.assets/`，配合 `markdown-zip` 最稳。 |
-
-### 缓存和速度
-
-| 参数 | 默认值 | 常用值 | 说明 |
-| --- | --- | --- | --- |
-| `--concurrency` | `1` | `2` 到 `4` | 并发 API 调用数。遇到限流就调低。 |
-| `--global-cache-dir` | 无 | `.slidenote-cache` | 多次试跑或多个输出目录复用缓存。 |
-| `--refresh-pages` | 无 | `3,5-8` | 只重跑指定页，适合局部修订。 |
-
-## 高级参数参考
-
-从这里开始是完整参考。下面的参数主要用于调质量、成本、缓存、可追溯性和内部 pipeline 行为；普通用户通常不需要逐项阅读。
-
-### 基础运行与输出控制
-
-| 参数 | 默认值 | 可选值 / 格式 | 说明 |
-| --- | --- | --- | --- |
-| `input` | 必填 | `.pptx` / `.ppt` / `.pdf` | 输入课程材料。 |
-| `--out` | `outputs/slidenote` | 路径 | 输出目录。 |
-| `--preset` | `auto` | `auto` / `fast` / `faithful` / `lecture` | 用户侧工作流预设。会映射到底层写作、理解和质检选项；显式传入的底层参数优先。 |
-| `--speed-mode` | `quality` | `fast` / `balanced` / `quality` / `debug` | 成本、速度和质量预设。只填充未显式设置的限额。 |
-| `--concurrency` | `1` | 正整数 | OCR、Vision、Figure Crop 和 LLM 的并发 API 调用数。 |
-| `--llm-concurrency` | `--concurrency` | 正整数 | 文本 LLM 并发调用数。 |
-| `--vision-concurrency` | `--concurrency` | 正整数 | Vision 并发调用数。 |
-| `--ocr-concurrency` | `--concurrency` | 正整数 | OCR 并发调用数。 |
-| `--figure-concurrency` | `--concurrency` | 正整数 | Figure Crop / bbox 阶段并发调用数。 |
-| `--global-cache-dir` | 无 | 路径 | 多个输出目录共享缓存。 |
-| `--refresh-pages` | 无 | `3,5-8` | 指定页绕过本地缓存重新生成。 |
-| `--progress-json` | `<out>/progress.json` | 路径 | 进度 JSON 路径。 |
-| `--quiet` | 关闭 | flag | 不打印实时进度，但仍写 `progress.json`。 |
-| `--export` | 无 | `markdown-zip` / `markdown-toc` / `docx` / `pdf` / `latex` / `all`，逗号分隔 | 额外导出格式。Markdown ZIP/目录不需要 Pandoc；Word/PDF/LaTeX 需要 Pandoc。 |
-| `--export-toc` | `auto` | `auto` / `off` | `markdown-toc` 导出是否插入目录。 |
-
-### Speed Mode 预设
-
-| speed-mode | `max-output-tokens` | OCR targets | OCR edge | Figure targets | Vision targets | Vision edge | Vision output | Vision detail |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `fast` | `2500` | `40` | `1200` | `25` | `25` | `1000` | `800` | `low` |
-| `balanced` | `4096` | `120` | `1800` | `80` | `80` | `1400` | `1200` | `low` |
-| `quality` | `7000` | `0` 不限 | `2200` | `160` | `160` | `1800` | `2000` | `high` |
-| `debug` | `4096` | `20` | `1400` | `20` | `20` | `1200` | `1000` | `low` |
-
-### Build Preset 工作流
-
-`--preset` 是用户侧产品入口；`--note-profile` 是写作阶段的风格/结构路线。普通用户优先选 preset，高级用户再用下方参数覆盖细节。
-
-| preset | 适合场景 | 默认映射 |
-| --- | --- | --- |
-| `auto` | 保持当前显式参数和默认值。 | 不额外改写配置。 |
-| `fast` | 快速草稿、低成本、本地优先。 | `--speed-mode fast`、`--note-strategy direct`、`--note-depth balanced`、`--section-detection local`、`--vision off`、`--ocr off`、`--figure-crop off`、`--deck-brief off`、`--content-guard off`、`--teaching-enrichment off`。 |
-| `faithful` | 保真覆盖和来源追踪优先。 | `--note-style faithful`、`--note-strategy lecture-weave`、`--note-context section`、`--note-depth detailed`、`--deck-brief auto`、`--content-guard auto`。 |
-| `lecture` | 教师讲义式详细笔记。 | `--note-profile lecture-notes`、`--note-strategy lecture-weave`、`--note-context section`、`--deck-brief auto`、`--content-guard auto`、`--teaching-enrichment auto`；未显式指定 `--note-depth` 时使用 `very-detailed`。 |
-
-### 解析器 Adapter
-
-| 参数 | 默认值 | 可选值 / 格式 | 说明 |
-| --- | --- | --- | --- |
-| `--parser` | `auto` | `auto` / `builtin` / `docling` / `marker` / `mineru` | 解析器 adapter。`auto` 优先使用内置 PPTX/PPT/PDF 解析；外部 adapter 会调用对应 CLI，并把 JSON / Markdown 输出归一成 SlideNote 的 `Deck` 数据模型。 |
-
-外部 adapter 是可选能力，不会给默认安装增加依赖：
-
-| Adapter | 默认 CLI 候选 | 命令模板环境变量 | 说明 |
-| --- | --- | --- | --- |
-| `docling` | `docling` | `SLIDENOTE_DOCLING_COMMAND` | 可用于 PDF/PPTX/PPT/DOCX/HTML 等文档，输出会尝试读取 JSON 或 Markdown。 |
-| `marker` | `marker_single` / `marker` | `SLIDENOTE_MARKER_COMMAND` | 面向 PDF 的外部解析器 adapter。 |
-| `mineru` | `mineru` / `magic-pdf` | `SLIDENOTE_MINERU_COMMAND` | 面向 PDF 的外部解析器 adapter。 |
-
-命令模板支持 `{input}`、`{out}`、`{output}`、`{stem}` 占位符，例如把解析结果写入 `{out}` 目录。核心 pipeline 只依赖 adapter 返回的统一 `Deck`，不会直接绑定某个外部解析库。
-
-### LLM 与笔记生成
-
-| 参数 | 默认值 | 可选值 / 格式 | 说明 |
-| --- | --- | --- | --- |
-| `--use-llm` | 关闭 | flag | 开启大模型改写。默认不强制开启，避免无 API key 时无法本地解析。 |
-| `--provider` | `openai` | `openai` / `deepseek` / `qwen` / `doubao` / `glm` / `gemini` / `claude` | 文本模型服务商。 |
-| `--model` | provider 默认 | 模型名或 endpoint id | 手动指定文本模型。 |
-| `--api-key` | 环境变量 | 字符串 | 手动传入文本模型 API key。 |
-| `--base-url` | provider 默认 | URL | OpenAI-compatible 或代理接口地址。 |
-| `--max-output-tokens` | `speed-mode` 决定 | 整数 | 每次文本生成的输出上限。 |
-| `--temperature` | 不传 | 数值 | 不传时由服务商默认处理。 |
-| `--note-strategy` | `lecture-weave` | `direct` / `lecture-weave` | `lecture-weave` 会先逐页深讲，再章节编织。 |
-| `--note-context` | `section` | `auto` / `document` / `section` / `page` | 直接生成或编织阶段的一次上下文粒度。 |
-| `--note-style` | `article` | `article` / `faithful` | 默认按知识点组织学习笔记；`faithful` 更贴近原顺序。 |
-| `--note-profile` | `auto` | `auto` / `lecture-notes` / `study-guide` | 高层写作路线；`lecture-notes` 会启用教师讲义式增强。 |
-| `--note-depth` | `detailed` | `concise` / `balanced` / `detailed` / `very-detailed` | 默认详细讲义式讲解深度；`lecture-notes` 未显式指定时使用 `very-detailed`。 |
-| `--teaching-enrichment` | `auto` | `auto` / `off` / `force` | 是否在 section weave 后增加“教学重构”增强 pass；`auto` 只随 `lecture-notes` / `study-guide` 启用。 |
-| `--deck-brief` | `auto` | `auto` / `off` / `force` | 是否在笔记生成前先生成全局课程脉络。`auto` 只在 `--use-llm --note-strategy lecture-weave` 时运行。 |
-| `--content-guard` | `auto` | `auto` / `off` | 学习内容门禁。`auto` 会生成 `content_guard.json`；开启 `--use-llm` 时调用文本模型判断高置信关键内容，未开启时只做本地启发式审查。 |
-| `--note-language` | `zh` | `auto` / `zh` / `en` | 笔记输出语言；可让英文课件生成中文笔记。 |
-| `--term-policy` | `bilingual` | `preserve` / `translate` / `bilingual` | 专业术语处理方式；中文笔记默认保留关键英文术语。 |
-| `--weave-dedup` | `soft` | `soft` / `normal` / `aggressive` | `lecture-weave` 编织阶段的去重强度。 |
-| `--page-neighborhood` | `1` | `0` / `1` / `2` | 逐页深讲时可看到前后几页标题/摘要。 |
-| `--section-detection` | `auto` | `auto` / `local` / `llm` | 章节边界识别方式。 |
-| `--section-cache` | `on` | `on` / `off` / `refresh` | LLM 章节识别缓存模式。 |
-| `--section-cache-dir` | `<out>/.cache/sections` | 路径 | LLM 章节识别缓存目录。 |
-
-#### `note-strategy`
-
-```text
-direct
-```
-
-直接把 `note-context` 选中的上下文交给模型生成笔记。成本较低，但可能在“细节”和“连贯”之间取舍明显。
-
-```text
-lecture-weave
-```
-
-先对每页做详细讲解，再把逐页讲解编织成章节笔记。质量更好，但调用次数和 token 成本更高。
-
-#### `note-profile`
-
-| 值 | 含义 |
-| --- | --- |
-| `auto` | 默认。保持当前 `article + detailed + lecture-weave` 路线，不额外增加 teaching enrichment。 |
-| `lecture-notes` | 教师讲义式路线。默认使用 `very-detailed`，并在 weave 之后、coverage repair 之前运行 teaching enrichment，让正文更像老师重新讲一遍。 |
-| `study-guide` | 复习导向路线。当前复用 teaching enrichment 的结构约束，后续会继续强化考点、例题和自测。 |
-
-`lecture-notes` 不会让 coverage 决定正文形状；coverage 仍然只负责最后质检和补漏。teaching enrichment 的补充内容必须是通用背景、直观解释、例子或类比，不得新增课件没有依据的具体数字、实验结果或结论。
-
-#### `note-language` 与 `term-policy`
-
-`--note-language` 控制最终笔记语言，和课件原文语言不强绑定：
-
-| 值 | 含义 |
-| --- | --- |
-| `zh` | 输出简体中文笔记。默认值，适合“英文课件、中文学习材料”的常见场景。 |
-| `en` | 输出英文笔记。适合英语授课、英文复习资料或后续英文论文/报告引用。 |
-| `auto` | 根据材料主体语言自动选择，并尽量保持全文一致。 |
-
-`--term-policy` 控制术语怎么处理：
-
-| 值 | 含义 |
-| --- | --- |
-| `bilingual` | 默认。关键术语首次出现时尽量写成“中文译名（English term/acronym）”，之后可用中文名或缩写。 |
-| `preserve` | 尽量保留原始术语、英文缩写、协议名、算法名、API 名称和代码符号。 |
-| `translate` | 在不破坏专业准确性的前提下尽量翻译术语；代码、公式、变量和公认英文名仍保持原样。 |
-
-#### `note-context`
-
-| 值 | 含义 | 适合场景 |
-| --- | --- | --- |
-| `auto` | 短材料整份生成，长材料按章节/分组 | 通用懒人设置。 |
-| `document` | 整份文件一个上下文 | 很短的课件。 |
-| `section` | 按章节/小节生成或编织 | 当前质量优先默认。 |
-| `page` | 每页一个上下文 | 调试覆盖率，或极端保真模式。 |
-
-在 `lecture-weave` 下，第一阶段永远是逐页深讲，`note-context` 控制第二阶段如何编织。
-
-#### `deck-brief`
-
-| 值 | 含义 | 适合场景 |
-| --- | --- | --- |
-| `auto` | 默认。只在启用 `--use-llm --note-strategy lecture-weave` 时，先生成全局课程脉络。 | 高质量正式生成。 |
-| `off` | 完全关闭 Deck Brief。 | 想减少一次文本模型调用，或只做本地/调试流程。 |
-| `force` | 即使不是 Lecture-Weave，也尝试生成 `deck_brief.json` / `deck_brief.md`。 | 想单独查看课件总体架构，或为后续 GUI/调试准备。 |
-
-Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主题、核心问题、章节脉络、关键概念、概念依赖、每页角色和跨页关联。逐页深讲阶段会明确约束：`deck_brief` 只能用于理解当前位置和减少重复，正文内容只能来自 `current_page`，不能因为全局脉络而省略当前页元素，也不能把后文内容提前写进当前页。
-
-#### `content-guard`
-
-| 值 | 含义 | 适合场景 |
-| --- | --- | --- |
-| `auto` | 默认。先本地预筛候选学习内容；启用 `--use-llm` 时再用文本模型做语义分类。 | 正式生成，尤其是目录标题中混有定义、条件、公式、表格结论或图示说明的课件。 |
-| `off` | 完全关闭学习内容门禁，不生成 `content_guard.json`。 | 只想复现旧行为，或希望减少一次额外文本模型调用。 |
-
-`content_guard.json` 记录 `page_role`（`structural` / `content` / `mixed`）、元素级 `learning_role`、`must_explain`、`confidence`、分类原因、生成后的 `required_visible_coverage`、修复次数和残余风险。纯结构页可以只保留隐藏 source marker；混合页会删除目录/导航碎片，但 `must_explain=true` 且 `confidence >= 0.7` 的元素必须进入可见正文。
-
-覆盖率上，`trace_coverage` 表示元素 ID 是否被 source marker 追踪到，`visible_coverage` 表示是否出现在可见正文中，`required_visible_coverage` 只统计 content guard 判定出的高置信关键学习内容。若 required 元素只出现在隐藏 marker 中，SlideNote 会最多运行一次 repair prompt，把缺失内容自然融入原段落；修复后仍缺失时，会写入 `content_guard.json` 和 `run_summary.json` 的 warning。
-
-#### `section-detection`
-
-| 值 | 含义 | 适合场景 |
-| --- | --- | --- |
-| `auto` | 默认。不开 LLM 时用本地规则；启用章节式 LLM 笔记时用模型辅助识别章节。 | 推荐。 |
-| `local` | 只用目录页、章节标题页和固定页数组合的本地规则。 | 离线、快速、可复现。 |
-| `llm` | 强制调用文本模型识别章节边界。 | 课件结构混乱、标题页不明显时。 |
-
-章节计划会写入 `sections.json`，其中包含每节的标题、起止页、页码列表、识别原因、缓存和 token 用量。`lecture-weave` 会用这份计划决定最终编织边界。
-
-### 图片、来源与截图呈现
-
-| 参数 | 默认值 | 可选值 | 说明 |
-| --- | --- | --- | --- |
-| `--asset-mode` | `bundle` | `bundle` / `absolute` / `embed` | Markdown 图片引用方式。 |
-| `--source-display` | `hidden` | `hidden` / `footnote` / `inline` | 来源页码和元素 ID 的显示方式。 |
-| `--screenshot-policy` | `fallback` | `fallback` / `always` / `never` | 整页截图是否进入 `notes.md`。 |
-| `--semantic-layout` | `auto` | `auto` / `local` / `vision` | 语义页面块构建方式；`auto` 会在启用视觉时增强选中页面。 |
-| `--image-ranking` | `local` | `off` / `local` | 是否给图片做学习价值排序。 |
-| `--composite-figures` | `auto` | `off` / `auto` | 是否把多个嵌入小图片拼成的流程图/结构图裁成一个整体组合图。 |
-| `--figure-grounding` | `auto` | `off` / `auto` / `vision` | 是否把有学习价值的图片锚定到附近文本/表格，并生成图文对齐报告。 |
-| `--figure-placement` | `inline` | `inline` / `page-end` | 图片在笔记中的插入位置；`inline` 尽量靠近相关知识点。 |
-| `--figure-audit` | `local` | `off` / `local` / `llm` | 图片是否缺失、缺解释或锚点置信度低的复查策略；当前稳定实现为本地审查。 |
-
-`hidden` 会把来源写成 HTML 注释，正文干净，但 `coverage.md` 和 `source_map.json` 仍可追溯。
-
-`image-ranking` 会写入 `image_importance.json`，记录每张图的分数、排名和原因。当前实现是本地启发式：优先局部裁剪图、面积合适的内容图、有 OCR/视觉摘要的图，惩罚装饰图、整页背景图、极细长图片和过小图片。
-
-`composite-figures` 会写入 `composite_figures.json`。当老师用多个嵌入小图片拼出流程图、架构图或结构图时，系统会从整页截图裁出整体图，并把零散子图片标为 `composite_child`，避免笔记和视觉解析把它们拆成无意义碎片。
-
-`figure-grounding` 会写入 `figure_grounding.json`，记录每张重要图的 `layout_order`、`anchor_element_ids`、`anchor_reason`、`grounding_confidence`、解释状态和复查状态。`auto` 总是运行本地 bbox/版面对齐；如果已经启用 vision/OCR，它会复用已有视觉摘要或 OCR 作为图片解释。`vision` 会在 `--vision off` 时也触发一次视觉解析，用于给重要图片补充解释。
-
-### LLM 缓存
-
-| 参数 | 默认值 | 可选值 / 格式 | 说明 |
-| --- | --- | --- | --- |
-| `--cache` | `on` | `on` / `off` / `refresh` | 文本 LLM 缓存模式。 |
-| `--cache-dir` | `<out>/.cache/llm` | 路径 | 文本 LLM 缓存目录。 |
-
-`lecture-weave` 会分开缓存逐页深讲和章节编织。局部 `--refresh-pages` 会刷新指定页的 page note，以及包含该页的 weave context。
-
-### 导出格式
-
-`notes.md` 始终是原始最终笔记。额外导出由 `--export` 显式开启：
-
-| 格式 | 输出 | 依赖 |
-| --- | --- | --- |
-| `markdown-zip` | `notes.zip` | 无 |
-| `markdown-toc` | `notes.toc.md` | 无 |
-| `docx` | `notes.docx` | Pandoc |
-| `pdf` | `notes.pdf` | Pandoc + LibreOffice |
-| `latex` | `notes.tex` | Pandoc |
-| `all` | 以上全部 | Pandoc 用于 docx/pdf/latex |
+| `deepseek` | `DEEPSEEK_API_KEY` |
+| `openai` | `OPENAI_API_KEY` |
+| `qwen` | `QWEN_API_KEY` / `DASHSCOPE_API_KEY` |
+| `doubao` | `DOUBAO_API_KEY` / `ARK_API_KEY` / `VOLCENGINE_API_KEY` |
+| `glm` | `GLM_API_KEY` / `ZAI_API_KEY` / `ZHIPUAI_API_KEY` |
+| `gemini` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
+| `claude` | `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY` |
+
+视觉理解默认使用 Qwen/DashScope：
 
 ```powershell
-python -m slidenote build lecture.pdf --out outputs\lecture --export markdown-zip,markdown-toc,docx
+$env:DASHSCOPE_API_KEY="..."
 ```
 
-`notes.zip` 里包含 `notes.md` 和 `notes.assets/`，适合把 Markdown 笔记发给别人；只发单独 `notes.md` 时图片可能无法显示。`export_report.json` 会记录每个格式的状态、输出路径、Pandoc 命令、失败原因和 warning。请求 `docx`、`pdf` 或 `latex` 但未安装 Pandoc 时，构建仍会保留 `notes.md` 和其它基础产物，但命令返回非 0，避免误认为导出文件已经生成。
+扫描版 PDF 如果需要 OCR，默认使用百度 OCR 环境变量：
 
-### 复习和自测包
+```powershell
+$env:BAIDU_OCR_API_KEY="..."
+$env:BAIDU_OCR_SECRET_KEY="..."
+```
 
-| 参数 | 默认值 | 可选值 / 格式 | 说明 |
-| --- | --- | --- | --- |
-| `--review-mode` | `off` | `off` / `auto` / `local` / `llm` | 生成面向考试复习的 `review.md`。`auto` 会在启用 LLM 时用模型，否则用本地规则。 |
-| `--exam-mode` | `off` | `off` / `auto` / `local` / `llm` | 生成自测题、答案和交互式 `exam.html`。 |
-| `--exam-question-count` | `12` | 正整数 | 自测题目标数量。 |
+模型名和 base URL 仍可通过 provider 自己的环境变量覆盖，例如 `SLIDENOTE_MODEL`、`QWEN_MODEL`、`DEEPSEEK_MODEL`、`SLIDENOTE_BASE_URL`、`DASHSCOPE_BASE_URL`。
 
-### OCR
+## 复习包
 
-| 参数 | 默认值 | 可选值 / 格式 | 说明 |
-| --- | --- | --- | --- |
-| `--ocr` | `off` | `off` / `auto` / `all` | 专门 OCR 阶段。 |
-| `--ocr-provider` | `baidu` | `baidu` / `mathpix` / `google` | OCR 服务商。 |
-| `--ocr-api-key` | 环境变量 | 字符串 | OCR API key 或 app id。 |
-| `--ocr-secret-key` | 环境变量 | 字符串 | OCR secret key 或 app key。 |
-| `--ocr-endpoint` | 无 | URL | 自定义 OCR endpoint。 |
-| `--ocr-language` | `CHN_ENG` | `CHN_ENG` / `ENG` / `CHN` 等 | OCR 语言提示。 |
-| `--ocr-cache` | `on` | `on` / `off` / `refresh` | OCR 缓存模式。 |
-| `--ocr-cache-dir` | `<out>/.cache/ocr` | 路径 | OCR 缓存目录。 |
-| `--ocr-max-targets` | `speed-mode` 决定 | 整数，`0` 表示不限 | 最大 OCR 目标数。 |
-| `--ocr-min-text-chars` | `80` | 整数 | `auto` 模式下，低于该文本量的页更可能 OCR。 |
-| `--ocr-min-area` | `120000` | 整数 | OCR 嵌入图最小面积。 |
-| `--ocr-max-edge` | `speed-mode` 决定 | 整数 | OCR 前缩放图片长边。 |
+复习包已经从 `build` 参数中移出。先生成笔记，再对输出目录运行：
 
-### Figure Crop 局部图裁剪
+```powershell
+python -m slidenote study-pack outputs\lecture --question-count 20
+```
 
-| 参数 | 默认值 | 可选值 / 格式 | 说明 |
-| --- | --- | --- | --- |
-| `--figure-crop` | `auto` | `off` / `auto` / `vision` | 局部图裁剪策略。 |
-| `--figure-max-targets` | `speed-mode` 决定 | 整数，`0` 表示不限 | 最多送多少页做 bbox 检测。 |
-| `--figure-max-crops-per-page` | `3` | 整数 | 每页最多裁几张局部图。 |
-| `--figure-min-confidence` | `0.45` | 0 到 1 | 接受 bbox 的最低置信度。 |
-| `--figure-min-area` | `40000` | 整数 | 裁剪图最小面积。 |
-| `--figure-cache` | `on` | `on` / `off` / `refresh` | 裁剪 bbox 缓存模式。 |
-| `--figure-cache-dir` | `<out>/.cache/figure` | 路径 | Figure Crop 缓存目录。 |
-
-`auto` 表示只有在启用 `--vision auto/all` 时才顺带裁剪；`vision` 表示即使不做视觉摘要，也强制调用视觉模型做 bbox 裁剪。
-
-### Vision 视觉解析
-
-| 参数 | 默认值 | 可选值 / 格式 | 说明 |
-| --- | --- | --- | --- |
-| `--vision` | `auto` | `off` / `auto` / `all` | 视觉解析模式。当前默认质量优先。 |
-| `--vision-provider` | `qwen` | `openai` / `qwen` / `doubao` / `gemini` / `claude` | 视觉模型服务商。默认用 Qwen，适合国内用户配合 `DASHSCOPE_API_KEY` 使用。 |
-| `--vision-model` | provider 默认 | 模型名或 endpoint id | 手动指定视觉模型。 |
-| `--vision-api-key` | 环境变量 | 字符串 | 视觉模型 API key。 |
-| `--vision-base-url` | provider 默认 | URL | 自定义视觉 API base URL。 |
-| `--vision-cache` | `on` | `on` / `off` / `refresh` | 视觉解析缓存模式。 |
-| `--vision-cache-dir` | `<out>/.cache/vision` | 路径 | 视觉解析缓存目录。 |
-| `--vision-max-targets` | `speed-mode` 决定 | 整数，`0` 表示不限 | 最大视觉目标数。 |
-| `--vision-min-area` | `120000` | 整数 | `auto` 选择嵌入图的最小面积。 |
-| `--vision-max-edge` | `speed-mode` 决定 | 整数 | 视觉调用前缩放图片长边。 |
-| `--vision-max-output-tokens` | `speed-mode` 决定 | 整数 | 每张图视觉输出上限。 |
-| `--vision-temperature` | `0.0` | 数值 | 视觉模型温度。 |
-| `--vision-detail` | `speed-mode` 决定 | `low` / `high` / `auto` | OpenAI image detail 参数。 |
-
-### Provider 默认模型
-
-| Provider | 文本默认模型 | 视觉默认模型 | API key 环境变量 |
-| --- | --- | --- | --- |
-| `openai` | `gpt-4.1-mini` | `gpt-4.1-mini` | `OPENAI_API_KEY` |
-| `deepseek` | `deepseek-v4-flash` | 不支持视觉 | `DEEPSEEK_API_KEY` |
-| `qwen` | `qwen-plus` | `qwen-vl-plus` | `QWEN_API_KEY` / `DASHSCOPE_API_KEY` |
-| `doubao` | 需传 `--model` | 需传 `--vision-model` | `DOUBAO_API_KEY` / `ARK_API_KEY` / `VOLCENGINE_API_KEY` |
-| `glm` | `glm-5.1` | 不支持视觉 | `GLM_API_KEY` / `ZAI_API_KEY` / `ZHIPUAI_API_KEY` |
-| `gemini` | `gemini-3-flash-preview` | `gemini-3-flash-preview` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
-| `claude` | `claude-sonnet-4-20250514` | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY` |
-
-### 输出文件
-
-常见输出：
+它会读取 `notes.md`、`content.json`、`sections.json`、`source_map.json`、`coverage.json` 等已有产物，并写出：
 
 ```text
-content.json
-page_modalities.json
-image_importance.json
-sections.json
-deck_brief.md
-deck_brief.json
-deck_understanding.json
-page_understanding.json
-content_guard.json
-notes.md
-page_notes.md
-page_notes.json
-weave_report.json
-teaching_enrichment.json
-quality_report.json
-llm_usage.json
-coverage.json
-coverage.md
-source_map.json
 study_pack.json
-section_study_pack.json
-exam_review_pack.json
 review.md
 exam.md
 exam.json
 exam.html
+section_study_pack.json
+exam_review_pack.json
 final_exam.md
 final_exam.answers.md
 wrong_answer_review_prompt.md
-export_report.json
-notes.zip
-notes.toc.md
-notes.docx
-notes.pdf
-notes.tex
-progress.json
-run_summary.json
-notes.assets/
-images/
-figures/
-screenshots/
 ```
 
-只有启用对应功能时，才会生成 `ocr_usage.json`、`vision_usage.json`、`figure_usage.json` 等文件。
+如果找到文本 provider API key，复习包会用 LLM 增强；没有 key 时会自动回退到本地规则。
+
+## 旧参数迁移
+
+这些旧的 `build` 参数已经删除：`--use-llm`、`--speed-mode`、`--concurrency`、各阶段 concurrency、`--cache`、`--global-cache-dir`、`--refresh-pages`、`--model`、`--api-key`、`--base-url`、`--max-output-tokens`、`--temperature`、`--ocr-*`、`--vision-provider`、`--vision-model`、`--vision-api-key`、`--figure-*`、`--note-*`、`--deck-brief`、`--content-guard`、`--section-detection`、`--semantic-layout`、`--asset-mode`、`--source-display`、`--screenshot-policy`、`--export-toc`、`--review-mode`、`--exam-mode`、`--exam-question-count`。
+
+常见迁移方式：
+
+| 旧写法 | 新写法 |
+| --- | --- |
+| `--use-llm --provider deepseek` | 默认就是 `lecture`，只保留 `--provider deepseek`。 |
+| `--preset fast` / `--vision off` 本地预览 | `--preset local`。 |
+| `--review-mode auto --exam-mode auto` | `slidenote study-pack <build输出目录>`。 |
+| `--api-key ...` / `--vision-api-key ...` | 设置环境变量，或在 GUI 页面填写 key。 |
+| `--asset-mode bundle --export markdown-zip` | 只保留 `--export markdown-zip`。 |
+
+如果你之前依赖非常细的调参能力，建议先使用默认 `lecture` 路线跑通，再根据实际缺口考虑是否需要恢复为开发者配置，而不是重新暴露给普通用户。

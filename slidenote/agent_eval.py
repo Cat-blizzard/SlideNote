@@ -14,7 +14,10 @@ from slidenote.utils import write_json, write_text
 
 
 BUILD_DEFAULTS: dict[str, Any] = {
-    "preset": "auto",
+    "parser": "auto",
+    "preset": "local",
+    "provider": "deepseek",
+    "vision": "off",
     "note_context": "section",
     "note_strategy": "lecture-weave",
     "deck_brief": "auto",

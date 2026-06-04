@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import io
 import json
@@ -25,12 +25,11 @@ except Exception:  # pragma: no cover - GUI fallback only
     run_doctor = None
 
 from gui.studio_core import (
-    DEFAULT_MODELS,
     PROVIDER_ENV_KEYS,
-    VISION_DEFAULT_MODELS,
     StudioConfig,
     build_env,
     build_slidenote_command,
+    build_study_pack_command,
     command_for_display,
     discover_outputs,
     needs_text_api,
@@ -48,76 +47,14 @@ GLOBAL_CACHE_DIR = RUNS_DIR / ".global_cache"
 PRICING_PATH = ROOT / "pricing.template.json"
 
 PRESETS = {
-    "⚡ Fast API draft": {
-        "use_llm": True,
-        "speed_mode": "fast",
-        "ocr": "off",
-        "vision": "off",
-        "note_strategy": "direct",
-        "note_depth": "concise",
-        "deck_brief": "off",
-        "content_guard": "off",
-        "section_detection": "local",
-        "figure_crop": "off",
-        "figure_grounding": "auto",
-        "concurrency": 4,
-        "vision_max_targets": 10,
-        "ocr_max_targets": 10,
-    },
-    "🧠 Balanced study notes": {
-        "use_llm": True,
-        "speed_mode": "balanced",
-        "ocr": "auto",
-        "vision": "auto",
-        "note_strategy": "lecture-weave",
-        "note_depth": "balanced",
-        "deck_brief": "auto",
-        "content_guard": "auto",
-        "section_detection": "auto",
-        "figure_crop": "auto",
-        "figure_grounding": "auto",
-        "concurrency": 4,
-        "vision_max_targets": 30,
-        "ocr_max_targets": 30,
-    },
-    "💎 Quality detailed notes": {
-        "use_llm": True,
-        "speed_mode": "quality",
-        "ocr": "auto",
-        "vision": "auto",
-        "note_strategy": "lecture-weave",
-        "note_depth": "detailed",
-        "deck_brief": "auto",
-        "content_guard": "auto",
-        "section_detection": "auto",
-        "figure_crop": "auto",
-        "figure_grounding": "auto",
-        "concurrency": 3,
-        "vision_max_targets": 80,
-        "ocr_max_targets": 80,
-    },
-    "🧪 Local safe preview": {
-        "use_llm": False,
-        "speed_mode": "fast",
-        "ocr": "off",
-        "vision": "off",
-        "note_strategy": "direct",
-        "note_depth": "concise",
-        "deck_brief": "off",
-        "content_guard": "off",
-        "section_detection": "local",
-        "figure_crop": "off",
-        "figure_grounding": "auto",
-        "concurrency": 1,
-        "vision_max_targets": 0,
-        "ocr_max_targets": 0,
-    },
+    "Lecture quality": {"preset": "lecture", "vision": "auto"},
+    "Local preview": {"preset": "local", "vision": "off"},
 }
 
 MODALITY_OPTIONS = ["native_text", "mixed", "image_only", "shape_diagram", "decorative", "unknown"]
 
 
-def main() -> None:
+def _run_simplified_app() -> None:
     st.set_page_config(page_title="SlideNote Studio", page_icon="📝", layout="wide")
     _style()
     _ensure_dirs()
@@ -128,26 +65,20 @@ def main() -> None:
         uploaded = st.file_uploader("Upload PPTX / PPT / PDF", type=["pptx", "ppt", "pdf"])
         preset_name = st.selectbox("Workflow preset", list(PRESETS.keys()), index=0)
         preset = PRESETS[preset_name]
+        preset_value = str(preset["preset"])
 
-        st.header("2. API connection")
-        use_llm = st.toggle("Use text LLM", value=bool(preset["use_llm"]))
+        st.header("2. API keys")
         provider = st.selectbox("Text provider", ["deepseek", "openai", "qwen", "doubao", "glm", "gemini", "claude"], index=0)
-        model_default = DEFAULT_MODELS.get(provider, "")
-        model = st.text_input("Text model", value=model_default, help="Leave empty only when your provider requires endpoint IDs in environment variables.")
-        api_key = st.text_input("Text API key", type="password", placeholder="Paste key here; it is passed only to this run")
-        base_url = st.text_input("Base URL override", value="", help="Optional. Use only for compatible/proxy endpoints.")
-
-        st.header("3. Visual/OCR APIs")
-        ocr = st.selectbox("OCR mode", ["off", "auto", "all"], index=["off", "auto", "all"].index(str(preset["ocr"])))
-        ocr_provider = st.selectbox("OCR provider", ["baidu", "mathpix", "google"], index=0)
-        ocr_api_key = st.text_input("OCR API key / app id", type="password")
+        api_key = st.text_input("Text API key", type="password", placeholder="Used for lecture builds and study packs")
+        vision = st.selectbox("Vision", ["auto", "off"], index=["auto", "off"].index(str(preset["vision"])), disabled=preset_value == "local")
+        if preset_value == "local":
+            vision = "off"
+        vision_provider = "qwen"
+        vision_api_key = st.text_input("Vision API key", type="password", help="Qwen/DashScope key. Can be the same key when your provider is qwen.")
+        ocr_api_key = st.text_input("OCR API key / app id", type="password", help="Optional. Lecture preset uses OCR auto; scanned PDFs need OCR credentials.")
         ocr_secret_key = st.text_input("OCR secret / app key", type="password")
-        vision = st.selectbox("Vision mode", ["off", "auto", "all"], index=["off", "auto", "all"].index(str(preset["vision"])))
-        vision_provider = st.selectbox("Vision provider", ["qwen", "openai", "doubao", "gemini", "claude"], index=0)
-        vision_model = st.text_input("Vision model", value=VISION_DEFAULT_MODELS.get(vision_provider, ""))
-        vision_api_key = st.text_input("Vision API key", type="password", help="Can be the same as the text provider key if provider is the same.")
 
-        st.header("4. Save")
+        st.header("3. Save")
         save_mode = st.radio(
             "Output location",
             ["Default workspace", "Custom folder"],
@@ -160,27 +91,9 @@ def main() -> None:
             disabled=save_mode == "Default workspace",
             help="Paste a local folder path, for example C:\\Users\\student\\Desktop\\SlideNote_outputs.",
         )
-        timestamped_subfolder = st.toggle(
-            "Create a timestamped subfolder",
-            value=True,
-            help="Recommended. Keeps each run separated and prevents old results from being overwritten.",
-        )
+        timestamped_subfolder = st.toggle("Create a timestamped subfolder", value=True)
 
-        st.header("5. Review / Exam")
-        study_generation = st.selectbox(
-            "Study pack generation",
-            ["auto", "local", "llm"],
-            index=0,
-            help="auto uses the text LLM when note generation uses an LLM; otherwise it falls back to local generation.",
-        )
-        review_enabled = st.checkbox("Review checklist (review.md)", value=False)
-        exam_enabled = st.checkbox("Self-test pack (exam.md + exam.html)", value=False)
-        exam_question_count = st.slider("Question count", 4, 40, 12, step=2, disabled=not exam_enabled)
-        review_mode = study_generation if review_enabled else "off"
-        exam_mode = study_generation if exam_enabled else "off"
-
-        st.header("6. Exports")
-        st.caption("Optional final files generated from notes.md. Markdown ZIP/TOC work without Pandoc; Word/LaTeX need Pandoc; PDF uses LibreOffice for stable Chinese/CJK layout.")
+        st.header("4. Exports")
         export_markdown_zip = st.checkbox(
             "Markdown note package (.zip)",
             value=True,
@@ -195,158 +108,59 @@ def main() -> None:
         export_options = _selected_export_formats(export_markdown_zip, export_markdown_toc, export_docx, export_pdf, export_latex)
         _render_export_readiness(export_options)
 
-    col_left, col_right = st.columns([0.95, 1.05], gap="large")
-
-    with col_left:
-        st.subheader("Run settings")
-        speed_mode = st.segmented_control("Speed mode", ["fast", "balanced", "quality", "debug"], default=str(preset["speed_mode"]))
-        concurrency = st.slider("Concurrency", 1, 10, int(preset["concurrency"]), help="Parallel API calls. Higher is faster but may hit rate limits.")
-        with st.expander("Advanced API concurrency", expanded=False):
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                llm_concurrency = st.number_input("LLM", min_value=1, max_value=20, value=int(concurrency), step=1)
-            with c2:
-                vision_concurrency = st.number_input("Vision", min_value=1, max_value=20, value=int(concurrency), step=1)
-            with c3:
-                ocr_concurrency = st.number_input("OCR", min_value=1, max_value=20, value=int(concurrency), step=1)
-            with c4:
-                figure_concurrency = st.number_input("Figure", min_value=1, max_value=20, value=int(concurrency), step=1)
-        cache_mode = st.selectbox("LLM cache", ["on", "refresh", "off"], index=0)
-        use_global_cache = st.toggle("Use shared global cache", value=True, help="Keeps OCR/Vision/LLM cache across different GUI runs.")
-        refresh_default = st.session_state.get("refresh_pages_value", "")
-        refresh_pages = st.text_input(
-            "Refresh only these pages",
-            value=refresh_default,
-            key="refresh_pages_text",
-            placeholder="Example: 3,5-8",
-            help="Bypass cache for selected slide IDs only. Use this for local page refresh after review.",
-        )
-
-        with st.expander("Quality and time controls", expanded=True):
-            c1, c2 = st.columns(2)
-            with c1:
-                note_strategy = st.selectbox("Note strategy", ["direct", "lecture-weave"], index=["direct", "lecture-weave"].index(str(preset["note_strategy"])))
-                note_depth = st.selectbox("Note depth", ["concise", "balanced", "detailed"], index=["concise", "balanced", "detailed"].index(str(preset["note_depth"])))
-                note_context = st.selectbox("Note context", ["auto", "document", "section", "page"], index=2)
-                note_language = st.selectbox("Language", ["zh", "en", "auto"], index=0)
-                term_policy = st.selectbox("Term policy", ["bilingual", "preserve", "translate"], index=0)
-            with c2:
-                deck_brief = st.selectbox("Deck brief", ["off", "auto", "force"], index=["off", "auto", "force"].index(str(preset["deck_brief"])))
-                content_guard = st.selectbox("Content guard", ["off", "auto"], index=["off", "auto"].index(str(preset["content_guard"])))
-                section_detection = st.selectbox("Section detection", ["local", "auto", "llm"], index=["local", "auto", "llm"].index(str(preset["section_detection"])))
-                max_output_tokens = st.number_input("Max output tokens", min_value=512, max_value=12000, value=2500 if speed_mode == "fast" else 4096, step=256)
-                temperature = st.number_input("Temperature", min_value=0.0, max_value=1.5, value=0.2, step=0.1)
-
-        with st.expander("Visual/OCR speed limits", expanded=True):
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                ocr_max_targets = st.number_input("OCR max targets", min_value=0, max_value=500, value=int(preset["ocr_max_targets"]), step=5)
-                ocr_max_edge = st.number_input("OCR max edge", min_value=600, max_value=3000, value=1200 if speed_mode == "fast" else 1800, step=100)
-            with c2:
-                vision_max_targets = st.number_input("Vision max targets", min_value=0, max_value=500, value=int(preset["vision_max_targets"]), step=5)
-                vision_max_edge = st.number_input("Vision max edge", min_value=600, max_value=3000, value=1000 if speed_mode == "fast" else 1400, step=100)
-            with c3:
-                vision_detail = st.selectbox("Vision detail", ["low", "auto", "high"], index=0)
-                figure_crop = st.selectbox("Figure crop", ["off", "auto", "vision"], index=["off", "auto", "vision"].index(str(preset["figure_crop"])))
-                figure_max_targets = st.number_input("Figure max targets", min_value=0, max_value=500, value=10 if speed_mode == "fast" else 30, step=5)
-
-        with st.expander("Export and display", expanded=False):
-            source_display = st.selectbox("Source display", ["hidden", "footnote", "inline"], index=0)
-            screenshot_policy = st.selectbox("Screenshot policy", ["fallback", "never", "always"], index=0)
-            st.caption("Export formats are configured in the sidebar under '6. Exports'.")
-            st.write(", ".join(export_options) if export_options else "No extra exports selected")
-
     preview_config = StudioConfig(
         input_path=ROOT / "example.pdf",
         output_dir=OUTPUTS_DIR / "preview",
         progress_json=OUTPUTS_DIR / "preview" / "progress.json",
-        speed_mode=str(speed_mode),
-        concurrency=int(concurrency),
-        llm_concurrency=int(llm_concurrency),
-        vision_concurrency=int(vision_concurrency),
-        ocr_concurrency=int(ocr_concurrency),
-        figure_concurrency=int(figure_concurrency),
-        global_cache_dir=GLOBAL_CACHE_DIR if use_global_cache else None,
-        refresh_pages=refresh_pages.strip() or None,
-        use_llm=bool(use_llm),
+        preset=preset_value,
         provider=provider,
-        model=model.strip() or None,
         api_key=api_key or None,
-        base_url=base_url.strip() or None,
-        max_output_tokens=int(max_output_tokens),
-        temperature=float(temperature),
-        content_guard=content_guard,
-        note_context=note_context,
-        note_language=note_language,
-        term_policy=term_policy,
-        note_strategy=note_strategy,
-        note_depth=note_depth,
-        deck_brief=deck_brief,
-        section_detection=section_detection,
-        cache=cache_mode,
-        ocr=ocr,
-        ocr_provider=ocr_provider,
-        ocr_api_key=ocr_api_key or None,
-        ocr_secret_key=ocr_secret_key or None,
-        ocr_max_targets=int(ocr_max_targets),
-        ocr_max_edge=int(ocr_max_edge),
         vision=vision,
         vision_provider=vision_provider,
-        vision_model=vision_model.strip() or None,
-        vision_api_key=vision_api_key or (api_key if vision_provider == provider else None) or None,
-        vision_max_targets=int(vision_max_targets),
-        vision_max_edge=int(vision_max_edge),
-        vision_detail=vision_detail,
-        figure_crop=figure_crop,
-        figure_max_targets=int(figure_max_targets),
-        figure_grounding="auto",
-        source_display=source_display,
-        screenshot_policy=screenshot_policy,
-        review_mode=review_mode,
-        exam_mode=exam_mode,
-        exam_question_count=int(exam_question_count),
+        vision_api_key=vision_api_key or (api_key if provider == vision_provider else None) or None,
+        ocr="auto" if preset_value == "lecture" else "off",
+        ocr_api_key=ocr_api_key or None,
+        ocr_secret_key=ocr_secret_key or None,
         export=",".join(export_options) if export_options else None,
     )
 
+    col_left, col_right = st.columns([0.95, 1.05], gap="large")
+    with col_left:
+        st.subheader("Run settings")
+        st.metric("Preset", preset_value)
+        st.metric("Vision", vision)
+        st.caption("Lecture uses the strong default pipeline. Local runs without API calls.")
+        with st.expander("Generated command preview", expanded=False):
+            st.code(command_for_display(build_slidenote_command(preview_config)), language="bash")
+
     with col_right:
-        st.subheader("Connection and runtime overview")
+        st.subheader("Connection overview")
         text_status = _api_status(needs_text_api(preview_config), api_key, provider)
         vision_status = _api_status(_needs_vision_api(preview_config), preview_config.vision_api_key, vision_provider)
-        ocr_status = _ocr_status(preview_config.ocr != "off", ocr_api_key, ocr_secret_key, ocr_provider)
-        cache_status = _cache_status(cache_mode, use_global_cache)
-        concurrency_status = _concurrency_status(concurrency)
-        grid = st.columns(5)
+        ocr_status = _ocr_status(preview_config.ocr != "off", ocr_api_key, ocr_secret_key, "baidu")
+        grid = st.columns(3)
         with grid[0]:
-            _status_card("Text", *text_status, icon="✦")
+            _status_card("Text", *text_status, icon="✓")
         with grid[1]:
-            _status_card("Vision", *vision_status, icon="◈")
+            _status_card("Vision", *vision_status, icon="◼")
         with grid[2]:
-            _status_card("OCR", *ocr_status, icon="□")
-        with grid[3]:
-            _status_card("Workers", *concurrency_status, icon="⇄")
-        with grid[4]:
-            _status_card("Cache", *cache_status, icon="◎")
+            _status_card("OCR", *ocr_status, icon="▣")
 
         tips = performance_tips(preview_config)
         if tips:
             st.info("\n".join(f"• {tip}" for tip in tips))
-        else:
-            st.success("Settings are already speed-friendly.")
-
-        with st.expander("Generated command preview", expanded=False):
-            st.code(command_for_display(build_slidenote_command(preview_config)), language="bash")
 
         with st.expander("Doctor panel", expanded=False):
             _render_doctor_panel(text_status=text_status, vision_status=vision_status, ocr_status=ocr_status)
 
-        run_clicked = st.button("🚀 Run SlideNote build", type="primary", use_container_width=True, disabled=uploaded is None)
+        run_clicked = st.button("Run SlideNote build", type="primary", use_container_width=True, disabled=uploaded is None)
 
     if needs_text_api(preview_config) and not api_key and not os.getenv(provider_env_key(provider)):
-        st.warning("Text LLM is enabled but no API key is entered or configured in the environment.")
+        st.warning("Lecture preset needs a text API key. Enter one here or configure the provider environment variable.")
     if _needs_vision_api(preview_config) and vision_status[0] == "Missing key":
-        st.warning("Vision is enabled but no vision API key was entered or found in the environment.")
+        st.warning("Vision is enabled but no Qwen/DashScope vision API key was entered or found in the environment.")
     if preview_config.ocr != "off" and ocr_status[0] == "Missing key":
-        st.warning("OCR is enabled but the selected OCR provider does not have the required key fields.")
+        st.warning("OCR auto is enabled. Scanned PDFs may need Baidu OCR API key and secret.")
 
     if run_clicked and uploaded is not None:
         output_base = OUTPUTS_DIR if save_mode == "Default workspace" else Path(custom_output_base_text).expanduser()
@@ -362,8 +176,11 @@ def main() -> None:
     last_output_dir = Path(st.session_state.get("last_output_dir", "")) if st.session_state.get("last_output_dir") else None
     if last_output_dir and last_output_dir.exists():
         st.divider()
-        _render_results(last_output_dir)
+        _render_results(last_output_dir, preview_config)
 
+
+def main() -> None:
+    _run_simplified_app()
 
 def _ensure_dirs() -> None:
     RUNS_DIR.mkdir(exist_ok=True)
@@ -380,7 +197,7 @@ def _render_hero() -> None:
           <div class="hero-glow hero-glow-b"></div>
           <div class="hero-kicker">AI course notes · local-first workspace</div>
           <h1>📝 SlideNote Studio</h1>
-          <p>Upload slides, connect API keys in the page, run with concurrency/cache controls, and monitor tokens, coverage and cost without touching the command line.</p>
+          <p>Upload slides, choose lecture or local mode, add API keys on the page, and download notes, exports and study packs without touching the command line.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -483,7 +300,7 @@ def _status_card(label: str, status: str, detail: str, tone: str, icon: str = "�
 
 
 def _needs_vision_api(config: StudioConfig) -> bool:
-    return config.vision != "off" or config.figure_crop == "vision" or config.figure_grounding == "vision"
+    return config.preset == "lecture" and config.vision != "off"
 
 
 def _render_doctor_panel(text_status: tuple[str, str, str], vision_status: tuple[str, str, str], ocr_status: tuple[str, str, str]) -> None:
@@ -605,7 +422,28 @@ def _run_build(config: StudioConfig) -> None:
         _generate_cost_report(config.output_dir)
         st.success(f"Build finished. Output saved to: {config.output_dir}")
     else:
-        st.error(f"Build failed with exit code {process.returncode}. Check the log above. You can keep the same output folder and use Refresh only these pages for a partial retry.")
+        st.error(f"Build failed with exit code {process.returncode}. Check the log above.")
+
+
+def _run_study_pack(config: StudioConfig, question_count: int) -> None:
+    cmd = build_study_pack_command(config.output_dir, question_count=question_count, quiet=False)
+    env = build_env(os.environ, config)
+    result = subprocess.run(
+        cmd,
+        cwd=str(ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.stdout:
+        st.code(result.stdout, language="text")
+    if result.returncode == 0:
+        st.success("Study pack generated. Review and exam files are in the output directory.")
+    else:
+        st.error(f"Study pack failed with exit code {result.returncode}.")
 
 
 def _update_progress_ui(progress_path: Path, progress_bar, status_box, stage_box) -> None:
@@ -650,7 +488,7 @@ def _generate_cost_report(output_dir: Path) -> None:
         st.warning(f"Build finished, but cost report generation failed: {exc}")
 
 
-def _render_results(output_dir: Path) -> None:
+def _render_results(output_dir: Path, config: StudioConfig | None = None) -> None:
     st.subheader("Results")
     st.markdown(f"<div class='output-path'>Output saved to<br><code>{output_dir}</code></div>", unsafe_allow_html=True)
     outputs = discover_outputs(output_dir)
@@ -665,7 +503,7 @@ def _render_results(output_dir: Path) -> None:
     with tabs[2]:
         _render_cost_tab(output_dir)
     with tabs[3]:
-        _render_study_pack_tab(output_dir)
+        _render_study_pack_tab(output_dir, config)
     with tabs[4]:
         _render_exports_tab(output_dir)
     with tabs[5]:
@@ -716,9 +554,15 @@ def _render_quick_downloads(output_dir: Path, outputs: dict[str, Path]) -> None:
             col.download_button(f"Download {label}", data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path), use_container_width=True)
 
 
-def _render_study_pack_tab(output_dir: Path) -> None:
+def _render_study_pack_tab(output_dir: Path, config: StudioConfig | None = None) -> None:
     outputs = discover_outputs(output_dir)
     report = _read_json(output_dir / "study_pack.json")
+    question_count = st.slider("Question count", 4, 40, 12, step=2)
+    if st.button("Generate study pack from this output", type="primary", use_container_width=True):
+        run_config = config or StudioConfig(input_path=ROOT / "example.pdf", output_dir=output_dir, progress_json=output_dir / "progress.json")
+        run_config = _clone_config_for_run(run_config, input_path=run_config.input_path, output_dir=output_dir, progress_json=output_dir / "progress.json")
+        _run_study_pack(run_config, question_count)
+        st.rerun()
     rows = [
         ("Review checklist", outputs.get("review"), "review.md"),
         ("Self-test Markdown", outputs.get("exam"), "exam.md"),
@@ -736,7 +580,7 @@ def _render_study_pack_tab(output_dir: Path) -> None:
         for col, (label, path) in zip(cols, ready):
             col.download_button(f"Download {label}", data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path), use_container_width=True)
     else:
-        st.info("No study pack was generated. Enable Review / Exam in the sidebar before running the build.")
+        st.info("No study pack was generated yet. Click the button above; the notes are in the existing build output directory.")
 
     if outputs.get("review"):
         _render_markdown_file(outputs["review"], "review.md")
