@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +95,32 @@ class Deck:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def deck_from_dict(data: dict[str, Any]) -> Deck:
+    return Deck(
+        source_path=str(data.get("source_path") or ""),
+        source_type=str(data.get("source_type") or ""),
+        warnings=list(data.get("warnings") or []),
+        pages=[_page_from_dict(page) for page in data.get("pages") or [] if isinstance(page, dict)],
+    )
+
+
+def _page_from_dict(data: dict[str, Any]) -> SlidePage:
+    kwargs = _filtered_kwargs(SlidePage, data)
+    kwargs["text_blocks"] = [_dataclass_from_dict(TextBlock, item) for item in data.get("text_blocks") or [] if isinstance(item, dict)]
+    kwargs["tables"] = [_dataclass_from_dict(TableBlock, item) for item in data.get("tables") or [] if isinstance(item, dict)]
+    kwargs["images"] = [_dataclass_from_dict(ImageAsset, item) for item in data.get("images") or [] if isinstance(item, dict)]
+    return SlidePage(**kwargs)
+
+
+def _dataclass_from_dict(cls: type[Any], data: dict[str, Any]) -> Any:
+    return cls(**_filtered_kwargs(cls, data))
+
+
+def _filtered_kwargs(cls: type[Any], data: dict[str, Any]) -> dict[str, Any]:
+    allowed = {field.name for field in fields(cls)}
+    return {key: value for key, value in data.items() if key in allowed}
 
 
 def normalize_rel_path(path: Path, root: Path) -> str:

@@ -66,11 +66,10 @@ python -m pip install -e ".[dev,llm]"
 python -m slidenote doctor
 ```
 
-如果只想用一个 LLM API key 生成纯文本 AI 笔记：
+如果只想先本地预览，确认课件能正常解析：
 
 ```powershell
-$env:DEEPSEEK_API_KEY="..."
-python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --provider deepseek --vision off --figure-crop off
+python -m slidenote build path\to\lecture.pdf --out outputs\local --preset local --export markdown-zip
 ```
 
 如果想生成带图片理解的高质量讲义式笔记：
@@ -78,7 +77,7 @@ python -m slidenote build path\to\lecture.pdf --out outputs\lecture --use-llm --
 ```powershell
 $env:DASHSCOPE_API_KEY="..."
 $env:DEEPSEEK_API_KEY="..."
-python -m slidenote build path\to\lecture.pdf --out outputs\lecture --preset lecture --use-llm --provider deepseek
+python -m slidenote build path\to\lecture.pdf --out outputs\lecture --provider deepseek --export markdown-zip
 ```
 
 生成后打开 `outputs\lecture\notes.md`。图片默认会复制到 `outputs\lecture\notes.assets\`。
@@ -107,24 +106,22 @@ Ingest -> Understand -> Write -> Guard -> Export
 | **2. Understand** | 理解课件在讲什么，每页/每图/每表起什么作用。 | `deck_understanding.json`、`page_understanding.json`、`sections.json`、`deck_brief.json`、图表理解 |
 | **3. Write** | 把结构化材料写成可读学习笔记。 | `notes.md`、Lecture-Weave 逐页讲解、teaching enrichment |
 | **4. Guard** | 检查保真、覆盖率和学习质量。 | `coverage.json`、`coverage.md`、`content_guard.json`、`quality_report.json` |
-| **5. Export** | 发布最终结果和运行报告。 | `notes.zip`、`notes.toc.md`、`notes.docx`、`notes.pdf`、`notes.tex`、复习/考试包 |
+| **5. Export** | 发布最终结果和运行报告。 | `notes.zip`、`notes.toc.md`、`notes.docx`、`notes.pdf`、`notes.tex`；复习/考试包由 `study-pack` 另行生成 |
 
 详细说明见 [SlideNote Pipeline](docs/pipeline.zh-CN.md)。
 
 ## 用户侧 Preset
 
-顶层 `--preset` 是用户侧工作流入口。它会映射到底层的 `--note-profile`、`--note-strategy`、`--deck-brief`、`--content-guard` 等参数；如果用户显式传了底层参数，则以用户显式参数为准。
+顶层 `--preset` 是用户侧工作流入口。现在普通用户只需要理解两个模式：默认 `lecture` 和无 API 的 `local`。
 
 | Preset | 适合场景 | 背后行为 |
 | --- | --- | --- |
-| `fast` | 快速草稿、低成本、本地优先。 | 减少重型阶段，缩短输出。 |
-| `faithful` | 最在意来源追踪、覆盖率和保真。 | Lecture-Weave、section context、Deck Brief、Content Guard。 |
-| `lecture` | 想要“像老师重新讲一遍”的详细讲义。 | `--note-profile lecture-notes`、Lecture-Weave、Deck Brief、Content Guard、teaching enrichment。 |
+| `lecture` | 想要“像老师重新讲一遍”的详细讲义。 | 默认启用 LLM、OCR auto、Vision auto、Lecture-Weave、Deck Brief、Content Guard 和 teaching enrichment。 |
+| `local` | 没有 API key、离线预览、检查解析是否正常。 | 不调用文本模型、视觉模型或 OCR API，只用本地规则生成基础 Markdown。 |
 
 ```powershell
-python -m slidenote build lecture.pdf --out outputs\fast --preset fast
-python -m slidenote build lecture.pdf --out outputs\faithful --preset faithful --use-llm --provider deepseek
-python -m slidenote build lecture.pdf --out outputs\lecture --preset lecture --use-llm --provider deepseek
+python -m slidenote build lecture.pdf --out outputs\lecture --provider deepseek
+python -m slidenote build lecture.pdf --out outputs\local --preset local
 ```
 
 详细说明见 [用户侧 Preset](docs/presets.zh-CN.md)。
@@ -164,14 +161,14 @@ SlideNote 不需要本机 GPU。基础解析只需要 Python 依赖；LLM 改写
 | Pandoc | Word 和 LaTeX 导出。 |
 | LibreOffice + Pandoc | PDF 导出会优先从 `notes.docx` 转换，中文/CJK 排版更稳。 |
 
-配置指南和完整参数参考见 [CONFIG.zh-CN.md](CONFIG.zh-CN.md)；想进一步调 provider、OCR、Vision、缓存和成本，再看 [Provider、OCR、Vision、缓存与成本](docs/providers-and-cost.zh-CN.md)。
+配置指南见 [CONFIG.zh-CN.md](CONFIG.zh-CN.md)。现在 `build` 入口已经简化，provider、OCR、Vision 和缓存细节主要通过强默认和环境变量处理。
 
 ## 常用工作流
 
 本地规则草稿：
 
 ```powershell
-python -m slidenote build path\to\lecture.pptx --out outputs\lecture --vision off
+python -m slidenote build path\to\lecture.pptx --out outputs\local --preset local --export markdown-zip
 ```
 
 教师讲义式笔记：
@@ -179,10 +176,8 @@ python -m slidenote build path\to\lecture.pptx --out outputs\lecture --vision of
 ```powershell
 python -m slidenote build path\to\lecture.pdf `
   --out outputs\lecture-notes `
-  --preset lecture `
-  --use-llm `
   --provider deepseek `
-  --max-output-tokens 12000
+  --export markdown-zip
 ```
 
 复习 / 考试包：
@@ -190,22 +185,17 @@ python -m slidenote build path\to\lecture.pdf `
 ```powershell
 python -m slidenote build path\to\lecture.pdf `
   --out outputs\lecture-review `
-  --use-llm `
-  --provider deepseek `
-  --review-mode auto `
-  --exam-mode auto `
-  --exam-question-count 20
+  --provider deepseek
+python -m slidenote study-pack outputs\lecture-review --question-count 20
 ```
 
-共享缓存和适度并发：
+纯文本讲义：
 
 ```powershell
 python -m slidenote build path\to\lecture.pdf `
-  --out outputs\lecture `
-  --use-llm `
+  --out outputs\text-only `
   --provider deepseek `
-  --concurrency 3 `
-  --global-cache-dir .slidenote-cache
+  --vision off
 ```
 
 ## 技术文档
@@ -246,7 +236,7 @@ SlideNote 不走 `PPT -> LLM -> 总结` 的捷径，而是：
 PPT/PDF -> 结构化解析 -> 内容清单 -> 笔记生成 -> 覆盖率校验 -> 导出
 ```
 
-本地规则草稿只负责把结构化内容“保底写出来”，方便调试解析和覆盖率。正式笔记建议使用 `--use-llm`，但覆盖率检查仍然依靠元素 ID 做硬校验，避免模型把细节悄悄总结掉。
+本地规则草稿只负责把结构化内容“保底写出来”，方便调试解析和覆盖率。正式笔记默认使用 `lecture` preset，但覆盖率检查仍然依靠元素 ID 做硬校验，避免模型把细节悄悄总结掉。
 
 ## 许可证
 

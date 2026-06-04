@@ -43,7 +43,8 @@ class StudioConfig:
     input_path: Path
     output_dir: Path
     progress_json: Path
-    speed_mode: str = "fast"
+    preset: str = "lecture"
+    speed_mode: str = "quality"
     concurrency: int = 1
     llm_concurrency: int | None = None
     vision_concurrency: int | None = None
@@ -51,27 +52,27 @@ class StudioConfig:
     figure_concurrency: int | None = None
     global_cache_dir: Path | None = None
     refresh_pages: str | None = None
-    use_llm: bool = False
+    use_llm: bool = True
     provider: str = "deepseek"
     model: str | None = None
     api_key: str | None = None
     base_url: str | None = None
     max_output_tokens: int | None = None
     temperature: float | None = None
-    content_guard: str = "off"
+    content_guard: str = "auto"
     note_context: str = "section"
     note_style: str = "article"
     note_language: str = "zh"
     term_policy: str = "bilingual"
-    note_strategy: str = "direct"
-    note_depth: str = "concise"
+    note_strategy: str = "lecture-weave"
+    note_depth: str = "very-detailed"
     weave_dedup: str = "normal"
     page_neighborhood: int = 1
-    deck_brief: str = "off"
-    section_detection: str = "local"
+    deck_brief: str = "auto"
+    section_detection: str = "auto"
     section_cache: str = "on"
     cache: str = "on"
-    ocr: str = "off"
+    ocr: str = "auto"
     ocr_provider: str = "baidu"
     ocr_api_key: str | None = None
     ocr_secret_key: str | None = None
@@ -79,7 +80,7 @@ class StudioConfig:
     ocr_cache: str = "on"
     ocr_max_targets: int | None = None
     ocr_max_edge: int | None = None
-    vision: str = "off"
+    vision: str = "auto"
     vision_provider: str = "qwen"
     vision_model: str | None = None
     vision_api_key: str | None = None
@@ -89,7 +90,7 @@ class StudioConfig:
     vision_max_edge: int | None = None
     vision_detail: str | None = "low"
     vision_max_output_tokens: int | None = None
-    figure_crop: str = "off"
+    figure_crop: str = "auto"
     figure_max_targets: int | None = None
     figure_grounding: str = "auto"
     figure_audit: str = "local"
@@ -124,11 +125,11 @@ def provider_env_key(provider: str) -> str:
 
 
 def needs_vision_api(config: StudioConfig) -> bool:
-    return config.vision != "off" or config.figure_crop == "vision" or config.figure_grounding == "vision"
+    return config.preset == "lecture" and config.vision != "off"
 
 
 def needs_text_api(config: StudioConfig) -> bool:
-    return config.use_llm or config.review_mode == "llm" or config.exam_mode == "llm"
+    return config.preset == "lecture"
 
 
 def build_env(base_env: dict[str, str] | None, config: StudioConfig) -> dict[str, str]:
@@ -164,120 +165,24 @@ def build_slidenote_command(config: StudioConfig) -> list[str]:
         str(config.output_dir),
         "--progress-json",
         str(config.progress_json),
-        "--speed-mode",
-        config.speed_mode,
-        "--concurrency",
-        str(max(1, int(config.concurrency))),
-        "--content-guard",
-        config.content_guard,
-        "--note-context",
-        config.note_context,
-        "--note-style",
-        config.note_style,
-        "--note-language",
-        config.note_language,
-        "--term-policy",
-        config.term_policy,
-        "--note-strategy",
-        config.note_strategy,
-        "--note-depth",
-        config.note_depth,
-        "--weave-dedup",
-        config.weave_dedup,
-        "--page-neighborhood",
-        str(config.page_neighborhood),
-        "--deck-brief",
-        config.deck_brief,
-        "--section-detection",
-        config.section_detection,
-        "--section-cache",
-        config.section_cache,
-        "--cache",
-        config.cache,
-        "--ocr",
-        config.ocr,
-        "--ocr-provider",
-        config.ocr_provider,
-        "--ocr-language",
-        config.ocr_language,
-        "--ocr-cache",
-        config.ocr_cache,
+        "--preset",
+        config.preset,
+        "--provider",
+        config.provider,
         "--vision",
         config.vision,
-        "--vision-provider",
-        config.vision_provider,
-        "--vision-cache",
-        config.vision_cache,
-        "--figure-crop",
-        config.figure_crop,
-        "--figure-grounding",
-        config.figure_grounding,
-        "--figure-audit",
-        config.figure_audit,
-        "--composite-figures",
-        config.composite_figures,
-        "--image-ranking",
-        config.image_ranking,
-        "--screenshot-policy",
-        config.screenshot_policy,
-        "--source-display",
-        config.source_display,
-        "--asset-mode",
-        config.asset_mode,
-        "--review-mode",
-        config.review_mode,
-        "--exam-mode",
-        config.exam_mode,
-        "--exam-question-count",
-        str(max(1, int(config.exam_question_count))),
     ]
-    for flag, value in (
-        ("--llm-concurrency", config.llm_concurrency),
-        ("--vision-concurrency", config.vision_concurrency),
-        ("--ocr-concurrency", config.ocr_concurrency),
-        ("--figure-concurrency", config.figure_concurrency),
-    ):
-        if value is not None:
-            cmd.extend([flag, str(max(1, int(value)))])
     if config.quiet:
         cmd.append("--quiet")
-    if config.global_cache_dir:
-        cmd.extend(["--global-cache-dir", str(config.global_cache_dir)])
-    if config.refresh_pages:
-        cmd.extend(["--refresh-pages", config.refresh_pages])
-    if config.use_llm:
-        cmd.append("--use-llm")
-    if needs_text_api(config):
-        cmd.extend(["--provider", config.provider])
-        if config.model:
-            cmd.extend(["--model", config.model])
-        if config.base_url:
-            cmd.extend(["--base-url", config.base_url])
-    if config.max_output_tokens:
-        cmd.extend(["--max-output-tokens", str(config.max_output_tokens)])
-    if config.temperature is not None:
-        cmd.extend(["--temperature", str(config.temperature)])
-    if config.ocr_max_targets is not None:
-        cmd.extend(["--ocr-max-targets", str(config.ocr_max_targets)])
-    if config.ocr_max_edge is not None:
-        cmd.extend(["--ocr-max-edge", str(config.ocr_max_edge)])
-    if needs_vision_api(config):
-        if config.vision_model:
-            cmd.extend(["--vision-model", config.vision_model])
-        if config.vision_base_url:
-            cmd.extend(["--vision-base-url", config.vision_base_url])
-    if config.vision_max_targets is not None:
-        cmd.extend(["--vision-max-targets", str(config.vision_max_targets)])
-    if config.vision_max_edge is not None:
-        cmd.extend(["--vision-max-edge", str(config.vision_max_edge)])
-    if config.vision_detail:
-        cmd.extend(["--vision-detail", config.vision_detail])
-    if config.vision_max_output_tokens is not None:
-        cmd.extend(["--vision-max-output-tokens", str(config.vision_max_output_tokens)])
-    if config.figure_max_targets is not None:
-        cmd.extend(["--figure-max-targets", str(config.figure_max_targets)])
     if config.export:
         cmd.extend(["--export", config.export])
+    return cmd
+
+
+def build_study_pack_command(output_dir: Path, question_count: int = 12, quiet: bool = True) -> list[str]:
+    cmd = [sys.executable, "-m", "slidenote", "study-pack", str(output_dir), "--question-count", str(max(1, int(question_count)))]
+    if quiet:
+        cmd.append("--quiet")
     return cmd
 
 
@@ -298,22 +203,12 @@ def command_for_display(cmd: list[str]) -> str:
 
 def performance_tips(config: StudioConfig) -> list[str]:
     tips: list[str] = []
-    if config.concurrency <= 1 and (config.use_llm or config.ocr != "off" or config.vision != "off"):
-        tips.append("Increase concurrency to 3-6 for API stages if your provider rate limit allows it.")
-    if config.vision == "all":
-        tips.append("Vision=all is slow. Prefer vision=auto with a small max target count for normal lecture slides.")
-    if config.ocr == "all":
-        tips.append("OCR=all is slow. Prefer OCR=auto unless the file is a scanned PDF.")
-    if config.note_strategy == "lecture-weave":
-        tips.append("lecture-weave is higher quality but slower. Use direct for quick previews.")
-    if config.deck_brief != "off":
-        tips.append("Deck brief adds extra LLM calls. Turn it off for quick drafts.")
-    if config.content_guard != "off":
-        tips.append("Content guard improves coverage awareness but costs extra LLM calls.")
-    if config.cache == "off" or config.vision_cache == "off" or config.ocr_cache == "off":
-        tips.append("Keep caches on so repeated runs reuse previous API results.")
-    if config.figure_crop == "vision":
-        tips.append("Vision figure cropping is useful but adds API calls. Use off/auto for speed.")
+    if config.preset == "lecture":
+        tips.append("Lecture preset uses the strongest default pipeline and expects provider API keys.")
+    if config.vision == "off":
+        tips.append("Vision is off, so image-heavy slides may lose diagram explanations.")
+    if config.preset == "local":
+        tips.append("Local preset avoids API calls and is best for parsing checks or offline drafts.")
     return tips
 
 

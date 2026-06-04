@@ -65,7 +65,7 @@ content_guard.json
 
 ## 教师讲义模式
 
-`--preset lecture` / `--note-profile lecture-notes` 的目标是“教学重构”，不是简单总结。
+`lecture` preset 的目标是“教学重构”，不是简单总结。
 
 高质量讲义应该尽量包含：
 
@@ -83,7 +83,7 @@ content_guard.json
 
 ## Review / Exam 学习包
 
-Review / Exam 模式把最终 `notes.md` 延伸成复习材料：
+`slidenote study-pack` 把最终 `notes.md` 延伸成复习材料：
 
 ```text
 review.md

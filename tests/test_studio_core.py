@@ -6,7 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from gui.studio_core import StudioConfig, build_env, build_slidenote_command, command_for_display, discover_outputs, performance_tips, safe_run_name
+from gui.studio_core import (
+    StudioConfig,
+    build_env,
+    build_slidenote_command,
+    build_study_pack_command,
+    command_for_display,
+    discover_outputs,
+    performance_tips,
+    safe_run_name,
+)
 
 
 def test_command_builds_gui_options_and_redacts_keys(tmp_path: Path):
@@ -14,9 +23,8 @@ def test_command_builds_gui_options_and_redacts_keys(tmp_path: Path):
         input_path=tmp_path / "a.pdf",
         output_dir=tmp_path / "out",
         progress_json=tmp_path / "out" / "progress.json",
-        use_llm=True,
+        preset="lecture",
         provider="openai",
-        model="gpt-test",
         api_key="sk-secret",
         vision="auto",
         vision_provider="qwen",
@@ -24,30 +32,16 @@ def test_command_builds_gui_options_and_redacts_keys(tmp_path: Path):
         ocr="auto",
         ocr_api_key="ocr-secret",
         ocr_secret_key="ocr-secret-2",
-        concurrency=6,
-        llm_concurrency=5,
-        vision_concurrency=4,
-        ocr_concurrency=3,
-        figure_concurrency=2,
-        global_cache_dir=tmp_path / "cache",
-        note_strategy="direct",
-        review_mode="llm",
-        exam_mode="llm",
-        exam_question_count=18,
     )
     cmd = build_slidenote_command(cfg)
     assert cmd[:3] == [sys.executable, "-m", "slidenote"]
-    assert "--use-llm" in cmd
+    assert cmd[cmd.index("--preset") + 1] == "lecture"
     assert cmd[cmd.index("--provider") + 1] == "openai"
-    assert cmd[cmd.index("--concurrency") + 1] == "6"
-    assert cmd[cmd.index("--llm-concurrency") + 1] == "5"
-    assert cmd[cmd.index("--vision-concurrency") + 1] == "4"
-    assert cmd[cmd.index("--ocr-concurrency") + 1] == "3"
-    assert cmd[cmd.index("--figure-concurrency") + 1] == "2"
-    assert cmd[cmd.index("--global-cache-dir") + 1] == str(tmp_path / "cache")
-    assert cmd[cmd.index("--review-mode") + 1] == "llm"
-    assert cmd[cmd.index("--exam-mode") + 1] == "llm"
-    assert cmd[cmd.index("--exam-question-count") + 1] == "18"
+    assert cmd[cmd.index("--vision") + 1] == "auto"
+    assert "--use-llm" not in cmd
+    assert "--concurrency" not in cmd
+    assert "--review-mode" not in cmd
+    assert "--exam-mode" not in cmd
     assert "--api-key" not in cmd
     assert "--vision-api-key" not in cmd
     assert "--ocr-api-key" not in cmd
@@ -63,23 +57,22 @@ def test_command_builds_gui_options_and_redacts_keys(tmp_path: Path):
     assert env["BAIDU_OCR_SECRET_KEY"] == "ocr-secret-2"
 
 
-def test_study_pack_llm_mode_uses_text_env_without_llm_notes(tmp_path: Path):
+def test_study_pack_command_is_separate_from_build(tmp_path: Path):
     cfg = StudioConfig(
         input_path=tmp_path / "a.pdf",
         output_dir=tmp_path / "out",
         progress_json=tmp_path / "out" / "progress.json",
-        use_llm=False,
         provider="deepseek",
         api_key="deep-key",
-        review_mode="llm",
-        exam_mode="off",
     )
 
-    cmd = build_slidenote_command(cfg)
+    build_cmd = build_slidenote_command(cfg)
+    study_cmd = build_study_pack_command(cfg.output_dir, question_count=18)
     env = build_env({}, cfg)
 
-    assert "--use-llm" not in cmd
-    assert cmd[cmd.index("--provider") + 1] == "deepseek"
+    assert "study-pack" not in build_cmd
+    assert study_cmd[:4] == [sys.executable, "-m", "slidenote", "study-pack"]
+    assert study_cmd[study_cmd.index("--question-count") + 1] == "18"
     assert env["DEEPSEEK_API_KEY"] == "deep-key"
 
 
@@ -96,23 +89,25 @@ def test_discover_outputs_includes_markdown_zip_and_exports(tmp_path: Path):
     assert outputs["latex"] == tmp_path / "notes.tex"
 
 
-def test_vision_key_env_is_used_for_figure_vision_mode(tmp_path: Path):
+def test_local_preset_does_not_require_api_env(tmp_path: Path):
     cfg = StudioConfig(
         input_path=tmp_path / "a.pdf",
         output_dir=tmp_path / "out",
         progress_json=tmp_path / "out" / "progress.json",
-        vision="off",
+        preset="local",
+        provider="deepseek",
+        api_key="deep-key",
+        vision="auto",
         vision_provider="qwen",
         vision_api_key="qwen-secret",
-        figure_crop="vision",
     )
 
     cmd = build_slidenote_command(cfg)
     env = build_env({}, cfg)
 
-    assert "--vision-api-key" not in cmd
-    assert cmd[cmd.index("--vision-provider") + 1] == "qwen"
-    assert env["QWEN_API_KEY"] == "qwen-secret"
+    assert cmd[cmd.index("--preset") + 1] == "local"
+    assert "DEEPSEEK_API_KEY" not in env
+    assert "QWEN_API_KEY" not in env
 
 
 def test_env_and_speed_tips(tmp_path: Path):
@@ -120,22 +115,16 @@ def test_env_and_speed_tips(tmp_path: Path):
         input_path=tmp_path / "a.pdf",
         output_dir=tmp_path / "out",
         progress_json=tmp_path / "out" / "progress.json",
-        use_llm=True,
+        preset="lecture",
         provider="deepseek",
         api_key="deep-key",
-        vision="all",
-        ocr="all",
-        cache="off",
-        concurrency=1,
-        note_strategy="lecture-weave",
+        vision="off",
     )
     env = build_env({}, cfg)
     assert env["DEEPSEEK_API_KEY"] == "deep-key"
     tips = " ".join(performance_tips(cfg))
-    assert "Increase concurrency" in tips
-    assert "Vision=all" in tips
-    assert "OCR=all" in tips
-    assert "lecture-weave" in tips
+    assert "Lecture preset" in tips
+    assert "Vision is off" in tips
     assert safe_run_name("我的 课件!!.pdf")
 
 
