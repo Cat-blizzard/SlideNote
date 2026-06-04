@@ -164,7 +164,7 @@ SlideNote 不需要本机 GPU。基础解析只需要 Python 依赖；LLM 改写
 | Pandoc | Word 和 LaTeX 导出。 |
 | LibreOffice + Pandoc | PDF 导出会优先从 `notes.docx` 转换，中文/CJK 排版更稳。 |
 
-完整配置说明见 [CONFIG.zh-CN.md](CONFIG.zh-CN.md) 和 [Provider、OCR、Vision、缓存与成本](docs/providers-and-cost.zh-CN.md)。
+配置指南和完整参数参考见 [CONFIG.zh-CN.md](CONFIG.zh-CN.md)；想进一步调 provider、OCR、Vision、缓存和成本，再看 [Provider、OCR、Vision、缓存与成本](docs/providers-and-cost.zh-CN.md)。
 
 ## 常用工作流
 

@@ -1,59 +1,127 @@
-# SlideNote 配置参考
+# SlideNote 配置指南与完整参考
 
-> 本文档整理 `python -m slidenote build` 的主要参数、默认值和适用场景。README 负责快速上手，这里负责完整配置查阅。
+> 这份文档分两层：前半部分回答“我该怎么跑”，后半部分保留 `python -m slidenote build` 的完整参数参考。普通用户不需要从头读完；高级用户可以直接跳到“高级参数参考”查具体开关。
 
-## 推荐组合
+## 我该怎么跑？
 
-质量优先，适合正式生成笔记：
+快速草稿，先确认课件能正常解析：
 
 ```powershell
+python -m slidenote build lecture.pdf --out outputs\fast --preset fast --vision off
+```
+
+高质量讲义，适合正式学习和长期保存：
+
+```powershell
+$env:DEEPSEEK_API_KEY="..."
+$env:DASHSCOPE_API_KEY="..."
 python -m slidenote build lecture.pdf `
   --out outputs\lecture `
+  --preset lecture `
   --use-llm `
   --provider deepseek `
-  --preset lecture `
-  --vision-provider qwen
+  --vision auto `
+  --vision-provider qwen `
+  --export markdown-zip
 ```
 
-当前默认已经偏质量优先：
-
-```text
---speed-mode quality
---preset auto
---vision auto
---vision-provider qwen
---note-strategy lecture-weave
---note-context section
---note-depth detailed
---deck-brief auto
---content-guard auto
---note-language zh
---term-policy bilingual
---weave-dedup soft
---page-neighborhood 1
---figure-crop auto
-```
-
-只想本地解析，不调用视觉模型：
-
-```powershell
-python -m slidenote build lecture.pdf --out outputs\lecture --vision off
-```
-
-调试覆盖率和来源映射：
+保真复习，优先覆盖率和来源追踪：
 
 ```powershell
 python -m slidenote build lecture.pdf `
-  --out outputs\debug `
+  --out outputs\faithful `
+  --preset faithful `
   --use-llm `
-  --note-strategy direct `
-  --note-context page `
-  --note-style faithful `
-  --source-display inline `
-  --vision off
+  --provider deepseek `
+  --export markdown-zip
 ```
 
-## 基础运行
+分享 Markdown 笔记给别人：
+
+```powershell
+python -m slidenote build lecture.pdf --out outputs\share --export markdown-zip
+```
+
+`notes.zip` 里包含 `notes.md` 和 `notes.assets/`，对方解压后打开 `notes.md` 才能看到图片。只发单独 `notes.md` 时图片可能无法显示。
+
+生成 Word / PDF：
+
+```powershell
+python -m slidenote build lecture.pdf --out outputs\paper --export docx,pdf
+```
+
+Word 需要 Pandoc；PDF 会先生成 `notes.docx`，再用 LibreOffice 转换。
+
+## 普通学生和高级用户怎么读
+
+| 读者 | 推荐阅读方式 |
+| --- | --- |
+| 普通学生 | 只看“我该怎么跑”“按问题找参数”“常用配置”。优先用 `--preset fast/faithful/lecture`，不要先调底层参数。 |
+| 高级用户 | 先用 preset 建立默认路线，再到“高级参数参考”覆盖 Vision、OCR、缓存、章节、写作深度和导出细节。 |
+
+## 推荐最小参数集
+
+多数运行只需要理解这几项：
+
+| 参数 | 作用 | 常用选择 |
+| --- | --- | --- |
+| `input` | 输入课件。 | `.pptx` / `.ppt` / `.pdf` |
+| `--out` | 输出目录。 | `outputs\lecture` |
+| `--preset` | 工作流入口。 | `fast` 快速、`faithful` 保真、`lecture` 详细讲义 |
+| `--use-llm` | 是否启用文本模型写作。 | 高质量笔记建议开启 |
+| `--provider` | 文本模型服务商。 | 国内常用 `deepseek`，也可用 `openai` / `qwen` 等 |
+| `--vision` | 是否理解图表、流程和截图。 | 普通课件 `auto`，纯文本或省钱用 `off` |
+| `--export` | 额外导出格式。 | 分享 Markdown 用 `markdown-zip`，交付文档用 `docx,pdf` |
+
+## 按问题找参数
+
+| 我想要 | 先看这些参数 | 建议 |
+| --- | --- | --- |
+| 更快出结果 | `--preset fast`、`--speed-mode fast`、`--concurrency` | 第一次试跑先用 `fast`；并发从 2-4 慢慢加。 |
+| 质量更好 | `--preset lecture`、`--use-llm`、`--vision auto` | 图表多的课件要开 `vision auto`，不要只依赖文本。 |
+| 图片在别人电脑上看不到 | `--export markdown-zip`、`--asset-mode bundle` | 优先发 `notes.zip`，不要只发 `notes.md`。 |
+| 扫描版 PDF / 图片型课件 | `--ocr auto`、`--vision auto` | OCR 读文字，Vision 解释图像关系，两者不是一回事。 |
+| 想省钱 | `--vision off/auto`、`--speed-mode fast/balanced`、缓存参数 | 不要默认 `vision all`；保留缓存，重复运行会省 API 调用。 |
+| 想调试来源和覆盖率 | `--source-display inline`、`--note-context page`、`--content-guard auto` | 调试时可以牺牲正文美观，先看来源标记和 coverage。 |
+
+## 常用配置
+
+### 场景和质量
+
+| 参数 | 默认值 | 常用值 | 说明 |
+| --- | --- | --- | --- |
+| `--preset` | `auto` | `fast` / `faithful` / `lecture` | 用户侧工作流预设。普通用户优先选这个。 |
+| `--speed-mode` | `quality` | `fast` / `balanced` / `quality` | 控制 token、OCR/Vision 数量和图片缩放上限。 |
+
+### 模型、OCR 和视觉
+
+| 参数 | 默认值 | 常用值 | 说明 |
+| --- | --- | --- | --- |
+| `--use-llm` | 关闭 | 开启 | 使用文本模型生成更完整的学习笔记。 |
+| `--provider` | `openai` | `deepseek` / `qwen` / `openai` | 文本模型服务商。 |
+| `--vision` | `auto` | `off` / `auto` | `auto` 只解析高价值图片；`off` 更省钱。 |
+| `--ocr` | `off` | `auto` | 扫描版 PDF 或图片型课件再开。 |
+
+### 分享和导出
+
+| 参数 | 默认值 | 常用值 | 说明 |
+| --- | --- | --- | --- |
+| `--export` | 无 | `markdown-zip` / `docx,pdf` | Markdown 分享用 ZIP；正式文档用 Word/PDF。 |
+| `--asset-mode` | `bundle` | `bundle` | 默认会把图片复制到 `notes.assets/`，配合 `markdown-zip` 最稳。 |
+
+### 缓存和速度
+
+| 参数 | 默认值 | 常用值 | 说明 |
+| --- | --- | --- | --- |
+| `--concurrency` | `1` | `2` 到 `4` | 并发 API 调用数。遇到限流就调低。 |
+| `--global-cache-dir` | 无 | `.slidenote-cache` | 多次试跑或多个输出目录复用缓存。 |
+| `--refresh-pages` | 无 | `3,5-8` | 只重跑指定页，适合局部修订。 |
+
+## 高级参数参考
+
+从这里开始是完整参考。下面的参数主要用于调质量、成本、缓存、可追溯性和内部 pipeline 行为；普通用户通常不需要逐项阅读。
+
+### 基础运行与输出控制
 
 | 参数 | 默认值 | 可选值 / 格式 | 说明 |
 | --- | --- | --- | --- |
@@ -62,6 +130,10 @@ python -m slidenote build lecture.pdf `
 | `--preset` | `auto` | `auto` / `fast` / `faithful` / `lecture` | 用户侧工作流预设。会映射到底层写作、理解和质检选项；显式传入的底层参数优先。 |
 | `--speed-mode` | `quality` | `fast` / `balanced` / `quality` / `debug` | 成本、速度和质量预设。只填充未显式设置的限额。 |
 | `--concurrency` | `1` | 正整数 | OCR、Vision、Figure Crop 和 LLM 的并发 API 调用数。 |
+| `--llm-concurrency` | `--concurrency` | 正整数 | 文本 LLM 并发调用数。 |
+| `--vision-concurrency` | `--concurrency` | 正整数 | Vision 并发调用数。 |
+| `--ocr-concurrency` | `--concurrency` | 正整数 | OCR 并发调用数。 |
+| `--figure-concurrency` | `--concurrency` | 正整数 | Figure Crop / bbox 阶段并发调用数。 |
 | `--global-cache-dir` | 无 | 路径 | 多个输出目录共享缓存。 |
 | `--refresh-pages` | 无 | `3,5-8` | 指定页绕过本地缓存重新生成。 |
 | `--progress-json` | `<out>/progress.json` | 路径 | 进度 JSON 路径。 |
@@ -69,7 +141,7 @@ python -m slidenote build lecture.pdf `
 | `--export` | 无 | `markdown-zip` / `markdown-toc` / `docx` / `pdf` / `latex` / `all`，逗号分隔 | 额外导出格式。Markdown ZIP/目录不需要 Pandoc；Word/PDF/LaTeX 需要 Pandoc。 |
 | `--export-toc` | `auto` | `auto` / `off` | `markdown-toc` 导出是否插入目录。 |
 
-## Speed Mode 预设
+### Speed Mode 预设
 
 | speed-mode | `max-output-tokens` | OCR targets | OCR edge | Figure targets | Vision targets | Vision edge | Vision output | Vision detail |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -78,7 +150,7 @@ python -m slidenote build lecture.pdf `
 | `quality` | `7000` | `0` 不限 | `2200` | `160` | `160` | `1800` | `2000` | `high` |
 | `debug` | `4096` | `20` | `1400` | `20` | `20` | `1200` | `1000` | `low` |
 
-## Build Preset 工作流
+### Build Preset 工作流
 
 `--preset` 是用户侧产品入口；`--note-profile` 是写作阶段的风格/结构路线。普通用户优先选 preset，高级用户再用下方参数覆盖细节。
 
@@ -89,7 +161,7 @@ python -m slidenote build lecture.pdf `
 | `faithful` | 保真覆盖和来源追踪优先。 | `--note-style faithful`、`--note-strategy lecture-weave`、`--note-context section`、`--note-depth detailed`、`--deck-brief auto`、`--content-guard auto`。 |
 | `lecture` | 教师讲义式详细笔记。 | `--note-profile lecture-notes`、`--note-strategy lecture-weave`、`--note-context section`、`--deck-brief auto`、`--content-guard auto`、`--teaching-enrichment auto`；未显式指定 `--note-depth` 时使用 `very-detailed`。 |
 
-## 解析器 Adapter
+### 解析器 Adapter
 
 | 参数 | 默认值 | 可选值 / 格式 | 说明 |
 | --- | --- | --- | --- |
@@ -105,7 +177,7 @@ python -m slidenote build lecture.pdf `
 
 命令模板支持 `{input}`、`{out}`、`{output}`、`{stem}` 占位符，例如把解析结果写入 `{out}` 目录。核心 pipeline 只依赖 adapter 返回的统一 `Deck`，不会直接绑定某个外部解析库。
 
-## LLM 与笔记生成
+### LLM 与笔记生成
 
 | 参数 | 默认值 | 可选值 / 格式 | 说明 |
 | --- | --- | --- | --- |
@@ -132,7 +204,7 @@ python -m slidenote build lecture.pdf `
 | `--section-cache` | `on` | `on` / `off` / `refresh` | LLM 章节识别缓存模式。 |
 | `--section-cache-dir` | `<out>/.cache/sections` | 路径 | LLM 章节识别缓存目录。 |
 
-### `note-strategy`
+#### `note-strategy`
 
 ```text
 direct
@@ -146,7 +218,7 @@ lecture-weave
 
 先对每页做详细讲解，再把逐页讲解编织成章节笔记。质量更好，但调用次数和 token 成本更高。
 
-### `note-profile`
+#### `note-profile`
 
 | 值 | 含义 |
 | --- | --- |
@@ -156,7 +228,7 @@ lecture-weave
 
 `lecture-notes` 不会让 coverage 决定正文形状；coverage 仍然只负责最后质检和补漏。teaching enrichment 的补充内容必须是通用背景、直观解释、例子或类比，不得新增课件没有依据的具体数字、实验结果或结论。
 
-### `note-language` 与 `term-policy`
+#### `note-language` 与 `term-policy`
 
 `--note-language` 控制最终笔记语言，和课件原文语言不强绑定：
 
@@ -174,7 +246,7 @@ lecture-weave
 | `preserve` | 尽量保留原始术语、英文缩写、协议名、算法名、API 名称和代码符号。 |
 | `translate` | 在不破坏专业准确性的前提下尽量翻译术语；代码、公式、变量和公认英文名仍保持原样。 |
 
-### `note-context`
+#### `note-context`
 
 | 值 | 含义 | 适合场景 |
 | --- | --- | --- |
@@ -185,7 +257,7 @@ lecture-weave
 
 在 `lecture-weave` 下，第一阶段永远是逐页深讲，`note-context` 控制第二阶段如何编织。
 
-### `deck-brief`
+#### `deck-brief`
 
 | 值 | 含义 | 适合场景 |
 | --- | --- | --- |
@@ -195,7 +267,7 @@ lecture-weave
 
 Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主题、核心问题、章节脉络、关键概念、概念依赖、每页角色和跨页关联。逐页深讲阶段会明确约束：`deck_brief` 只能用于理解当前位置和减少重复，正文内容只能来自 `current_page`，不能因为全局脉络而省略当前页元素，也不能把后文内容提前写进当前页。
 
-### `content-guard`
+#### `content-guard`
 
 | 值 | 含义 | 适合场景 |
 | --- | --- | --- |
@@ -206,7 +278,7 @@ Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主
 
 覆盖率上，`trace_coverage` 表示元素 ID 是否被 source marker 追踪到，`visible_coverage` 表示是否出现在可见正文中，`required_visible_coverage` 只统计 content guard 判定出的高置信关键学习内容。若 required 元素只出现在隐藏 marker 中，SlideNote 会最多运行一次 repair prompt，把缺失内容自然融入原段落；修复后仍缺失时，会写入 `content_guard.json` 和 `run_summary.json` 的 warning。
 
-### `section-detection`
+#### `section-detection`
 
 | 值 | 含义 | 适合场景 |
 | --- | --- | --- |
@@ -216,13 +288,14 @@ Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主
 
 章节计划会写入 `sections.json`，其中包含每节的标题、起止页、页码列表、识别原因、缓存和 token 用量。`lecture-weave` 会用这份计划决定最终编织边界。
 
-## 图片、来源与截图呈现
+### 图片、来源与截图呈现
 
 | 参数 | 默认值 | 可选值 | 说明 |
 | --- | --- | --- | --- |
 | `--asset-mode` | `bundle` | `bundle` / `absolute` / `embed` | Markdown 图片引用方式。 |
 | `--source-display` | `hidden` | `hidden` / `footnote` / `inline` | 来源页码和元素 ID 的显示方式。 |
 | `--screenshot-policy` | `fallback` | `fallback` / `always` / `never` | 整页截图是否进入 `notes.md`。 |
+| `--semantic-layout` | `auto` | `auto` / `local` / `vision` | 语义页面块构建方式；`auto` 会在启用视觉时增强选中页面。 |
 | `--image-ranking` | `local` | `off` / `local` | 是否给图片做学习价值排序。 |
 | `--composite-figures` | `auto` | `off` / `auto` | 是否把多个嵌入小图片拼成的流程图/结构图裁成一个整体组合图。 |
 | `--figure-grounding` | `auto` | `off` / `auto` / `vision` | 是否把有学习价值的图片锚定到附近文本/表格，并生成图文对齐报告。 |
@@ -237,7 +310,7 @@ Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主
 
 `figure-grounding` 会写入 `figure_grounding.json`，记录每张重要图的 `layout_order`、`anchor_element_ids`、`anchor_reason`、`grounding_confidence`、解释状态和复查状态。`auto` 总是运行本地 bbox/版面对齐；如果已经启用 vision/OCR，它会复用已有视觉摘要或 OCR 作为图片解释。`vision` 会在 `--vision off` 时也触发一次视觉解析，用于给重要图片补充解释。
 
-## LLM 缓存
+### LLM 缓存
 
 | 参数 | 默认值 | 可选值 / 格式 | 说明 |
 | --- | --- | --- | --- |
@@ -246,7 +319,7 @@ Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主
 
 `lecture-weave` 会分开缓存逐页深讲和章节编织。局部 `--refresh-pages` 会刷新指定页的 page note，以及包含该页的 weave context。
 
-## 导出格式
+### 导出格式
 
 `notes.md` 始终是原始最终笔记。额外导出由 `--export` 显式开启：
 
@@ -255,7 +328,7 @@ Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主
 | `markdown-zip` | `notes.zip` | 无 |
 | `markdown-toc` | `notes.toc.md` | 无 |
 | `docx` | `notes.docx` | Pandoc |
-| `pdf` | `notes.pdf` | Pandoc 和本机 PDF 引擎；默认使用 `xelatex` |
+| `pdf` | `notes.pdf` | Pandoc + LibreOffice |
 | `latex` | `notes.tex` | Pandoc |
 | `all` | 以上全部 | Pandoc 用于 docx/pdf/latex |
 
@@ -265,7 +338,15 @@ python -m slidenote build lecture.pdf --out outputs\lecture --export markdown-zi
 
 `notes.zip` 里包含 `notes.md` 和 `notes.assets/`，适合把 Markdown 笔记发给别人；只发单独 `notes.md` 时图片可能无法显示。`export_report.json` 会记录每个格式的状态、输出路径、Pandoc 命令、失败原因和 warning。请求 `docx`、`pdf` 或 `latex` 但未安装 Pandoc 时，构建仍会保留 `notes.md` 和其它基础产物，但命令返回非 0，避免误认为导出文件已经生成。
 
-## OCR
+### 复习和自测包
+
+| 参数 | 默认值 | 可选值 / 格式 | 说明 |
+| --- | --- | --- | --- |
+| `--review-mode` | `off` | `off` / `auto` / `local` / `llm` | 生成面向考试复习的 `review.md`。`auto` 会在启用 LLM 时用模型，否则用本地规则。 |
+| `--exam-mode` | `off` | `off` / `auto` / `local` / `llm` | 生成自测题、答案和交互式 `exam.html`。 |
+| `--exam-question-count` | `12` | 正整数 | 自测题目标数量。 |
+
+### OCR
 
 | 参数 | 默认值 | 可选值 / 格式 | 说明 |
 | --- | --- | --- | --- |
@@ -282,7 +363,7 @@ python -m slidenote build lecture.pdf --out outputs\lecture --export markdown-zi
 | `--ocr-min-area` | `120000` | 整数 | OCR 嵌入图最小面积。 |
 | `--ocr-max-edge` | `speed-mode` 决定 | 整数 | OCR 前缩放图片长边。 |
 
-## Figure Crop 局部图裁剪
+### Figure Crop 局部图裁剪
 
 | 参数 | 默认值 | 可选值 / 格式 | 说明 |
 | --- | --- | --- | --- |
@@ -296,7 +377,7 @@ python -m slidenote build lecture.pdf --out outputs\lecture --export markdown-zi
 
 `auto` 表示只有在启用 `--vision auto/all` 时才顺带裁剪；`vision` 表示即使不做视觉摘要，也强制调用视觉模型做 bbox 裁剪。
 
-## Vision 视觉解析
+### Vision 视觉解析
 
 | 参数 | 默认值 | 可选值 / 格式 | 说明 |
 | --- | --- | --- | --- |
@@ -314,7 +395,7 @@ python -m slidenote build lecture.pdf --out outputs\lecture --export markdown-zi
 | `--vision-temperature` | `0.0` | 数值 | 视觉模型温度。 |
 | `--vision-detail` | `speed-mode` 决定 | `low` / `high` / `auto` | OpenAI image detail 参数。 |
 
-## Provider 默认模型
+### Provider 默认模型
 
 | Provider | 文本默认模型 | 视觉默认模型 | API key 环境变量 |
 | --- | --- | --- | --- |
@@ -326,7 +407,7 @@ python -m slidenote build lecture.pdf --out outputs\lecture --export markdown-zi
 | `gemini` | `gemini-3-flash-preview` | `gemini-3-flash-preview` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
 | `claude` | `claude-sonnet-4-20250514` | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY` |
 
-## 输出文件
+### 输出文件
 
 常见输出：
 
