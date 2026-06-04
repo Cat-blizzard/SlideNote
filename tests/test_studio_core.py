@@ -146,3 +146,23 @@ def test_gui_first_run_surface_has_two_presets_and_markdown_zip_default():
     assert PRESETS["Lecture quality"] == {"preset": "lecture", "vision": "auto"}
     assert PRESETS["Local preview"] == {"preset": "local", "vision": "off"}
     assert _selected_export_formats(True, False, False, False, False) == ["markdown-zip"]
+
+
+def test_gui_workbench_surface_replaces_hero_cards():
+    source = (Path(__file__).resolve().parents[1] / "gui" / "app.py").read_text(encoding="utf-8")
+
+    assert "def _render_hero" not in source
+    assert "hero-card" not in source
+    assert "Run settings" not in source
+    assert "Notes workspace" in source
+    assert "Usage & diagnostics" in source
+    assert "_render_empty_upload_panel" in source
+
+
+def test_gui_workbench_file_size_helper():
+    pytest.importorskip("streamlit")
+    from gui.app import _format_file_size
+
+    assert _format_file_size(512) == "512 B"
+    assert _format_file_size(1536) == "1.5 KB"
+    assert _format_file_size(None) == "unknown size"

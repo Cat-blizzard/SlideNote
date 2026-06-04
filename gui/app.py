@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import io
+import html
 import json
 import os
 import re
@@ -55,58 +56,81 @@ MODALITY_OPTIONS = ["native_text", "mixed", "image_only", "shape_diagram", "deco
 
 
 def _run_simplified_app() -> None:
-    st.set_page_config(page_title="SlideNote Studio", page_icon="📝", layout="wide")
+    st.set_page_config(page_title="SlideNote Studio", page_icon="SN", layout="wide", initial_sidebar_state="collapsed")
     _style()
     _ensure_dirs()
-    _render_hero()
+    _render_top_bar()
 
-    with st.sidebar:
-        st.header("1. File")
-        uploaded = st.file_uploader("Upload PPTX / PPT / PDF", type=["pptx", "ppt", "pdf"])
+    uploaded = st.session_state.get("source_upload")
+    if uploaded is None:
+        _render_empty_upload_panel()
+        uploaded = st.file_uploader(
+            "Upload PPTX / PPT / PDF",
+            type=["pptx", "ppt", "pdf"],
+            key="source_upload",
+            label_visibility="collapsed",
+        )
+        if uploaded is not None:
+            st.rerun()
+        return
+
+    left, right = st.columns([0.36, 0.64], gap="large")
+    with left:
+        st.markdown("### Source")
+        uploaded = st.file_uploader(
+            "Replace PPTX / PPT / PDF",
+            type=["pptx", "ppt", "pdf"],
+            key="source_upload",
+            label_visibility="collapsed",
+        )
+        if uploaded is None:
+            st.info("Choose a course file to continue.")
+            return
+        _render_source_file(uploaded)
+
+        st.markdown("### Run")
         preset_name = st.selectbox("Workflow preset", list(PRESETS.keys()), index=0)
         preset = PRESETS[preset_name]
         preset_value = str(preset["preset"])
-
-        st.header("2. API keys")
         provider = st.selectbox("Text provider", ["deepseek", "openai", "qwen", "doubao", "glm", "gemini", "claude"], index=0)
-        api_key = st.text_input("Text API key", type="password", placeholder="Used for lecture builds and study packs")
         vision = st.selectbox("Vision", ["auto", "off"], index=["auto", "off"].index(str(preset["vision"])), disabled=preset_value == "local")
         if preset_value == "local":
             vision = "off"
         vision_provider = "qwen"
-        vision_api_key = st.text_input("Vision API key", type="password", help="Qwen/DashScope key. Can be the same key when your provider is qwen.")
-        ocr_api_key = st.text_input("OCR API key / app id", type="password", help="Optional. Lecture preset uses OCR auto; scanned PDFs need OCR credentials.")
-        ocr_secret_key = st.text_input("OCR secret / app key", type="password")
 
-        st.header("3. Save")
-        save_mode = st.radio(
-            "Output location",
-            ["Default workspace", "Custom folder"],
-            index=0,
-            help="Default saves under gui_runs/outputs. Custom lets you choose a parent folder on this computer.",
-        )
-        custom_output_base_text = st.text_input(
-            "Custom output folder",
-            value=str(Path.home() / "Desktop" / "SlideNote_outputs"),
-            disabled=save_mode == "Default workspace",
-            help="Paste a local folder path, for example C:\\Users\\student\\Desktop\\SlideNote_outputs.",
-        )
-        timestamped_subfolder = st.toggle("Create a timestamped subfolder", value=True)
+        with st.expander("API keys", expanded=preset_value == "lecture"):
+            api_key = st.text_input("Text API key", type="password", placeholder="Used for lecture builds and study packs")
+            vision_api_key = st.text_input("Vision API key", type="password", help="Qwen/DashScope key. Can be the same key when your provider is qwen.")
+            ocr_api_key = st.text_input("OCR API key / app id", type="password", help="Optional. Lecture preset uses OCR auto; scanned PDFs need OCR credentials.")
+            ocr_secret_key = st.text_input("OCR secret / app key", type="password")
 
-        st.header("4. Exports")
-        export_markdown_zip = st.checkbox(
-            "Markdown note package (.zip)",
-            value=True,
-            help="Recommended for sharing Markdown notes. The ZIP contains notes.md and notes.assets so images render on another computer.",
-        )
-        if export_markdown_zip:
-            st.info("Reminder: the shareable Markdown notes are inside notes.zip with their image assets.")
-        export_markdown_toc = st.checkbox("Markdown with table of contents (.md)", value=True)
-        export_docx = st.checkbox("Word document (.docx)", value=False)
-        export_pdf = st.checkbox("PDF handout (.pdf)", value=False)
-        export_latex = st.checkbox("LaTeX source (.tex)", value=False)
-        export_options = _selected_export_formats(export_markdown_zip, export_markdown_toc, export_docx, export_pdf, export_latex)
-        _render_export_readiness(export_options)
+        with st.expander("Exports", expanded=False):
+            export_markdown_zip = st.checkbox(
+                "Markdown note package (.zip)",
+                value=True,
+                help="Recommended for sharing Markdown notes. The ZIP contains notes.md and notes.assets so images render on another computer.",
+            )
+            export_markdown_toc = st.checkbox("Markdown with table of contents (.md)", value=True)
+            export_docx = st.checkbox("Word document (.docx)", value=False)
+            export_pdf = st.checkbox("PDF handout (.pdf)", value=False)
+            export_latex = st.checkbox("LaTeX source (.tex)", value=False)
+            export_options = _selected_export_formats(export_markdown_zip, export_markdown_toc, export_docx, export_pdf, export_latex)
+            _render_export_readiness(export_options)
+
+        with st.expander("Save", expanded=False):
+            save_mode = st.radio(
+                "Output location",
+                ["Default workspace", "Custom folder"],
+                index=0,
+                help="Default saves under gui_runs/outputs. Custom lets you choose a parent folder on this computer.",
+            )
+            custom_output_base_text = st.text_input(
+                "Custom output folder",
+                value=str(Path.home() / "Desktop" / "SlideNote_outputs"),
+                disabled=save_mode == "Default workspace",
+                help="Paste a local folder path, for example C:\\Users\\student\\Desktop\\SlideNote_outputs.",
+            )
+            timestamped_subfolder = st.toggle("Create a timestamped subfolder", value=True)
 
     preview_config = StudioConfig(
         input_path=ROOT / "example.pdf",
@@ -124,43 +148,21 @@ def _run_simplified_app() -> None:
         export=",".join(export_options) if export_options else None,
     )
 
-    col_left, col_right = st.columns([0.95, 1.05], gap="large")
-    with col_left:
-        st.subheader("Run settings")
-        st.metric("Preset", preset_value)
-        st.metric("Vision", vision)
-        st.caption("Lecture uses the strong default pipeline. Local runs without API calls.")
-        with st.expander("Generated command preview", expanded=False):
-            st.code(command_for_display(build_slidenote_command(preview_config)), language="bash")
-
-    with col_right:
-        st.subheader("Connection overview")
+    with left:
         text_status = _api_status(needs_text_api(preview_config), api_key, provider)
         vision_status = _api_status(_needs_vision_api(preview_config), preview_config.vision_api_key, vision_provider)
         ocr_status = _ocr_status(preview_config.ocr != "off", ocr_api_key, ocr_secret_key, "baidu")
-        grid = st.columns(3)
-        with grid[0]:
-            _status_card("Text", *text_status, icon="✓")
-        with grid[1]:
-            _status_card("Vision", *vision_status, icon="◼")
-        with grid[2]:
-            _status_card("OCR", *ocr_status, icon="▣")
-
-        tips = performance_tips(preview_config)
-        if tips:
-            st.info("\n".join(f"• {tip}" for tip in tips))
-
-        with st.expander("Doctor panel", expanded=False):
+        _render_compact_run_state(preview_config, export_options, text_status, vision_status, ocr_status)
+        _render_key_warnings(preview_config, provider, text_status, vision_status, ocr_status)
+        with st.expander("Command", expanded=False):
+            st.code(command_for_display(build_slidenote_command(preview_config)), language="bash")
+        with st.expander("Usage & diagnostics", expanded=False):
+            tips = performance_tips(preview_config)
+            if tips:
+                for tip in tips:
+                    st.caption(tip)
             _render_doctor_panel(text_status=text_status, vision_status=vision_status, ocr_status=ocr_status)
-
         run_clicked = st.button("Run SlideNote build", type="primary", use_container_width=True, disabled=uploaded is None)
-
-    if needs_text_api(preview_config) and not api_key and not os.getenv(provider_env_key(provider)):
-        st.warning("Lecture preset needs a text API key. Enter one here or configure the provider environment variable.")
-    if _needs_vision_api(preview_config) and vision_status[0] == "Missing key":
-        st.warning("Vision is enabled but no Qwen/DashScope vision API key was entered or found in the environment.")
-    if preview_config.ocr != "off" and ocr_status[0] == "Missing key":
-        st.warning("OCR auto is enabled. Scanned PDFs may need Baidu OCR API key and secret.")
 
     if run_clicked and uploaded is not None:
         output_base = OUTPUTS_DIR if save_mode == "Default workspace" else Path(custom_output_base_text).expanduser()
@@ -174,9 +176,12 @@ def _run_simplified_app() -> None:
         st.session_state["last_output_dir"] = str(output_dir)
 
     last_output_dir = Path(st.session_state.get("last_output_dir", "")) if st.session_state.get("last_output_dir") else None
+    with right:
+        _render_notes_workspace(last_output_dir, preview_config)
+
     if last_output_dir and last_output_dir.exists():
         st.divider()
-        _render_results(last_output_dir, preview_config)
+        _render_detail_results(last_output_dir, preview_config)
 
 
 def main() -> None:
@@ -189,19 +194,216 @@ def _ensure_dirs() -> None:
     GLOBAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _render_hero() -> None:
+def _render_top_bar() -> None:
     st.markdown(
         """
-        <div class="hero-card">
-          <div class="hero-glow hero-glow-a"></div>
-          <div class="hero-glow hero-glow-b"></div>
-          <div class="hero-kicker">AI course notes · local-first workspace</div>
-          <h1>📝 SlideNote Studio</h1>
-          <p>Upload slides, choose lecture or local mode, add API keys on the page, and download notes, exports and study packs without touching the command line.</p>
+        <div class="topbar">
+          <div class="topbar-brand">
+            <div class="brand-mark">SN</div>
+            <div>
+              <div class="brand-name">SlideNote Studio</div>
+              <div class="brand-subtitle">Learning workspace</div>
+            </div>
+          </div>
+          <div class="topbar-status">
+            <span class="chip chip-neutral">lecture/local</span>
+            <span class="chip chip-neutral">markdown zip</span>
+            <span class="chip chip-neutral">study pack</span>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+def _render_empty_upload_panel() -> None:
+    st.markdown(
+        """
+        <div class="empty-state">
+          <div class="empty-kicker">Start</div>
+          <h2>Drop a PPT or PDF into the upload box.</h2>
+          <p>Run Local preview first when checking a new install; switch to Lecture quality for final notes.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_source_file(uploaded: Any) -> None:
+    name = html.escape(str(getattr(uploaded, "name", "uploaded file")))
+    suffix = html.escape((Path(name).suffix.lstrip(".") or "file").upper())
+    size = _format_file_size(getattr(uploaded, "size", None))
+    st.markdown(
+        f"""
+        <div class="source-file">
+          <div class="source-ext">{suffix}</div>
+          <div class="source-meta">
+            <div class="source-name">{name}</div>
+            <div class="source-size">{html.escape(size)}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _format_file_size(size: Any) -> str:
+    if size is None:
+        return "unknown size"
+    try:
+        value = float(size)
+    except Exception:
+        return "unknown size"
+    units = ["B", "KB", "MB", "GB"]
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} GB"
+
+
+def _render_compact_run_state(
+    config: StudioConfig,
+    export_options: list[str],
+    text_status: tuple[str, str, str],
+    vision_status: tuple[str, str, str],
+    ocr_status: tuple[str, str, str],
+) -> None:
+    exports = "markdown zip" if "markdown-zip" in export_options else (export_options[0].replace("-", " ") if export_options else "no export")
+    chips = [
+        ("preset", config.preset, "neutral"),
+        ("provider", config.provider, "neutral"),
+        ("vision", config.vision, "good" if config.vision != "off" else "muted"),
+        ("export", exports, "good" if "markdown-zip" in export_options else "neutral"),
+        ("text", text_status[0], text_status[2]),
+        ("vision key", vision_status[0], vision_status[2]),
+        ("ocr", ocr_status[0], ocr_status[2]),
+    ]
+    _render_chip_row(chips)
+
+
+def _render_key_warnings(
+    config: StudioConfig,
+    provider: str,
+    text_status: tuple[str, str, str],
+    vision_status: tuple[str, str, str],
+    ocr_status: tuple[str, str, str],
+) -> None:
+    messages: list[str] = []
+    if needs_text_api(config) and text_status[0] == "Missing key":
+        messages.append(f"Missing text key: set {provider_env_key(provider)}, fill API keys here, or use Local preview.")
+    if _needs_vision_api(config) and vision_status[0] == "Missing key":
+        messages.append("Missing vision key: fill Qwen/DashScope key or set Vision off.")
+    if config.ocr != "off" and ocr_status[0] == "Missing key":
+        messages.append("OCR auto is enabled; scanned PDFs may need Baidu OCR key and secret.")
+    for message in messages:
+        st.markdown(f"<div class='inline-alert'>{html.escape(message)}</div>", unsafe_allow_html=True)
+
+
+def _render_chip_row(chips: list[tuple[str, str, str]]) -> None:
+    rendered = []
+    for label, value, tone in chips:
+        rendered.append(
+            "<span class='chip chip-{tone}'><span class='chip-label'>{label}</span>{value}</span>".format(
+                tone=html.escape(tone),
+                label=html.escape(label),
+                value=html.escape(value),
+            )
+        )
+    st.markdown(f"<div class='chip-row'>{''.join(rendered)}</div>", unsafe_allow_html=True)
+
+
+def _render_notes_workspace(output_dir: Path | None, config: StudioConfig | None = None) -> None:
+    st.markdown("### Notes workspace")
+    if not output_dir or not output_dir.exists():
+        st.markdown(
+            """
+            <div class="notes-empty">
+              <div class="empty-kicker">Notes</div>
+              <h2>Run a build to preview notes here.</h2>
+              <p>Generated Markdown and download buttons will appear in this workspace.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    outputs = discover_outputs(output_dir)
+    st.markdown(f"<div class='output-path'>Output saved to<br><code>{html.escape(str(output_dir))}</code></div>", unsafe_allow_html=True)
+    _render_workspace_downloads(output_dir, outputs)
+
+    notes_path = outputs.get("notes")
+    if notes_path:
+        st.markdown("<div class='preview-label'>notes.md preview</div>", unsafe_allow_html=True)
+        _render_markdown_file(notes_path, "notes.md")
+    else:
+        st.info("notes.md was not generated yet.")
+
+    _render_study_pack_compact(output_dir, config)
+    with st.expander("Usage & diagnostics", expanded=False):
+        _render_usage_snapshot(output_dir)
+
+
+def _render_workspace_downloads(output_dir: Path, outputs: dict[str, Path]) -> None:
+    c1, c2, c3 = st.columns(3)
+    notes_zip = outputs.get("notes_zip")
+    notes = outputs.get("notes")
+    if notes_zip:
+        c1.download_button("notes.zip", data=notes_zip.read_bytes(), file_name="notes.zip", mime="application/zip", use_container_width=True)
+    else:
+        c1.button("notes.zip", disabled=True, use_container_width=True)
+    if notes:
+        c2.download_button("notes.md", data=notes.read_bytes(), file_name="notes.md", mime="text/markdown", use_container_width=True)
+    else:
+        c2.button("notes.md", disabled=True, use_container_width=True)
+    c3.download_button("all results", data=_zip_output_dir(output_dir), file_name=f"{output_dir.name}.zip", mime="application/zip", use_container_width=True)
+    if notes_zip:
+        st.caption("Share Markdown notes with notes.zip; it includes notes.md and notes.assets.")
+
+
+def _render_study_pack_compact(output_dir: Path, config: StudioConfig | None = None) -> None:
+    outputs = discover_outputs(output_dir)
+    key_suffix = safe_run_name(output_dir.name)
+    with st.expander("Study pack", expanded=False):
+        question_count = st.slider("Question count", 4, 40, 12, step=2, key=f"study_count_{key_suffix}")
+        if st.button("Generate study pack", type="primary", use_container_width=True, key=f"study_button_{key_suffix}"):
+            run_config = config or StudioConfig(input_path=ROOT / "example.pdf", output_dir=output_dir, progress_json=output_dir / "progress.json")
+            run_config = _clone_config_for_run(run_config, input_path=run_config.input_path, output_dir=output_dir, progress_json=output_dir / "progress.json")
+            _run_study_pack(run_config, question_count)
+            st.rerun()
+
+        rows = [
+            ("review.md", outputs.get("review")),
+            ("exam.md", outputs.get("exam")),
+            ("exam.html", outputs.get("exam_html")),
+            ("study_pack.json", outputs.get("study_pack")),
+        ]
+        st.dataframe([{"file": name, "status": "ready" if path else "not generated"} for name, path in rows], use_container_width=True, hide_index=True)
+        ready = [(name, path) for name, path in rows if path]
+        if ready:
+            cols = st.columns(min(3, len(ready)))
+            for col, (name, path) in zip(cols, ready):
+                col.download_button(name, data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path), use_container_width=True)
+
+
+def _render_usage_snapshot(output_dir: Path) -> None:
+    run_summary = _read_json(output_dir / "run_summary.json") or {}
+    cost_report = _read_json(output_dir / "cost_report.json") or {}
+    counts = run_summary.get("counts") if isinstance(run_summary.get("counts"), dict) else {}
+    cost_summary = cost_report.get("summary") if isinstance(cost_report.get("summary"), dict) else {}
+    rows = [
+        {"item": "pages", "value": counts.get("pages", "unknown")},
+        {"item": "sections", "value": counts.get("sections", "unknown")},
+        {"item": "total tokens", "value": cost_summary.get("total_tokens", "not recorded")},
+        {"item": "estimated cost", "value": cost_summary.get("estimated_cost", "not recorded")},
+    ]
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+    for filename in ("progress.json", "run_summary.json", "cost_report.json", "coverage.json"):
+        path = output_dir / filename
+        if path.exists():
+            st.caption(f"{filename}: {path}")
 
 
 def _selected_export_formats(markdown_zip: bool, markdown_toc: bool, docx: bool, pdf: bool, latex: bool) -> list[str]:
@@ -488,12 +690,9 @@ def _generate_cost_report(output_dir: Path) -> None:
         st.warning(f"Build finished, but cost report generation failed: {exc}")
 
 
-def _render_results(output_dir: Path, config: StudioConfig | None = None) -> None:
-    st.subheader("Results")
-    st.markdown(f"<div class='output-path'>Output saved to<br><code>{output_dir}</code></div>", unsafe_allow_html=True)
-    outputs = discover_outputs(output_dir)
-    _render_quick_downloads(output_dir, outputs)
-    tab_names = ["Quality", "Page explorer", "Token & cost", "Study pack", "Exports", "Notes", "Coverage", "Run summary", "Files"]
+def _render_detail_results(output_dir: Path, config: StudioConfig | None = None) -> None:
+    st.subheader("Details")
+    tab_names = ["Quality", "Page explorer", "Exports", "Coverage", "Usage", "Files"]
     tabs = st.tabs(tab_names)
 
     with tabs[0]:
@@ -501,22 +700,23 @@ def _render_results(output_dir: Path, config: StudioConfig | None = None) -> Non
     with tabs[1]:
         _render_page_explorer(output_dir)
     with tabs[2]:
-        _render_cost_tab(output_dir)
-    with tabs[3]:
-        _render_study_pack_tab(output_dir, config)
-    with tabs[4]:
         _render_exports_tab(output_dir)
-    with tabs[5]:
-        _render_markdown_file(output_dir / "notes.md", "notes.md")
-    with tabs[6]:
+    with tabs[3]:
         _render_markdown_file(output_dir / "coverage.md", "coverage.md")
-    with tabs[7]:
+    with tabs[4]:
+        _render_cost_tab(output_dir)
         _render_run_summary_tab(output_dir)
-    with tabs[8]:
+    with tabs[5]:
         st.write(f"Output directory: `{output_dir}`")
         for path in sorted(output_dir.glob("*")):
             if path.is_file():
                 _download_file(path)
+
+
+def _render_results(output_dir: Path, config: StudioConfig | None = None) -> None:
+    _render_notes_workspace(output_dir, config)
+    st.divider()
+    _render_detail_results(output_dir, config)
 
 
 def _render_quick_downloads(output_dir: Path, outputs: dict[str, Path]) -> None:
@@ -902,25 +1102,25 @@ def _style() -> None:
         """
         <style>
         :root {
-          --sn-bg: #f5f7fb;
-          --sn-card: rgba(255, 255, 255, 0.84);
-          --sn-line: rgba(15, 23, 42, 0.10);
-          --sn-text: #111827;
-          --sn-heading: #0f172a;
-          --sn-muted: #64748b;
-          --sn-red: #ff3b50;
-          --sn-blue: #007aff;
-          --sn-green: #30d158;
-          --sn-amber: #ffb020;
-          --sn-shadow: 0 18px 50px rgba(15,23,42,.08), inset 0 1px 0 rgba(255,255,255,.80);
+          --sn-bg: #f4f5f7;
+          --sn-surface: #ffffff;
+          --sn-surface-soft: #f9fafb;
+          --sn-line: #d9dee7;
+          --sn-line-strong: #c5ccd8;
+          --sn-text: #1f2937;
+          --sn-heading: #111827;
+          --sn-muted: #6b7280;
+          --sn-blue: #2563eb;
+          --sn-green: #15803d;
+          --sn-red: #b91c1c;
+          --sn-amber: #92400e;
         }
         .stApp {
-          background:
-            radial-gradient(circle at 22% 5%, rgba(0, 122, 255, .14), transparent 24rem),
-            radial-gradient(circle at 78% 0%, rgba(175, 82, 222, .12), transparent 22rem),
-            linear-gradient(180deg, #fbfcff 0%, #f5f7fb 42%, #f7f8fb 100%) !important;
+          background: var(--sn-bg) !important;
           color: var(--sn-text) !important;
         }
+        header[data-testid="stHeader"] { background: transparent !important; }
+        [data-testid="stToolbar"], [data-testid="stDecoration"], #MainMenu { display: none !important; }
         .stApp h1, .stApp h2, .stApp h3, .stApp h4,
         .stApp [data-testid="stMarkdownContainer"] h1,
         .stApp [data-testid="stMarkdownContainer"] h2,
@@ -930,28 +1130,10 @@ def _style() -> None:
           color: var(--sn-heading) !important;
         }
         .stApp [data-testid="stCaptionContainer"], .stApp small { color: var(--sn-muted) !important; }
-        .block-container { padding-top: 2.1rem; max-width: 1260px; }
-        .hero-card {
-          position: relative;
-          overflow: hidden;
-          padding: 2.1rem 2.35rem;
-          margin-bottom: 1.7rem;
-          border: 1px solid rgba(255,255,255,.75);
-          border-radius: 34px;
-          background: linear-gradient(135deg, rgba(255,255,255,.90), rgba(255,255,255,.64));
-          box-shadow: 0 28px 90px rgba(31, 41, 55, .14), inset 0 1px 0 rgba(255,255,255,.9);
-          backdrop-filter: blur(26px) saturate(1.2);
-        }
-        .hero-card h1 { font-size: clamp(2.1rem, 4vw, 3.1rem); line-height: 1.02; margin: .25rem 0 .75rem; letter-spacing: -.055em; color: var(--sn-heading) !important; }
-        .hero-card p { max-width: 780px; color: #5f6673 !important; font-size: 1.05rem; line-height: 1.65; }
-        .hero-kicker { color: var(--sn-blue); text-transform: uppercase; font-size: .72rem; letter-spacing: .12em; font-weight: 800; }
-        .hero-glow { position: absolute; border-radius: 999px; filter: blur(10px); pointer-events: none; }
-        .hero-glow-a { width: 240px; height: 240px; right: -70px; top: -90px; background: rgba(0,122,255,.22); }
-        .hero-glow-b { width: 300px; height: 300px; right: 160px; bottom: -210px; background: rgba(255,45,85,.13); }
+        .block-container { padding: 1rem 2rem 2rem; max-width: 1360px; }
         section[data-testid="stSidebar"] {
-          background: rgba(248,250,252,.86) !important;
-          backdrop-filter: blur(22px);
-          border-right: 1px solid rgba(148,163,184,.18);
+          background: var(--sn-surface) !important;
+          border-right: 1px solid var(--sn-line);
         }
         section[data-testid="stSidebar"] h1,
         section[data-testid="stSidebar"] h2,
@@ -961,27 +1143,200 @@ def _style() -> None:
         section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
           color: var(--sn-heading) !important;
         }
+        .topbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          min-height: 56px;
+          padding: .65rem .8rem;
+          margin-bottom: 1rem;
+          border: 1px solid var(--sn-line);
+          border-radius: 8px;
+          background: var(--sn-surface);
+        }
+        .topbar-brand {
+          display: flex;
+          align-items: center;
+          gap: .7rem;
+          min-width: 0;
+        }
+        .brand-mark {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          height: 32px;
+          border-radius: 8px;
+          background: #111827;
+          color: #ffffff;
+          font-size: .78rem;
+          font-weight: 800;
+          letter-spacing: 0;
+          flex: 0 0 auto;
+        }
+        .brand-name {
+          color: var(--sn-heading);
+          font-size: .98rem;
+          font-weight: 760;
+          line-height: 1.15;
+          letter-spacing: 0;
+        }
+        .brand-subtitle {
+          color: var(--sn-muted);
+          font-size: .78rem;
+          line-height: 1.2;
+          margin-top: .12rem;
+          letter-spacing: 0;
+        }
+        .topbar-status, .chip-row {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: .4rem;
+        }
+        .chip-row { margin: .75rem 0 .6rem; }
+        .chip {
+          display: inline-flex;
+          align-items: center;
+          min-height: 26px;
+          max-width: 100%;
+          padding: .28rem .48rem;
+          border: 1px solid var(--sn-line);
+          border-radius: 6px;
+          background: var(--sn-surface-soft);
+          color: var(--sn-text);
+          font-size: .78rem;
+          line-height: 1.15;
+          font-weight: 650;
+          letter-spacing: 0;
+          white-space: nowrap;
+        }
+        .chip-label {
+          color: var(--sn-muted);
+          font-weight: 600;
+          margin-right: .28rem;
+        }
+        .chip-good { border-color: #b7dfc0; background: #f2fbf4; color: var(--sn-green); }
+        .chip-bad { border-color: #f0b9bd; background: #fff7f7; color: var(--sn-red); }
+        .chip-muted { color: var(--sn-muted); }
+        .chip-neutral { color: var(--sn-text); }
+        .empty-state, .notes-empty {
+          border: 1px solid var(--sn-line);
+          border-radius: 8px;
+          background: var(--sn-surface);
+          padding: 2rem;
+        }
+        .empty-state {
+          max-width: 760px;
+          margin: 1.1rem auto .75rem;
+        }
+        .notes-empty {
+          min-height: 360px;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
+        .empty-kicker {
+          color: var(--sn-blue);
+          text-transform: uppercase;
+          font-size: .72rem;
+          font-weight: 760;
+          letter-spacing: 0;
+          margin-bottom: .4rem;
+        }
+        .empty-state h2, .notes-empty h2 {
+          font-size: 1.45rem;
+          line-height: 1.25;
+          margin: 0 0 .5rem;
+          letter-spacing: 0;
+        }
+        .empty-state p, .notes-empty p {
+          color: var(--sn-muted) !important;
+          font-size: .95rem;
+          line-height: 1.55;
+          margin: 0;
+          max-width: 620px;
+        }
+        div[data-testid="stFileUploader"] {
+          max-width: 960px;
+          margin: .75rem auto 0;
+          padding: .65rem;
+          border: 1px solid var(--sn-line);
+          border-radius: 8px;
+          background: var(--sn-surface);
+        }
+        div[data-testid="stFileUploaderDropzone"] {
+          min-height: 112px;
+          border: 1px dashed var(--sn-line-strong) !important;
+          border-radius: 8px !important;
+          background: var(--sn-surface-soft) !important;
+        }
+        .source-file {
+          display: flex;
+          align-items: center;
+          gap: .75rem;
+          padding: .8rem;
+          margin: .65rem 0 1rem;
+          border: 1px solid var(--sn-line);
+          border-radius: 8px;
+          background: var(--sn-surface);
+        }
+        .source-ext {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 44px;
+          height: 38px;
+          border-radius: 8px;
+          background: #eef2ff;
+          color: #1d4ed8;
+          font-size: .72rem;
+          font-weight: 780;
+          flex: 0 0 auto;
+        }
+        .source-meta { min-width: 0; }
+        .source-name {
+          color: var(--sn-heading);
+          font-weight: 720;
+          line-height: 1.25;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .source-size {
+          color: var(--sn-muted);
+          font-size: .78rem;
+          margin-top: .12rem;
+        }
+        .inline-alert {
+          margin: .45rem 0 0;
+          padding: .55rem .65rem;
+          border: 1px solid #efc6c9;
+          border-radius: 8px;
+          background: #fff7f7;
+          color: var(--sn-red);
+          font-size: .84rem;
+          line-height: 1.35;
+        }
         .stButton>button, .stDownloadButton>button {
-          border-radius: 999px !important;
-          padding: .72rem 1.1rem !important;
-          font-weight: 760 !important;
-          transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+          border-radius: 8px !important;
+          padding: .58rem .85rem !important;
+          font-weight: 700 !important;
+          transition: border-color .16s ease, background .16s ease;
         }
         .stButton>button:hover, .stDownloadButton>button:hover {
-          transform: translateY(-1px);
-          box-shadow: 0 12px 30px rgba(15,23,42,.12);
+          border-color: var(--sn-blue) !important;
         }
         div[data-testid="stMetric"], .status-card, .output-path {
           border: 1px solid var(--sn-line);
-          background: var(--sn-card);
-          border-radius: 24px;
-          box-shadow: var(--sn-shadow);
-          backdrop-filter: blur(18px) saturate(1.2);
+          background: var(--sn-surface);
+          border-radius: 8px;
         }
-        div[data-testid="stMetric"] { padding: 16px; }
+        div[data-testid="stMetric"] { padding: .75rem; }
         .status-card {
-          min-height: 122px;
-          padding: 14px 13px;
+          min-height: 92px;
+          padding: .75rem;
           overflow: hidden;
         }
         .status-top {
@@ -989,19 +1344,19 @@ def _style() -> None:
           align-items: center;
           gap: .38rem;
           color: var(--sn-muted) !important;
-          font-size: clamp(.68rem, .9vw, .78rem);
+          font-size: .76rem;
           line-height: 1.15;
-          font-weight: 780;
+          font-weight: 700;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
         }
         .status-main {
-          font-size: clamp(1.02rem, 1.8vw, 1.28rem);
+          font-size: 1.02rem;
           line-height: 1.12;
-          letter-spacing: -.02em;
-          font-weight: 840;
-          margin-top: .82rem;
+          letter-spacing: 0;
+          font-weight: 760;
+          margin-top: .65rem;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -1018,17 +1373,31 @@ def _style() -> None:
           text-overflow: ellipsis;
           word-break: keep-all;
         }
-        .tone-good .status-main { color: #138a3d !important; }
-        .tone-bad .status-main { color: #c6283a !important; }
-        .tone-muted .status-main { color: #64748b !important; }
-        .output-path { padding: 14px 18px; margin-bottom: 1rem; color: var(--sn-muted); }
+        .tone-good .status-main { color: var(--sn-green) !important; }
+        .tone-bad .status-main { color: var(--sn-red) !important; }
+        .tone-muted .status-main { color: var(--sn-muted) !important; }
+        .output-path { padding: .75rem .9rem; margin-bottom: 1rem; color: var(--sn-muted); }
         .output-path code { color: #111827; font-size: .86rem; }
+        .preview-label {
+          color: var(--sn-muted);
+          font-size: .78rem;
+          font-weight: 720;
+          margin: .8rem 0 .2rem;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
         div[data-baseweb="tab-list"] { gap: .35rem; }
-        button[data-baseweb="tab"] { border-radius: 999px !important; }
+        button[data-baseweb="tab"] { border-radius: 6px !important; }
+        div[data-testid="stExpander"] details {
+          border: 1px solid var(--sn-line) !important;
+          border-radius: 8px !important;
+          background: var(--sn-surface) !important;
+        }
         @media (max-width: 980px) {
-          .status-card { min-height: 116px; }
-          .status-main { font-size: 1.16rem; }
-          .status-top { font-size: .68rem; }
+          .block-container { padding: .75rem 1rem 1.5rem; }
+          .topbar { align-items: flex-start; flex-direction: column; }
+          .notes-empty { min-height: 260px; }
+          .empty-state { padding: 1.35rem; }
         }
         </style>
         """,
