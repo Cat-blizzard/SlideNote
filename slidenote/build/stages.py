@@ -630,6 +630,10 @@ def _print_build_outputs(state: BuildState) -> None:
         print(f"- vision:   {output_root / 'vision_usage.json'}")
     if state.export_report is not None:
         print(f"- exports:  {output_root / 'export_report.json'}")
+        notes_zip = output_root / "notes.zip"
+        if notes_zip.exists():
+            print(f"- note package: {notes_zip}")
+            print("  Reminder: Markdown notes are inside notes.zip with image assets.")
     if state.study_pack_report is not None:
         print(f"- study:    {output_root / 'study_pack.json'}")
         if state.study_pack_report.get("review"):

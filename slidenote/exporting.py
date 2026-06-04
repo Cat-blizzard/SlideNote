@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,8 +12,9 @@ from slidenote.llm_cache import utc_now_iso
 from slidenote.utils import slugify, write_text
 
 
-EXPORT_FORMATS = ("markdown-toc", "docx", "pdf", "latex")
+EXPORT_FORMATS = ("markdown-zip", "markdown-toc", "docx", "pdf", "latex")
 PANDOC_FORMATS = ("docx", "pdf", "latex")
+MARKDOWN_ZIP_NAME = "notes.zip"
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", flags=re.DOTALL)
@@ -52,7 +54,16 @@ def build_export_artifacts(notes_markdown: str, output_root: Path, formats: list
     cleaned_markdown = clean_markdown_for_export(notes_markdown)
     results: list[dict[str, Any]] = []
     warnings: list[str] = []
+    messages: list[str] = []
     toc_source: Path | None = None
+
+    if "markdown-zip" in formats:
+        zip_result = _build_markdown_zip(notes_markdown, output_root)
+        results.append(zip_result)
+        if zip_result["status"] == "ok":
+            messages.append("Markdown notes are inside notes.zip with notes.assets for images.")
+        else:
+            warnings.append(f"markdown-zip export failed: {zip_result.get('reason') or 'unknown error'}")
 
     if "markdown-toc" in formats:
         if export_toc == "off":
@@ -135,6 +146,7 @@ def build_export_artifacts(notes_markdown: str, output_root: Path, formats: list
         },
         "results": results,
         "warnings": warnings,
+        "messages": messages,
     }
 
 
@@ -245,6 +257,50 @@ def _write_pandoc_source(markdown: str, output_root: Path) -> Path:
     source = output_root / ".cache" / "export" / "notes.export.md"
     write_text(source, markdown)
     return source
+
+
+def _build_markdown_zip(notes_markdown: str, output_root: Path) -> dict[str, Any]:
+    output_path = output_root / MARKDOWN_ZIP_NAME
+    notes_path = output_root / "notes.md"
+    try:
+        if not notes_path.exists():
+            write_text(notes_path, notes_markdown)
+        if output_path.exists():
+            output_path.unlink()
+        asset_files = _markdown_asset_files(output_root)
+        with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.write(notes_path, "notes.md")
+            for asset_path in asset_files:
+                archive.write(asset_path, asset_path.relative_to(output_root).as_posix())
+            archive.writestr(
+                "README.txt",
+                "Open notes.md after extracting this ZIP. Keep notes.assets next to notes.md so images render.\n",
+            )
+    except OSError as exc:
+        return {
+            "format": "markdown-zip",
+            "status": "failed",
+            "path": MARKDOWN_ZIP_NAME,
+            "reason": "markdown_zip_failed",
+            "stderr": str(exc),
+            "blocking": True,
+        }
+
+    return {
+        "format": "markdown-zip",
+        "status": "ok",
+        "path": MARKDOWN_ZIP_NAME,
+        "message": "Markdown notes are inside notes.zip with image assets.",
+        "includes": ["notes.md", "notes.assets/"] if asset_files else ["notes.md"],
+        "asset_files": len(asset_files),
+    }
+
+
+def _markdown_asset_files(output_root: Path) -> list[Path]:
+    assets_root = output_root / "notes.assets"
+    if not assets_root.exists():
+        return []
+    return sorted(path for path in assets_root.rglob("*") if path.is_file())
 
 
 def _run_pandoc(pandoc: str, source: Path, output_root: Path, fmt: str) -> dict[str, Any]:

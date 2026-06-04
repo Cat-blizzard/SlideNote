@@ -337,6 +337,11 @@ def progress_percent(progress: dict[str, Any]) -> float:
 def discover_outputs(output_dir: Path) -> dict[str, Path]:
     names = {
         "notes": "notes.md",
+        "notes_zip": "notes.zip",
+        "notes_toc": "notes.toc.md",
+        "docx": "notes.docx",
+        "pdf": "notes.pdf",
+        "latex": "notes.tex",
         "coverage": "coverage.md",
         "cost_markdown": "cost_report.md",
         "cost_json": "cost_report.json",

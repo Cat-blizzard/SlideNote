@@ -107,7 +107,7 @@ Ingest -> Understand -> Write -> Guard -> Export
 | **2. Understand** | 理解课件在讲什么，每页/每图/每表起什么作用。 | `deck_understanding.json`、`page_understanding.json`、`sections.json`、`deck_brief.json`、图表理解 |
 | **3. Write** | 把结构化材料写成可读学习笔记。 | `notes.md`、Lecture-Weave 逐页讲解、teaching enrichment |
 | **4. Guard** | 检查保真、覆盖率和学习质量。 | `coverage.json`、`coverage.md`、`content_guard.json`、`quality_report.json` |
-| **5. Export** | 发布最终结果和运行报告。 | `notes.toc.md`、`notes.docx`、`notes.pdf`、`notes.tex`、复习/考试包 |
+| **5. Export** | 发布最终结果和运行报告。 | `notes.zip`、`notes.toc.md`、`notes.docx`、`notes.pdf`、`notes.tex`、复习/考试包 |
 
 详细说明见 [SlideNote Pipeline](docs/pipeline.zh-CN.md)。
 
@@ -222,7 +222,7 @@ README 现在只作为项目首页。细节放到文档中心：
 | LLM Provider、OCR、Vision、缓存与成本 | [docs/providers-and-cost.zh-CN.md](docs/providers-and-cost.zh-CN.md) |
 | 路线图设计笔记 | [docs/roadmap/extension-notes.zh-CN.md](docs/roadmap/extension-notes.zh-CN.md) |
 
-主输出是 `notes.md`。根据选项不同，SlideNote 还会写出 `content.json`、`deck_understanding.json`、`page_understanding.json`、`element_ir.json`、`source_map.json`、`coverage.md`、`quality_report.json`、`review.md`、`exam.md`、`exam.json`、`exam.html`、`notes.docx`、`notes.pdf` 等报告和导出文件。
+主输出是 `notes.md`。如果要把 Markdown 笔记发给别人，推荐导出 `notes.zip`，里面包含 `notes.md` 和 `notes.assets/` 图片资源。根据选项不同，SlideNote 还会写出 `content.json`、`deck_understanding.json`、`page_understanding.json`、`element_ir.json`、`source_map.json`、`coverage.md`、`quality_report.json`、`review.md`、`exam.md`、`exam.json`、`exam.html`、`notes.docx`、`notes.pdf` 等报告和导出文件。
 
 ## 未来展望
 

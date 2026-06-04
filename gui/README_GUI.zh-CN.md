@@ -33,7 +33,7 @@ SlideNote Studio 是一个基于 Streamlit 的图形界面。它包装现有的 
   - token/cost dashboard
   - `notes.md`、`coverage.md`、`run_summary.json`、usage 文件和原始输出文件
 - 支持默认 `gui_runs/outputs` 工作区，也支持自定义本地输出目录。
-- 页面内一键下载 `notes.md`、`coverage.md`、`cost_report.md` 或完整结果 ZIP。
+- 页面内一键下载 `notes.zip`、`notes.md`、`coverage.md`、`cost_report.md` 或完整结果 ZIP；分享 Markdown 时优先发 `notes.zip`，笔记和图片资源都在压缩包里。
 - 可选生成并下载复习/自测包：`review.md`、`exam.md`、`exam.json` 和可交互批改的 `exam.html`。
 
 ## 安装
@@ -130,13 +130,14 @@ GUI 侧边栏的 **5. Review / Exam** 可以在 `notes.md` 完成后继续生成
 
 `local` 模式不调用 API；`auto` / `llm` 模式会复用文本 provider，题目和解析通常更强。
 
-## 导出 Word / PDF / LaTeX
+## 导出 Markdown / Word / PDF / LaTeX
 
 GUI 侧边栏的 **6. Exports** 可以直接勾选额外导出格式：
 
 - `notes.toc.md`：带目录 Markdown，不需要 Pandoc。
+- `notes.zip`：Markdown 笔记包，包含 `notes.md` 和 `notes.assets/`，不需要 Pandoc。
 - `notes.docx`：Word 文档，需要 Pandoc。
 - `notes.pdf`：PDF 讲义，优先用 LibreOffice 将 `notes.docx` 转成 PDF，中文/CJK 和图片排版更稳定；需要 Pandoc + LibreOffice。
 - `notes.tex`：LaTeX 源码，需要 Pandoc。
 
-导出完成后，结果区会出现 **Exports** 标签页，并在顶部下载区显示可用的 Word / PDF / LaTeX 下载按钮。所有导出状态会写入 `export_report.json`。如果 Pandoc 或 LibreOffice 不在 PATH 中，GUI 会在运行前提示安装命令，build 仍可继续生成基础 `notes.md`。
+导出完成后，结果区会出现 **Exports** 标签页，并在顶部下载区显示可用的 Markdown ZIP / Word / PDF / LaTeX 下载按钮。所有导出状态会写入 `export_report.json`。如果 Pandoc 或 LibreOffice 不在 PATH 中，GUI 会在运行前提示安装命令，build 仍可继续生成基础 `notes.md`。

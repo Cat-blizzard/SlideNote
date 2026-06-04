@@ -1,11 +1,12 @@
 import subprocess
+import zipfile
 
 from slidenote.exporting import add_table_of_contents, build_export_artifacts, clean_markdown_for_export, parse_export_formats
 
 
 def test_parse_export_formats_expands_all_and_deduplicates():
-    assert parse_export_formats("markdown-toc,docx,docx") == ["markdown-toc", "docx"]
-    assert parse_export_formats("all") == ["markdown-toc", "docx", "pdf", "latex"]
+    assert parse_export_formats("markdown-zip,markdown-toc,docx,docx") == ["markdown-zip", "markdown-toc", "docx"]
+    assert parse_export_formats("all") == ["markdown-zip", "markdown-toc", "docx", "pdf", "latex"]
 
 
 def test_markdown_toc_inserts_after_h1_with_stable_slugs():
@@ -55,6 +56,24 @@ def test_markdown_toc_export_does_not_need_pandoc(tmp_path, monkeypatch):
     assert report["summary"]["succeeded"] == 1
     assert (tmp_path / "notes.toc.md").exists()
     assert not (tmp_path / "notes.docx").exists()
+
+
+def test_markdown_zip_export_packages_notes_and_assets_without_pandoc(tmp_path, monkeypatch):
+    monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: None)
+    assets = tmp_path / "notes.assets" / "images"
+    assets.mkdir(parents=True)
+    (assets / "diagram.png").write_bytes(b"image")
+    (tmp_path / "notes.md").write_text("# Lecture\n\n![Diagram](notes.assets/images/diagram.png)\n", encoding="utf-8")
+
+    report = build_export_artifacts("# Lecture\n\n![Diagram](notes.assets/images/diagram.png)\n", tmp_path, ["markdown-zip"])
+
+    assert report["summary"]["succeeded"] == 1
+    assert report["results"][0]["format"] == "markdown-zip"
+    assert report["results"][0]["asset_files"] == 1
+    assert "Markdown notes are inside notes.zip" in report["messages"][0]
+    assert report["warnings"] == []
+    with zipfile.ZipFile(tmp_path / "notes.zip") as archive:
+        assert set(archive.namelist()) == {"notes.md", "notes.assets/images/diagram.png", "README.txt"}
 
 
 def test_pandoc_exports_record_success_and_pdf_uses_libreoffice(tmp_path, monkeypatch):

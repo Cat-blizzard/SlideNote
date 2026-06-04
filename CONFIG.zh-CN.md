@@ -66,7 +66,7 @@ python -m slidenote build lecture.pdf `
 | `--refresh-pages` | 无 | `3,5-8` | 指定页绕过本地缓存重新生成。 |
 | `--progress-json` | `<out>/progress.json` | 路径 | 进度 JSON 路径。 |
 | `--quiet` | 关闭 | flag | 不打印实时进度，但仍写 `progress.json`。 |
-| `--export` | 无 | `markdown-toc` / `docx` / `pdf` / `latex` / `all`，逗号分隔 | 额外导出格式。Markdown 目录不需要 Pandoc；Word/PDF/LaTeX 需要 Pandoc。 |
+| `--export` | 无 | `markdown-zip` / `markdown-toc` / `docx` / `pdf` / `latex` / `all`，逗号分隔 | 额外导出格式。Markdown ZIP/目录不需要 Pandoc；Word/PDF/LaTeX 需要 Pandoc。 |
 | `--export-toc` | `auto` | `auto` / `off` | `markdown-toc` 导出是否插入目录。 |
 
 ## Speed Mode 预设
@@ -252,6 +252,7 @@ Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主
 
 | 格式 | 输出 | 依赖 |
 | --- | --- | --- |
+| `markdown-zip` | `notes.zip` | 无 |
 | `markdown-toc` | `notes.toc.md` | 无 |
 | `docx` | `notes.docx` | Pandoc |
 | `pdf` | `notes.pdf` | Pandoc 和本机 PDF 引擎；默认使用 `xelatex` |
@@ -259,10 +260,10 @@ Deck Brief 不是最终摘要，也不会替代逐页覆盖。它记录课程主
 | `all` | 以上全部 | Pandoc 用于 docx/pdf/latex |
 
 ```powershell
-python -m slidenote build lecture.pdf --out outputs\lecture --export markdown-toc,docx
+python -m slidenote build lecture.pdf --out outputs\lecture --export markdown-zip,markdown-toc,docx
 ```
 
-`export_report.json` 会记录每个格式的状态、输出路径、Pandoc 命令、失败原因和 warning。请求 `docx`、`pdf` 或 `latex` 但未安装 Pandoc 时，构建仍会保留 `notes.md` 和其它基础产物，但命令返回非 0，避免误认为导出文件已经生成。
+`notes.zip` 里包含 `notes.md` 和 `notes.assets/`，适合把 Markdown 笔记发给别人；只发单独 `notes.md` 时图片可能无法显示。`export_report.json` 会记录每个格式的状态、输出路径、Pandoc 命令、失败原因和 warning。请求 `docx`、`pdf` 或 `latex` 但未安装 Pandoc 时，构建仍会保留 `notes.md` 和其它基础产物，但命令返回非 0，避免误认为导出文件已经生成。
 
 ## OCR
 
@@ -360,6 +361,7 @@ final_exam.md
 final_exam.answers.md
 wrong_answer_review_prompt.md
 export_report.json
+notes.zip
 notes.toc.md
 notes.docx
 notes.pdf
