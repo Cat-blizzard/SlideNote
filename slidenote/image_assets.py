@@ -58,6 +58,6 @@ def refine_image_role_for_placement(
         return role, ignored, reason
     if placement_area_ratio < 0.01:
         return "decorative", True, "tiny_placement"
-    if near_page_edge and placement_area_ratio < 0.04:
+    if near_page_edge and placement_area_ratio < 0.018:
         return "decorative", True, "edge_decoration"
     return role, ignored, reason

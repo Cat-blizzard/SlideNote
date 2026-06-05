@@ -991,18 +991,52 @@ def _decorative_candidate_reason(figure: NormalizedFigure) -> str | None:
     text = f"{figure.content_type} {figure.label}".lower()
     if any(token in text for token in ("logo", "watermark", "decorative", "decoration", "background", "icon", "页码", "图标", "装饰", "背景", "水印")):
         return "decorative_candidate"
-    if _edge_template_like(figure.bbox) and not _is_chart_like(figure.content_type):
+    if _edge_template_like(figure.bbox) and not _is_potential_knowledge_candidate(figure):
         return "edge_template_candidate"
     return None
 
 
 def _edge_template_like(bbox: list[float]) -> bool:
     area = _bbox_area(bbox)
-    if area > 0.028:
+    if area > 0.014:
         return False
     near_edge = bbox[0] <= 0.08 or bbox[1] <= 0.08 or bbox[2] >= 0.92 or bbox[3] >= 0.92
     near_corner = (bbox[0] <= 0.08 or bbox[2] >= 0.92) and (bbox[1] <= 0.08 or bbox[3] >= 0.92)
-    return near_corner or (near_edge and area <= 0.016)
+    return (near_corner and area <= 0.014) or (near_edge and area <= 0.008)
+
+
+def _is_potential_knowledge_candidate(figure: NormalizedFigure) -> bool:
+    text = f"{figure.content_type} {figure.label}".lower()
+    return any(
+        token in text
+        for token in (
+            "chart",
+            "plot",
+            "graph",
+            "axis",
+            "curve",
+            "diagram",
+            "table",
+            "formula",
+            "mixed",
+            "screenshot",
+            "screen",
+            "photo",
+            "image",
+            "figure",
+            "flow",
+            "architecture",
+            "流程",
+            "架构",
+            "截图",
+            "公式",
+            "坐标",
+            "曲线",
+            "图表",
+            "示意",
+            "结构",
+        )
+    )
 
 
 def _pixel_box(bbox: list[float], width: int, height: int) -> tuple[int, int, int, int]:

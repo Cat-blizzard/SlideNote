@@ -23,12 +23,20 @@ def test_classify_normal_image_as_content():
     assert reason is None
 
 
-def test_refine_edge_logo_as_decorative():
-    role, ignored, reason = refine_image_role_for_placement("content", False, None, placement_area_ratio=0.025, near_page_edge=True)
+def test_refine_tiny_edge_asset_as_decorative():
+    role, ignored, reason = refine_image_role_for_placement("content", False, None, placement_area_ratio=0.015, near_page_edge=True)
 
     assert role == "decorative"
     assert ignored is True
     assert reason == "edge_decoration"
+
+
+def test_refine_keeps_medium_edge_content_image():
+    role, ignored, reason = refine_image_role_for_placement("content", False, None, placement_area_ratio=0.025, near_page_edge=True)
+
+    assert role == "content"
+    assert ignored is False
+    assert reason is None
 
 
 def test_pdf_page_like_bbox_detection():
@@ -78,11 +86,11 @@ def test_image_importance_ignores_repeated_edge_template_assets(tmp_path):
         pages=[
             SlidePage(
                 slide_id=1,
-                images=[ImageAsset(id="s1_img1", path="images/logo1.png", bbox=[0.02, 0.02, 0.12, 0.08], role="content")],
+                images=[ImageAsset(id="s1_img1", path="images/logo1.png", bbox=[0.02, 0.02, 0.10, 0.07], role="content")],
             ),
             SlidePage(
                 slide_id=2,
-                images=[ImageAsset(id="s2_img1", path="images/logo2.png", bbox=[0.02, 0.02, 0.12, 0.08], role="content")],
+                images=[ImageAsset(id="s2_img1", path="images/logo2.png", bbox=[0.02, 0.02, 0.10, 0.07], role="content")],
             ),
         ],
     )
