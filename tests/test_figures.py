@@ -161,6 +161,118 @@ def test_figure_crop_skips_structured_text_regions(tmp_path):
     assert skipped[0]["reason"] == "structured_text_region"
 
 
+def test_figure_crop_skips_decorative_logo_candidates(tmp_path):
+    screenshot = tmp_path / "screenshots" / "slide6.png"
+    screenshot.parent.mkdir()
+    Image.new("RGB", (1000, 600), "white").save(screenshot)
+    target = select_figure_targets(
+        Deck(source_path="lecture.pdf", source_type="pdf", pages=[SlidePage(slide_id=6, page_screenshot="screenshots/slide6.png")])
+    )[0]
+
+    crops, _, skipped = _crop_figures(
+        source_path=screenshot,
+        output_root=tmp_path,
+        figures_dir=tmp_path / "figures",
+        target=target,
+        figures=[{"bbox": [0.02, 0.02, 0.18, 0.16], "label": "school logo", "content_type": "logo", "confidence": 0.98}],
+        max_crops_per_page=3,
+        min_confidence=0.45,
+        min_area=20_000,
+    )
+
+    assert crops == []
+    assert skipped[0]["reason"] == "decorative_candidate"
+
+
+def test_figure_crop_skips_edge_template_candidates(tmp_path):
+    screenshot = tmp_path / "screenshots" / "slide7.png"
+    screenshot.parent.mkdir()
+    Image.new("RGB", (1000, 600), "white").save(screenshot)
+    target = select_figure_targets(
+        Deck(source_path="lecture.pdf", source_type="pdf", pages=[SlidePage(slide_id=7, page_screenshot="screenshots/slide7.png")])
+    )[0]
+
+    crops, _, skipped = _crop_figures(
+        source_path=screenshot,
+        output_root=tmp_path,
+        figures_dir=tmp_path / "figures",
+        target=target,
+        figures=[{"bbox": [0.01, 0.03, 0.13, 0.15], "label": "corner mark", "content_type": "unknown", "confidence": 0.96}],
+        max_crops_per_page=3,
+        min_confidence=0.45,
+        min_area=2_000,
+    )
+
+    assert crops == []
+    assert skipped[0]["reason"] == "edge_template_candidate"
+
+
+def test_figure_crop_expands_when_foreground_touches_edges(tmp_path):
+    screenshot = tmp_path / "screenshots" / "slide8.png"
+    screenshot.parent.mkdir()
+    image = Image.new("RGB", (1000, 600), "white")
+    draw = ImageDraw.Draw(image)
+    draw.line((200, 120, 200, 330), fill="black", width=6)
+    draw.line((498, 120, 498, 330), fill="black", width=6)
+    draw.line((220, 300, 470, 150), fill="black", width=5)
+    image.save(screenshot)
+    target = select_figure_targets(
+        Deck(source_path="lecture.pdf", source_type="pdf", pages=[SlidePage(slide_id=8, page_screenshot="screenshots/slide8.png")])
+    )[0]
+
+    crops, records, skipped = _crop_figures(
+        source_path=screenshot,
+        output_root=tmp_path,
+        figures_dir=tmp_path / "figures",
+        target=target,
+        figures=[{"bbox": [0.2, 0.2, 0.5, 0.55], "label": "ROC curve", "content_type": "chart", "confidence": 0.92}],
+        max_crops_per_page=3,
+        min_confidence=0.45,
+        min_area=20_000,
+    )
+
+    assert skipped == []
+    assert len(crops) == 1
+    assert crops[0].crop_quality == "expanded_edge_touch"
+    assert crops[0].crop_bbox[0] < 0.2
+    assert crops[0].crop_bbox[2] > 0.5
+    assert "expanded_left_edge_touch" in records[0]["crop_warnings"]
+
+
+def test_figure_crop_merges_nearby_chart_title(tmp_path):
+    screenshot = tmp_path / "screenshots" / "slide9.png"
+    screenshot.parent.mkdir()
+    Image.new("RGB", (1000, 600), "white").save(screenshot)
+    target = select_figure_targets(
+        Deck(source_path="lecture.pdf", source_type="pdf", pages=[SlidePage(slide_id=9, page_screenshot="screenshots/slide9.png")])
+    )[0]
+    page = SlidePage(
+        slide_id=9,
+        page_width=1000,
+        page_height=600,
+        text_blocks=[TextBlock(id="s9_t1", type="caption", content="Figure 2 ROC curve", bbox=[0.2, 0.14, 0.62, 0.18])],
+    )
+
+    crops, records, skipped = _crop_figures(
+        source_path=screenshot,
+        output_root=tmp_path,
+        figures_dir=tmp_path / "figures",
+        target=target,
+        figures=[{"bbox": [0.2, 0.2, 0.62, 0.65], "label": "ROC curve", "content_type": "chart", "confidence": 0.9}],
+        max_crops_per_page=3,
+        min_confidence=0.45,
+        min_area=20_000,
+        page=page,
+        source_type="pdf",
+    )
+
+    assert skipped == []
+    assert len(crops) == 1
+    assert crops[0].crop_quality == "merged_caption"
+    assert crops[0].crop_bbox[1] == 0.14
+    assert "merged_nearby_title" in records[0]["crop_warnings"]
+
+
 def test_figure_prompt_includes_semantic_layout_context(tmp_path):
     page = SlidePage(
         slide_id=5,

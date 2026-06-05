@@ -326,7 +326,15 @@ def _crop_figures(
                 normalized_candidates.append((candidate, normalized))
             all_figures = [normalized for _, normalized in normalized_candidates]
             for candidate, normalized in normalized_candidates:
-                refinement = _refine_crop_candidate(image, normalized, all_figures, width=width, height=height)
+                refinement = _refine_crop_candidate(
+                    image,
+                    normalized,
+                    all_figures,
+                    width=width,
+                    height=height,
+                    page=page,
+                    source_type=source_type,
+                )
                 if refinement.blocking_reason:
                     skipped.append(
                         {
@@ -540,6 +548,8 @@ def _refine_crop_candidate(
     all_figures: list[NormalizedFigure],
     width: int,
     height: int,
+    page: SlidePage | None = None,
+    source_type: str | None = None,
 ) -> CropRefinement:
     original_bbox = _round_bbox(figure.bbox)
     warnings: list[str] = []
@@ -563,6 +573,29 @@ def _refine_crop_candidate(
         quality = "trimmed_neighbor_overlap"
 
     crop = image.crop(_pixel_box(bbox, width, height))
+    touched_edges = _foreground_touching_edges(crop)
+    if touched_edges:
+        expanded = _expand_bbox_for_edges(bbox, touched_edges, width=width, height=height)
+        if expanded != bbox:
+            bbox = expanded
+            warnings.extend(f"expanded_{edge}_edge_touch" for edge in touched_edges)
+            quality = _prefer_quality(quality, "expanded_edge_touch")
+            crop = image.crop(_pixel_box(bbox, width, height))
+
+    semantic_bbox = _semantic_group_bbox_for_candidate(page, figure, source_type)
+    if semantic_bbox and _bbox_area(semantic_bbox) <= 0.72 and _bbox_area(semantic_bbox) > _bbox_area(bbox):
+        bbox = _round_bbox(_union_bbox([bbox, semantic_bbox]))
+        warnings.append("merged_semantic_group")
+        quality = _prefer_quality(quality, "merged_semantic_group")
+        crop = image.crop(_pixel_box(bbox, width, height))
+
+    merged_context = _merge_nearby_context_boxes(bbox, page, source_type, figure)
+    if merged_context[0] != bbox:
+        bbox = merged_context[0]
+        warnings.extend(merged_context[1])
+        quality = _prefer_quality(quality, "merged_caption")
+        crop = image.crop(_pixel_box(bbox, width, height))
+
     bands = _foreground_row_bands(crop)
     trim_bottom = _bottom_trim_from_bands(bands, crop.height)
     if trim_bottom is not None:
@@ -593,6 +626,191 @@ def _refine_crop_candidate(
 
     refined = NormalizedFigure(bbox=_round_bbox(bbox), label=figure.label, content_type=figure.content_type, confidence=figure.confidence)
     return CropRefinement(figure=refined, original_bbox=original_bbox, quality=quality, warnings=warnings)
+
+
+def _prefer_quality(current: str, candidate: str) -> str:
+    if current == "ok":
+        return candidate
+    return current
+
+
+def _foreground_touching_edges(crop: Image.Image) -> list[str]:
+    width, height = crop.width, crop.height
+    if width <= 4 or height <= 4:
+        return []
+    background = _estimate_background(crop)
+    pixels = crop.load()
+    margin_x = max(3, int(round(width * 0.018)))
+    margin_y = max(3, int(round(height * 0.018)))
+    center_area = max(1, (width - 2 * margin_x) * (height - 2 * margin_y))
+
+    def density(x_start: int, x_end: int, y_start: int, y_end: int) -> float:
+        total = max(1, (x_end - x_start) * (y_end - y_start))
+        foreground = 0
+        for y in range(y_start, y_end):
+            for x in range(x_start, x_end):
+                if _is_foreground_pixel(pixels[x, y], background):
+                    foreground += 1
+        return foreground / total
+
+    center_density = density(margin_x, max(margin_x + 1, width - margin_x), margin_y, max(margin_y + 1, height - margin_y)) if center_area else 0.0
+    threshold = max(0.025, min(0.12, center_density * 0.42))
+    edges = []
+    if density(0, margin_x, 0, height) >= threshold:
+        edges.append("left")
+    if density(width - margin_x, width, 0, height) >= threshold:
+        edges.append("right")
+    if density(0, width, 0, margin_y) >= threshold:
+        edges.append("top")
+    if density(0, width, height - margin_y, height) >= threshold:
+        edges.append("bottom")
+    return edges
+
+
+def _expand_bbox_for_edges(bbox: list[float], edges: list[str], width: int, height: int) -> list[float]:
+    x1, y1, x2, y2 = bbox
+    x_margin = max(0.012, 16 / max(1, width))
+    y_margin = max(0.012, 16 / max(1, height))
+    if "left" in edges:
+        x1 -= x_margin
+    if "right" in edges:
+        x2 += x_margin
+    if "top" in edges:
+        y1 -= y_margin
+    if "bottom" in edges:
+        y2 += y_margin
+    return _round_bbox([x1, y1, x2, y2])
+
+
+def _semantic_group_bbox_for_candidate(page: SlidePage | None, figure: NormalizedFigure, source_type: str | None) -> list[float] | None:
+    if page is None or not page.semantic_groups or not page.semantic_blocks:
+        return None
+    block_boxes = {
+        str(block.get("id")): _round_bbox([float(value) for value in block["bbox"]])
+        for block in page.semantic_blocks
+        if isinstance(block.get("id"), str) and _looks_normalized_bbox(block.get("bbox"))
+    }
+    if not block_boxes:
+        return None
+    figure_area = max(_bbox_area(figure.bbox), 0.0001)
+    best: list[float] | None = None
+    best_score = 0.0
+    for group in page.semantic_groups:
+        block_ids = [str(item) for item in group.get("block_ids") or []]
+        boxes = [block_boxes[item] for item in block_ids if item in block_boxes]
+        if not boxes:
+            continue
+        group_bbox = _round_bbox(_union_bbox(boxes))
+        group_area = _bbox_area(group_bbox)
+        if group_area <= figure_area or group_area > 0.72:
+            continue
+        overlap = _intersection_area(figure.bbox, group_bbox) / figure_area
+        if overlap < 0.45:
+            continue
+        policy = str(group.get("crop_policy") or "")
+        scene = str(group.get("scene_type") or "")
+        if not any(token in f"{policy} {scene}" for token in ("group", "visual", "figure", "code", "table", "concept")):
+            continue
+        score = overlap / max(group_area, 0.0001)
+        if score > best_score:
+            best = group_bbox
+            best_score = score
+    return best
+
+
+def _merge_nearby_context_boxes(
+    bbox: list[float],
+    page: SlidePage | None,
+    source_type: str | None,
+    figure: NormalizedFigure,
+) -> tuple[list[float], list[str]]:
+    if page is None:
+        return bbox, []
+    context_boxes = _nearby_context_text_boxes(page, source_type, figure)
+    if not context_boxes:
+        return bbox, []
+    merged = list(bbox)
+    warnings: list[str] = []
+    for box, role in context_boxes:
+        if _should_merge_context_box(merged, box, role, figure):
+            merged = _round_bbox(_union_bbox([merged, box]))
+            warning = "merged_nearby_title" if role == "title" else "merged_nearby_legend"
+            if warning not in warnings:
+                warnings.append(warning)
+    return merged, warnings
+
+
+def _nearby_context_text_boxes(page: SlidePage, source_type: str | None, figure: NormalizedFigure) -> list[tuple[list[float], str]]:
+    boxes: list[tuple[list[float], str]] = []
+    for block in page.text_blocks:
+        bbox = _normalize_page_bbox(block.bbox, page, source_type)
+        if not bbox:
+            continue
+        role = _context_text_role(block.type, block.content, figure)
+        if role:
+            boxes.append((bbox, role))
+    for block in page.semantic_blocks:
+        if not _looks_normalized_bbox(block.get("bbox")):
+            continue
+        role = _context_text_role(str(block.get("block_type") or ""), str(block.get("preview") or ""), figure)
+        if role:
+            boxes.append((_round_bbox([float(value) for value in block["bbox"]]), role))
+    return boxes
+
+
+def _context_text_role(block_type: str, content: str, figure: NormalizedFigure) -> str | None:
+    text = " ".join(str(content or "").split())
+    if not text:
+        return None
+    lowered = text.lower()
+    type_text = str(block_type or "").lower()
+    if len(text) > 120 and "title" not in type_text and "caption" not in type_text:
+        return None
+    title_tokens = ("title", "heading", "caption", "subtitle", "图", "表", "figure", "fig.", "chart", "diagram")
+    legend_tokens = ("legend", "图例", "axis", "坐标", "曲线", "roc", "loss", "accuracy", "precision", "recall", "x轴", "y轴")
+    if any(token in type_text for token in ("title", "heading", "caption")) or any(token in lowered for token in title_tokens):
+        return "title"
+    if _is_chart_like(figure.content_type) and any(token in lowered for token in legend_tokens):
+        return "legend"
+    if _is_chart_like(figure.content_type) and len(text) <= 48:
+        return "legend"
+    return None
+
+
+def _should_merge_context_box(figure_bbox: list[float], context_bbox: list[float], role: str, figure: NormalizedFigure) -> bool:
+    horizontal_overlap = _horizontal_overlap_ratio(figure_bbox, context_bbox)
+    vertical_overlap = _vertical_overlap_ratio(figure_bbox, context_bbox)
+    x_gap = max(0.0, max(context_bbox[0] - figure_bbox[2], figure_bbox[0] - context_bbox[2]))
+    y_gap = max(0.0, max(context_bbox[1] - figure_bbox[3], figure_bbox[1] - context_bbox[3]))
+    if role == "title":
+        if y_gap <= 0.06 and horizontal_overlap >= 0.28:
+            return True
+        return _is_chart_like(figure.content_type) and y_gap <= 0.075 and horizontal_overlap >= 0.18
+    if role == "legend":
+        if y_gap <= 0.055 and horizontal_overlap >= 0.18:
+            return True
+        return x_gap <= 0.045 and vertical_overlap >= 0.22
+    return False
+
+
+def _vertical_overlap_ratio(left: list[float], right: list[float]) -> float:
+    overlap = max(0.0, min(left[3], right[3]) - max(left[1], right[1]))
+    denom = max(0.0001, min(left[3] - left[1], right[3] - right[1]))
+    return overlap / denom
+
+
+def _union_bbox(boxes: list[list[float]]) -> list[float]:
+    return [
+        min(box[0] for box in boxes),
+        min(box[1] for box in boxes),
+        max(box[2] for box in boxes),
+        max(box[3] for box in boxes),
+    ]
+
+
+def _is_chart_like(content_type: str) -> bool:
+    lowered = content_type.strip().lower()
+    return any(token in lowered for token in ("chart", "plot", "graph", "axis", "curve", "diagram", "table", "formula", "mixed"))
 
 
 def _limit_bbox_before_next_candidate(figure: NormalizedFigure, all_figures: list[NormalizedFigure], height: int) -> list[float]:
@@ -751,6 +969,9 @@ def _skip_reason(
     min_confidence: float,
     min_area: int,
 ) -> str | None:
+    decorative_reason = _decorative_candidate_reason(figure)
+    if decorative_reason:
+        return decorative_reason
     if figure.confidence < min_confidence:
         return "low_confidence"
     x1, y1, x2, y2 = figure.bbox
@@ -764,6 +985,24 @@ def _skip_reason(
     if any(_iou(figure.bbox, other) >= 0.75 for other in accepted):
         return "overlap_duplicate"
     return None
+
+
+def _decorative_candidate_reason(figure: NormalizedFigure) -> str | None:
+    text = f"{figure.content_type} {figure.label}".lower()
+    if any(token in text for token in ("logo", "watermark", "decorative", "decoration", "background", "icon", "页码", "图标", "装饰", "背景", "水印")):
+        return "decorative_candidate"
+    if _edge_template_like(figure.bbox) and not _is_chart_like(figure.content_type):
+        return "edge_template_candidate"
+    return None
+
+
+def _edge_template_like(bbox: list[float]) -> bool:
+    area = _bbox_area(bbox)
+    if area > 0.028:
+        return False
+    near_edge = bbox[0] <= 0.08 or bbox[1] <= 0.08 or bbox[2] >= 0.92 or bbox[3] >= 0.92
+    near_corner = (bbox[0] <= 0.08 or bbox[2] >= 0.92) and (bbox[1] <= 0.08 or bbox[3] >= 0.92)
+    return near_corner or (near_edge and area <= 0.016)
 
 
 def _pixel_box(bbox: list[float], width: int, height: int) -> tuple[int, int, int, int]:
