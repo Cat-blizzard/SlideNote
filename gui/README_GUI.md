@@ -15,6 +15,7 @@ SlideNote Studio is a Streamlit interface for `python -m slidenote build` and `p
 - Keep progress, ETA, Doctor readiness, usage, and cost details in compact diagnostics panels.
 - Generate a study pack from the Notes workspace: `review.md`, `exam.md`, `exam.json`, `exam.html`, and related files.
 - Download `notes.zip`, `notes.md`, `coverage.md`, export files, or the complete output ZIP.
+- Switch to **Textbook library**, upload a PDF textbook, and build a RAG-ready corpus. The corpus is not connected to note generation yet.
 
 For sharing Markdown notes, prefer `notes.zip`; it contains both `notes.md` and `notes.assets/` so images render on another computer.
 
@@ -49,6 +50,16 @@ streamlit run gui/app.py
 Start with **Local preview**. It checks parsing and basic output without any API calls. The first-run check passes when the Notes workspace shows both `notes.md` and the shareable `notes.zip`.
 
 For production notes, use **Lecture quality**, enter a Text API key, keep Vision=`auto` for image-heavy slides, and add a Qwen/DashScope vision key. Scanned PDFs may also need OCR credentials.
+
+## Textbook Library
+
+Switch to **Textbook library** to upload a PDF textbook and run:
+
+```powershell
+python -m slidenote textbook-index <textbook.pdf> --out <output-dir> --ocr auto
+```
+
+The default `Auto scanned pages` mode extracts native PDF text first and only calls OCR for scanned or low-text pages. Outputs include `textbook_manifest.json`, `textbook_sections.json`, `textbook_chunks.jsonl`, and `textbook_report.md`. These are RAG preparation artifacts and do not change course-note generation yet.
 
 ## Study Pack
 

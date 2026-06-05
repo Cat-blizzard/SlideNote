@@ -31,6 +31,12 @@ python -m slidenote build lecture.pdf --out outputs\text-only --provider deepsee
 python -m slidenote study-pack outputs\lecture --question-count 12
 ```
 
+把 PDF 教材构建成 RAG-ready 文档库：
+
+```powershell
+python -m slidenote textbook-index textbook.pdf --out outputs\textbook --ocr auto
+```
+
 生成 Word / PDF：
 
 ```powershell
@@ -54,6 +60,17 @@ python -m slidenote build lecture.pdf --out outputs\paper --export docx,pdf
 | `--parser` | `auto` | 可选解析器入口，普通用户不用改。 |
 | `--progress-json` | `<out>/progress.json` | GUI/自动化使用的进度文件。 |
 | `--quiet` | 关闭 | 不打印实时进度，但仍写 `progress.json`。 |
+
+## Textbook 参数
+
+`textbook-index` 是独立教材库入口，当前不会把教材内容混入笔记生成。
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `input` | 必填 | 输入 PDF 教材。v1 只支持 `.pdf`。 |
+| `--out` | `outputs/textbook` | 教材库输出目录。 |
+| `--ocr` | `auto` | `auto` 只 OCR 扫描页/低文本页；`off` 只用原生文本；`all` 全页 OCR。 |
+| `--quiet` | 关闭 | 不打印输出摘要。 |
 
 ## Preset
 

@@ -106,6 +106,17 @@ class StudioConfig:
     quiet: bool = True
 
 
+@dataclass(slots=True)
+class TextbookConfig:
+    input_path: Path
+    output_dir: Path
+    ocr: str = "auto"
+    ocr_provider: str = "baidu"
+    ocr_api_key: str | None = None
+    ocr_secret_key: str | None = None
+    quiet: bool = True
+
+
 def safe_run_name(filename: str) -> str:
     stem = Path(filename).stem.strip() or "slidenote"
     stem = SAFE_OUTPUT_RE.sub("_", stem).strip("._-") or "slidenote"
@@ -132,11 +143,11 @@ def needs_text_api(config: StudioConfig) -> bool:
     return config.preset == "lecture"
 
 
-def build_env(base_env: dict[str, str] | None, config: StudioConfig) -> dict[str, str]:
+def build_env(base_env: dict[str, str] | None, config: StudioConfig | TextbookConfig) -> dict[str, str]:
     env = dict(base_env or os.environ)
-    if needs_text_api(config) and config.api_key:
+    if isinstance(config, StudioConfig) and needs_text_api(config) and config.api_key:
         env[provider_env_key(config.provider)] = config.api_key
-    if needs_vision_api(config) and config.vision_api_key:
+    if isinstance(config, StudioConfig) and needs_vision_api(config) and config.vision_api_key:
         env[provider_env_key(config.vision_provider)] = config.vision_api_key
     if config.ocr != "off" and config.ocr_api_key:
         env[f"{config.ocr_provider.upper()}_OCR_API_KEY"] = config.ocr_api_key
@@ -182,6 +193,23 @@ def build_slidenote_command(config: StudioConfig) -> list[str]:
 def build_study_pack_command(output_dir: Path, question_count: int = 12, quiet: bool = True) -> list[str]:
     cmd = [sys.executable, "-m", "slidenote", "study-pack", str(output_dir), "--question-count", str(max(1, int(question_count)))]
     if quiet:
+        cmd.append("--quiet")
+    return cmd
+
+
+def build_textbook_command(config: TextbookConfig) -> list[str]:
+    cmd = [
+        sys.executable,
+        "-m",
+        "slidenote",
+        "textbook-index",
+        str(config.input_path),
+        "--out",
+        str(config.output_dir),
+        "--ocr",
+        config.ocr,
+    ]
+    if config.quiet:
         cmd.append("--quiet")
     return cmd
 
@@ -252,5 +280,19 @@ def discover_outputs(output_dir: Path) -> dict[str, Path]:
         "exam": "exam.md",
         "exam_json": "exam.json",
         "exam_html": "exam.html",
+    }
+    return {key: output_dir / filename for key, filename in names.items() if (output_dir / filename).exists()}
+
+
+def discover_textbook_outputs(output_dir: Path) -> dict[str, Path]:
+    names = {
+        "manifest": "textbook_manifest.json",
+        "pages": "textbook_pages.jsonl",
+        "toc": "textbook_toc.json",
+        "sections": "textbook_sections.json",
+        "chunks": "textbook_chunks.jsonl",
+        "index": "textbook_index.json",
+        "report": "textbook_report.md",
+        "ocr_usage": "ocr_usage.json",
     }
     return {key: output_dir / filename for key, filename in names.items() if (output_dir / filename).exists()}
