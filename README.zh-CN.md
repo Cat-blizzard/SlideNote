@@ -262,6 +262,10 @@ SlideNote 采用双许可证结构：
 - 源代码使用 GNU Affero General Public License v3.0 or later（`AGPL-3.0-or-later`）。完整文本见 [LICENSE](LICENSE)。
 - 文档和示例教学材料使用 Creative Commons Attribution 4.0 International（`CC BY 4.0`）。完整文本见 [LICENSES/CC-BY-4.0.txt](LICENSES/CC-BY-4.0.txt)。
 
+我们选择 AGPL，是因为 SlideNote 的核心价值不只是调用某个模型，而是课件解析、视觉理解、插图处理、笔记生成和学习包整理这一整套流程。我们希望这个能力保持开放：任何人都可以免费使用、学习、修改和改进它；如果有人基于 SlideNote 做了修改版并发布，或把修改版作为网络服务提供给用户，也应该把对应源码开放出来，让社区能看到并受益于这些改进。
+
+AGPL 不禁止商业使用，也不限制个人、学生、老师或团队本地部署使用。它主要要求是：当你分发修改版，或以网络服务形式提供修改版时，需要遵守 AGPL 的源码开放义务。用户用 SlideNote 生成的笔记、复习资料和其它输出内容，不会因为使用了 SlideNote 就自动变成 AGPL。
+
 SlideNote 名称、logo 和其它品牌素材不授权作独立复用。具体范围见 [NOTICE](NOTICE)。
 
 ## 致谢
