@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ def rank_deck_images(deck: Deck, output_root: Path, mode: str = "local", stage: 
     if mode != "local":
         raise ValueError("image ranking mode must be one of: off, local")
 
+    template_records = _mark_repeated_template_assets(deck, output_root)
     page_entries: list[dict[str, Any]] = []
     image_records: list[dict[str, Any]] = []
     for page in deck.pages:
@@ -57,7 +59,9 @@ def rank_deck_images(deck: Deck, output_root: Path, mode: str = "local", stage: 
             "ranked_images": sum(1 for record in image_records if record.get("importance_rank") is not None),
             "high_value_images": sum(1 for record in image_records if record["importance_score"] >= 0.65 and not record["ignored"]),
             "ignored_images": sum(1 for record in image_records if record["ignored"]),
+            "template_images_ignored": len(template_records),
         },
+        "template_filter": template_records,
         "pages": page_entries,
     }
 
@@ -149,6 +153,101 @@ def _score_image(page: SlidePage, image: ImageAsset, output_root: Path) -> dict[
         reasons.append("mixed_page")
 
     return _record(page, image, max(0.0, min(1.0, score)), reasons, output_root)
+
+
+def _mark_repeated_template_assets(deck: Deck, output_root: Path) -> list[dict[str, Any]]:
+    groups: dict[str, list[tuple[SlidePage, ImageAsset, list[float] | None]]] = {}
+    for page in deck.pages:
+        for image in page.images:
+            if image.ignored or image.role in {"page_image", "figure_crop", "composite_figure", "composite_child"}:
+                continue
+            fingerprint = _image_fingerprint(image, output_root)
+            if not fingerprint:
+                continue
+            groups.setdefault(fingerprint, []).append((page, image, _normalized_image_bbox(page, image, deck.source_type)))
+
+    records: list[dict[str, Any]] = []
+    for fingerprint, entries in groups.items():
+        if len(entries) < 2:
+            continue
+        template_like = [(page, image, bbox) for page, image, bbox in entries if _template_like_image(image, bbox, output_root)]
+        if len(entries) >= 3:
+            selected = template_like
+        elif len(template_like) == len(entries):
+            selected = template_like
+        else:
+            selected = []
+        for page, image, bbox in selected:
+            image.ignored = True
+            image.role = "decorative" if image.role in {None, "content"} else image.role
+            image.ignore_reason = "repeated_template_asset"
+            records.append(
+                {
+                    "slide_id": page.slide_id,
+                    "image_id": image.id,
+                    "path": image.path,
+                    "fingerprint": fingerprint[:16],
+                    "bbox": bbox,
+                    "repeat_count": len(entries),
+                    "reason": "repeated_template_asset",
+                }
+            )
+    return records
+
+
+def _image_fingerprint(image: ImageAsset, output_root: Path) -> str | None:
+    path = output_root / image.path
+    if path.exists() and path.is_file():
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            return f"sha256:{digest}"
+        except OSError:
+            pass
+    if image.file_size or image.width or image.height:
+        return f"meta:{image.file_size}:{image.width}:{image.height}:{Path(image.path).name.lower()}"
+    return None
+
+
+def _template_like_image(image: ImageAsset, bbox: list[float] | None, output_root: Path) -> bool:
+    if bbox:
+        area = max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
+        near_edge = bbox[0] <= 0.08 or bbox[1] <= 0.08 or bbox[2] >= 0.92 or bbox[3] >= 0.92
+        near_corner = (bbox[0] <= 0.12 or bbox[2] >= 0.88) and (bbox[1] <= 0.12 or bbox[3] >= 0.88)
+        if area <= 0.035 and near_corner:
+            return True
+        if area <= 0.018 and near_edge:
+            return True
+    width, height = _image_dimensions(image, output_root)
+    if width and height and width * height <= 28_000:
+        return True
+    caption = (image.caption or "").lower()
+    return any(token in caption for token in ("logo", "watermark", "decorative", "图标", "装饰", "水印"))
+
+
+def _normalized_image_bbox(page: SlidePage, image: ImageAsset, source_type: str) -> list[float] | None:
+    bbox = image.crop_bbox or image.bbox
+    if not bbox or len(bbox) != 4:
+        return None
+    try:
+        values = [float(value) for value in bbox]
+    except (TypeError, ValueError):
+        return None
+    if all(-0.001 <= value <= 1.001 for value in values):
+        x1, y1, x2, y2 = values
+        return [max(0.0, min(1.0, value)) for value in [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]]
+    if not page.page_width or not page.page_height:
+        return None
+    x1, y1, third, fourth = values
+    if source_type == "pptx":
+        x2, y2 = x1 + third, y1 + fourth
+    else:
+        x2, y2 = third, fourth
+    return [
+        max(0.0, min(1.0, x1 / page.page_width)),
+        max(0.0, min(1.0, y1 / page.page_height)),
+        max(0.0, min(1.0, x2 / page.page_width)),
+        max(0.0, min(1.0, y2 / page.page_height)),
+    ]
 
 
 def _record(page: SlidePage, image: ImageAsset, score: float, reasons: list[str], output_root: Path) -> dict[str, Any]:
