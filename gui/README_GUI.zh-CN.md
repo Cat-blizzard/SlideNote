@@ -15,6 +15,7 @@ SlideNote Studio 是一个基于 Streamlit 的图形界面。它包装 `python -
 - 进度、ETA、Doctor、用量和成本信息收在紧凑的诊断区里。
 - 在 Notes workspace 基于已有输出目录生成复习包：`review.md`、`exam.md`、`exam.json`、`exam.html` 等。
 - 下载 `notes.zip`、`notes.md`、`coverage.md`、导出文件或完整结果 ZIP。
+- 切换到 **Textbook library**，上传 PDF 教材，构建 RAG-ready 教材库；该库当前不会自动参与笔记生成。
 
 分享 Markdown 时优先下载 `notes.zip`。压缩包里包含 `notes.md` 和 `notes.assets/`，别人解压后图片才能正常显示。
 
@@ -49,6 +50,16 @@ streamlit run gui/app.py
 先选择 **Local preview**，上传一个课件并运行。这个模式只测试本地解析和基础输出，不会调用 API。第一次验证通过的标准是 Notes workspace 能看到 `notes.md` 和可分享的 `notes.zip`。
 
 正式生成时选择 **Lecture quality**，填写 Text API key；如果课件图表多，保留 Vision=`auto` 并填写 Qwen/DashScope key。扫描版 PDF 可能还需要 OCR key 和 secret。
+
+## 教材库
+
+顶部切换到 **Textbook library** 后，可以上传 PDF 教材并运行：
+
+```powershell
+python -m slidenote textbook-index <教材.pdf> --out <输出目录> --ocr auto
+```
+
+默认 `Auto scanned pages` 会先抽 PDF 原生文本，只对扫描页或低文本页调用 OCR。输出包括 `textbook_manifest.json`、`textbook_sections.json`、`textbook_chunks.jsonl` 和 `textbook_report.md`。这些文件是后续 RAG 的准备产物，当前不会改变课件笔记生成结果。
 
 ## 复习包
 

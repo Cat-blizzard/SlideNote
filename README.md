@@ -96,6 +96,16 @@ SlideNote Studio is a Streamlit interface around the same CLI pipeline. It suppo
 
 See [gui/README_GUI.md](gui/README_GUI.md) and [gui/README_GUI.zh-CN.md](gui/README_GUI.zh-CN.md) for GUI details.
 
+## Textbook Library
+
+SlideNote can also build a RAG-ready corpus from a PDF textbook. This entrypoint only parses the textbook, detects the table of contents, maps sections to pages, and writes retrievable chunks; it is not connected to note generation yet.
+
+```powershell
+python -m slidenote textbook-index path\to\textbook.pdf --out outputs\textbook --ocr auto
+```
+
+`--ocr auto` extracts native PDF text first and only calls OCR for scanned or low-text pages. Use `--ocr off` for copyable digital textbooks.
+
 ## Experimental Claude Code Backend
 
 This branch, `experiment/claude-backend`, tests a Claude Code backend beside the stable `slidenote build` pipeline. SlideNote keeps the deterministic parts: parsing, image assets, source IDs, coverage, source maps, file writes, and reports. Claude Code receives a bounded agent pack, writes section notes, and can repair them based on coverage feedback.

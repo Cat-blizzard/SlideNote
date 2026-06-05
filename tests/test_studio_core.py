@@ -8,11 +8,14 @@ import pytest
 
 from gui.studio_core import (
     StudioConfig,
+    TextbookConfig,
     build_env,
     build_slidenote_command,
     build_study_pack_command,
+    build_textbook_command,
     command_for_display,
     discover_outputs,
+    discover_textbook_outputs,
     performance_tips,
     safe_run_name,
 )
@@ -76,6 +79,28 @@ def test_study_pack_command_is_separate_from_build(tmp_path: Path):
     assert env["DEEPSEEK_API_KEY"] == "deep-key"
 
 
+def test_textbook_command_uses_env_for_ocr_keys(tmp_path: Path):
+    cfg = TextbookConfig(
+        input_path=tmp_path / "book.pdf",
+        output_dir=tmp_path / "textbook",
+        ocr="auto",
+        ocr_api_key="ocr-key",
+        ocr_secret_key="ocr-secret",
+    )
+
+    cmd = build_textbook_command(cfg)
+    env = build_env({}, cfg)
+    display = command_for_display(cmd)
+
+    assert cmd[:4] == [sys.executable, "-m", "slidenote", "textbook-index"]
+    assert cmd[cmd.index("--ocr") + 1] == "auto"
+    assert "--ocr-api-key" not in cmd
+    assert "--ocr-secret-key" not in cmd
+    assert "ocr-key" not in display
+    assert env["BAIDU_OCR_API_KEY"] == "ocr-key"
+    assert env["BAIDU_OCR_SECRET_KEY"] == "ocr-secret"
+
+
 def test_discover_outputs_includes_markdown_zip_and_exports(tmp_path: Path):
     for filename in ("notes.zip", "notes.toc.md", "notes.docx", "notes.pdf", "notes.tex"):
         (tmp_path / filename).write_bytes(b"x")
@@ -87,6 +112,17 @@ def test_discover_outputs_includes_markdown_zip_and_exports(tmp_path: Path):
     assert outputs["docx"] == tmp_path / "notes.docx"
     assert outputs["pdf"] == tmp_path / "notes.pdf"
     assert outputs["latex"] == tmp_path / "notes.tex"
+
+
+def test_discover_textbook_outputs(tmp_path: Path):
+    for filename in ("textbook_manifest.json", "textbook_chunks.jsonl", "textbook_report.md"):
+        (tmp_path / filename).write_text("{}", encoding="utf-8")
+
+    outputs = discover_textbook_outputs(tmp_path)
+
+    assert outputs["manifest"] == tmp_path / "textbook_manifest.json"
+    assert outputs["chunks"] == tmp_path / "textbook_chunks.jsonl"
+    assert outputs["report"] == tmp_path / "textbook_report.md"
 
 
 def test_local_preset_does_not_require_api_env(tmp_path: Path):
@@ -155,6 +191,7 @@ def test_gui_workbench_surface_replaces_hero_cards():
     assert "hero-card" not in source
     assert "Run settings" not in source
     assert "Notes workspace" in source
+    assert "Textbook library" in source
     assert "Usage & diagnostics" in source
     assert "_render_empty_upload_panel" in source
 

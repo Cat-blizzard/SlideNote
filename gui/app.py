@@ -28,11 +28,14 @@ except Exception:  # pragma: no cover - GUI fallback only
 from gui.studio_core import (
     PROVIDER_ENV_KEYS,
     StudioConfig,
+    TextbookConfig,
     build_env,
     build_slidenote_command,
     build_study_pack_command,
+    build_textbook_command,
     command_for_display,
     discover_outputs,
+    discover_textbook_outputs,
     needs_text_api,
     performance_tips,
     progress_percent,
@@ -60,6 +63,10 @@ def _run_simplified_app() -> None:
     _style()
     _ensure_dirs()
     _render_top_bar()
+    mode = st.radio("Workspace", ["Course notes", "Textbook library"], horizontal=True, label_visibility="collapsed")
+    if mode == "Textbook library":
+        _render_textbook_library()
+        return
 
     uploaded = st.session_state.get("source_upload")
     if uploaded is None:
@@ -227,6 +234,70 @@ def _render_empty_upload_panel() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def _render_textbook_library() -> None:
+    left, right = st.columns([0.36, 0.64], gap="large")
+    with left:
+        st.markdown("### Textbook source")
+        uploaded = st.file_uploader(
+            "Upload textbook PDF",
+            type=["pdf"],
+            key="textbook_upload",
+            label_visibility="collapsed",
+        )
+        if uploaded is not None:
+            _render_source_file(uploaded)
+
+        st.markdown("### Build library")
+        ocr_label = st.selectbox("OCR", ["Auto scanned pages", "Off", "All pages"], index=0)
+        ocr_mode = {"Auto scanned pages": "auto", "Off": "off", "All pages": "all"}[ocr_label]
+        with st.expander("OCR API key", expanded=ocr_mode != "off"):
+            ocr_api_key = st.text_input("OCR API key / app id", type="password", key="textbook_ocr_api_key")
+            ocr_secret_key = st.text_input("OCR secret / app key", type="password", key="textbook_ocr_secret_key")
+        preview_config = TextbookConfig(
+            input_path=ROOT / "textbook.pdf",
+            output_dir=OUTPUTS_DIR / "textbook_preview",
+            ocr=ocr_mode,
+            ocr_api_key=ocr_api_key or None,
+            ocr_secret_key=ocr_secret_key or None,
+        )
+        ocr_status = _ocr_status(ocr_mode != "off", ocr_api_key, ocr_secret_key, "baidu")
+        _render_chip_row(
+            [
+                ("input", "PDF", "neutral"),
+                ("ocr", ocr_mode, "good" if ocr_mode == "auto" else "neutral"),
+                ("ocr key", ocr_status[0], ocr_status[2]),
+                ("rag", "chunks only", "neutral"),
+            ]
+        )
+        if ocr_mode != "off" and ocr_status[0] == "Missing key":
+            st.markdown("<div class='inline-alert'>OCR auto only needs keys when scanned or low-text pages are found.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='inline-alert'>Textbook libraries are not connected to note generation yet.</div>", unsafe_allow_html=True)
+        with st.expander("Command", expanded=False):
+            st.code(command_for_display(build_textbook_command(preview_config)), language="bash")
+        run_clicked = st.button("Build textbook library", type="primary", use_container_width=True, disabled=uploaded is None)
+
+    if run_clicked and uploaded is not None:
+        try:
+            input_path, output_dir = _prepare_textbook_paths(uploaded)
+        except Exception as exc:
+            st.error(f"Could not prepare textbook folder: {exc}")
+            return
+        config = TextbookConfig(
+            input_path=input_path,
+            output_dir=output_dir,
+            ocr=ocr_mode,
+            ocr_api_key=ocr_api_key or None,
+            ocr_secret_key=ocr_secret_key or None,
+            quiet=True,
+        )
+        _run_textbook_index(config)
+        st.session_state["last_textbook_output_dir"] = str(output_dir)
+
+    last_output_dir = Path(st.session_state.get("last_textbook_output_dir", "")) if st.session_state.get("last_textbook_output_dir") else None
+    with right:
+        _render_textbook_workspace(last_output_dir)
 
 
 def _render_source_file(uploaded: Any) -> None:
@@ -583,6 +654,17 @@ def _prepare_run_paths(uploaded, output_base: Path, timestamped_subfolder: bool)
     return input_path, output_dir, progress_json
 
 
+def _prepare_textbook_paths(uploaded) -> tuple[Path, Path]:
+    if Path(uploaded.name).suffix.lower() != ".pdf":
+        raise ValueError("Textbook library v1 only accepts PDF files.")
+    run_name = f"textbook_{safe_run_name(uploaded.name)}_{int(time.time())}"
+    input_path = UPLOADS_DIR / f"{run_name}.pdf"
+    input_path.write_bytes(uploaded.getbuffer())
+    output_dir = OUTPUTS_DIR / "textbooks" / run_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return input_path, output_dir
+
+
 def _run_build(config: StudioConfig) -> None:
     cmd = build_slidenote_command(config)
     env = build_env(os.environ, config)
@@ -625,6 +707,27 @@ def _run_build(config: StudioConfig) -> None:
         st.success(f"Build finished. Output saved to: {config.output_dir}")
     else:
         st.error(f"Build failed with exit code {process.returncode}. Check the log above.")
+
+
+def _run_textbook_index(config: TextbookConfig) -> None:
+    cmd = build_textbook_command(config)
+    env = build_env(os.environ, config)
+    result = subprocess.run(
+        cmd,
+        cwd=str(ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.stdout:
+        st.code(result.stdout, language="text")
+    if result.returncode == 0:
+        st.success(f"Textbook library generated. Output saved to: {config.output_dir}")
+    else:
+        st.error(f"Textbook library build failed with exit code {result.returncode}.")
 
 
 def _run_study_pack(config: StudioConfig, question_count: int) -> None:
@@ -717,6 +820,68 @@ def _render_results(output_dir: Path, config: StudioConfig | None = None) -> Non
     _render_notes_workspace(output_dir, config)
     st.divider()
     _render_detail_results(output_dir, config)
+
+
+def _render_textbook_workspace(output_dir: Path | None) -> None:
+    st.markdown("### Textbook library")
+    if not output_dir or not output_dir.exists():
+        st.markdown(
+            """
+            <div class="notes-empty">
+              <div class="empty-kicker">Textbook</div>
+              <h2>Build a textbook library to inspect chunks here.</h2>
+              <p>The generated corpus is RAG-ready but not used by note generation yet.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+    outputs = discover_textbook_outputs(output_dir)
+    st.markdown(f"<div class='output-path'>Output saved to<br><code>{html.escape(str(output_dir))}</code></div>", unsafe_allow_html=True)
+    manifest = _read_json(outputs.get("manifest") or output_dir / "textbook_manifest.json") or {}
+    counts = manifest.get("counts") if isinstance(manifest.get("counts"), dict) else {}
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Pages", counts.get("pages", "—"))
+    c2.metric("Sections", counts.get("sections", "—"))
+    c3.metric("Chunks", counts.get("chunks", "—"))
+    c4.metric("OCR calls", counts.get("ocr_api_calls", "—"))
+    st.info("This textbook library is a RAG-ready corpus. It does not change generated notes yet.")
+    _render_textbook_downloads(output_dir, outputs)
+    report = outputs.get("report")
+    if report:
+        _render_markdown_file(report, "textbook_report.md")
+    chunks = _read_jsonl(outputs.get("chunks"))
+    if chunks:
+        with st.expander("Chunk preview", expanded=False):
+            st.dataframe(
+                [
+                    {
+                        "chunk_id": chunk.get("chunk_id"),
+                        "section": chunk.get("section_title"),
+                        "pages": f"{chunk.get('page_start')}-{chunk.get('page_end')}",
+                        "chars": chunk.get("text_chars"),
+                    }
+                    for chunk in chunks[:100]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
+def _render_textbook_downloads(output_dir: Path, outputs: dict[str, Path]) -> None:
+    labels = [
+        ("manifest", outputs.get("manifest")),
+        ("sections", outputs.get("sections")),
+        ("chunks", outputs.get("chunks")),
+        ("report", outputs.get("report")),
+    ]
+    cols = st.columns(4)
+    for col, (label, path) in zip(cols, labels):
+        if path:
+            col.download_button(path.name, data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path), use_container_width=True)
+        else:
+            col.button(label, disabled=True, use_container_width=True)
+    st.download_button("all textbook files", data=_zip_output_dir(output_dir), file_name=f"{output_dir.name}.zip", mime="application/zip", use_container_width=True)
 
 
 def _render_quick_downloads(output_dir: Path, outputs: dict[str, Path]) -> None:
@@ -1095,6 +1260,22 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def _read_jsonl(path: Path | None) -> list[dict[str, Any]]:
+    if not path or not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            rows.append(value)
+    return rows
 
 
 def _style() -> None:

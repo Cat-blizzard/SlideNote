@@ -19,6 +19,7 @@ from slidenote.doctor import render_doctor_report, run_doctor
 from slidenote.extractors import available_parser_choices
 from slidenote.llm import supported_provider_names
 from slidenote.study_pack_runner import run_study_pack
+from slidenote.textbook import TextbookIndexError, build_textbook_index
 from slidenote.utils import write_json
 
 
@@ -42,6 +43,8 @@ def main(argv: list[str] | None = None) -> int:
             return _doctor(args)
         if args.command == "study-pack":
             return _study_pack(args)
+        if args.command == "textbook-index":
+            return _textbook_index(args)
     except (UserFacingConfigError, AgentBackendError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
@@ -94,6 +97,12 @@ def _build_parser() -> argparse.ArgumentParser:
     study_pack.add_argument("build_out_dir", type=Path, help="Output directory from a previous slidenote build run.")
     study_pack.add_argument("--question-count", type=int, default=12, help="Target number of self-test questions.")
     study_pack.add_argument("--quiet", action="store_true", help="Suppress output summary.")
+
+    textbook = subparsers.add_parser("textbook-index", help="Build a RAG-ready textbook library from a PDF file.")
+    textbook.add_argument("input", type=Path, help="Input textbook PDF file.")
+    textbook.add_argument("--out", type=Path, default=Path("outputs") / "textbook", help="Output directory for textbook library artifacts.")
+    textbook.add_argument("--ocr", choices=["auto", "off", "all"], default="auto", help="Textbook OCR mode. auto only OCRs low-text/scanned pages.")
+    textbook.add_argument("--quiet", action="store_true", help="Suppress output summary.")
 
     agent_pack = subparsers.add_parser("agent-pack", help="Build a Claude Code-friendly agent pack without generating notes.")
     agent_pack.add_argument("input", type=Path, help="Input .pptx, .ppt, or .pdf file.")
@@ -232,6 +241,39 @@ def _build(args: argparse.Namespace) -> int:
 
 def _study_pack(args: argparse.Namespace) -> int:
     return run_study_pack(args)
+
+
+def _textbook_index(args: argparse.Namespace) -> int:
+    try:
+        build_textbook_index(args.input, args.out, ocr=args.ocr, quiet=args.quiet)
+    except TextbookIndexError as exc:
+        raise UserFacingConfigError(str(exc)) from exc
+    except RuntimeError as exc:
+        friendly = _friendly_textbook_error(str(exc), args)
+        if friendly:
+            raise UserFacingConfigError(friendly) from exc
+        raise
+    return 0
+
+
+def _friendly_textbook_error(message: str, args: argparse.Namespace) -> str | None:
+    if "Baidu OCR requires" in message:
+        return (
+            f"当前 `textbook-index --ocr {args.ocr}` 需要百度 OCR key，但没有找到可用凭据。\n"
+            "请设置环境变量：BAIDU_OCR_API_KEY 和 BAIDU_OCR_SECRET_KEY，或在 GUI 页面里填写 OCR API key 和 secret。\n"
+            "如果这本教材是可复制文字的电子 PDF，可先使用 `--ocr off` 构建教材库。"
+        )
+    if "Mathpix OCR requires" in message:
+        return (
+            f"当前 `textbook-index --ocr {args.ocr}` 需要 Mathpix OCR key，但没有找到可用凭据。\n"
+            "请设置环境变量：MATHPIX_APP_ID 和 MATHPIX_APP_KEY，或改用 `--ocr off`。"
+        )
+    if "Google Vision OCR requires" in message:
+        return (
+            f"当前 `textbook-index --ocr {args.ocr}` 需要 Google Vision OCR key，但没有找到可用凭据。\n"
+            "请设置环境变量：GOOGLE_VISION_API_KEY 或 GOOGLE_API_KEY，或改用 `--ocr off`。"
+        )
+    return None
 
 
 def _agent_pack(args: argparse.Namespace) -> int:
