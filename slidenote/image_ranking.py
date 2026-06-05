@@ -213,13 +213,10 @@ def _template_like_image(image: ImageAsset, bbox: list[float] | None, output_roo
         area = max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
         near_edge = bbox[0] <= 0.08 or bbox[1] <= 0.08 or bbox[2] >= 0.92 or bbox[3] >= 0.92
         near_corner = (bbox[0] <= 0.12 or bbox[2] >= 0.88) and (bbox[1] <= 0.12 or bbox[3] >= 0.88)
-        if area <= 0.035 and near_corner:
+        if area <= 0.018 and near_corner:
             return True
-        if area <= 0.018 and near_edge:
+        if area <= 0.01 and near_edge:
             return True
-    width, height = _image_dimensions(image, output_root)
-    if width and height and width * height <= 28_000:
-        return True
     caption = (image.caption or "").lower()
     return any(token in caption for token in ("logo", "watermark", "decorative", "图标", "装饰", "水印"))
 

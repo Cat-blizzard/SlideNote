@@ -197,7 +197,7 @@ def test_figure_crop_skips_edge_template_candidates(tmp_path):
         output_root=tmp_path,
         figures_dir=tmp_path / "figures",
         target=target,
-        figures=[{"bbox": [0.01, 0.03, 0.13, 0.15], "label": "corner mark", "content_type": "unknown", "confidence": 0.96}],
+        figures=[{"bbox": [0.01, 0.03, 0.10, 0.13], "label": "corner mark", "content_type": "unknown", "confidence": 0.96}],
         max_crops_per_page=3,
         min_confidence=0.45,
         min_area=2_000,
@@ -205,6 +205,29 @@ def test_figure_crop_skips_edge_template_candidates(tmp_path):
 
     assert crops == []
     assert skipped[0]["reason"] == "edge_template_candidate"
+
+
+def test_figure_crop_keeps_edge_knowledge_candidate(tmp_path):
+    screenshot = tmp_path / "screenshots" / "slide10.png"
+    screenshot.parent.mkdir()
+    Image.new("RGB", (1000, 600), "white").save(screenshot)
+    target = select_figure_targets(
+        Deck(source_path="lecture.pdf", source_type="pdf", pages=[SlidePage(slide_id=10, page_screenshot="screenshots/slide10.png")])
+    )[0]
+
+    crops, _, skipped = _crop_figures(
+        source_path=screenshot,
+        output_root=tmp_path,
+        figures_dir=tmp_path / "figures",
+        target=target,
+        figures=[{"bbox": [0.01, 0.03, 0.15, 0.15], "label": "small formula screenshot", "content_type": "screenshot", "confidence": 0.96}],
+        max_crops_per_page=3,
+        min_confidence=0.45,
+        min_area=2_000,
+    )
+
+    assert skipped == []
+    assert len(crops) == 1
 
 
 def test_figure_crop_expands_when_foreground_touches_edges(tmp_path):
