@@ -1,4 +1,7 @@
 import json
+import re
+import threading
+import time
 from pathlib import Path
 
 import fitz
@@ -13,6 +16,16 @@ def _write_pdf(path: Path) -> None:
     page = doc.new_page(width=360, height=240)
     page.insert_text((40, 60), "Consensus")
     page.insert_text((40, 95), "Quorum reads and writes must overlap.")
+    doc.save(path)
+    doc.close()
+
+
+def _write_multi_page_pdf(path: Path) -> None:
+    doc = fitz.open()
+    for title in ("Consensus", "Replication", "Failure Detection"):
+        page = doc.new_page(width=360, height=240)
+        page.insert_text((40, 60), title)
+        page.insert_text((40, 95), f"Body text for {title}")
     doc.save(path)
     doc.close()
 
@@ -365,3 +378,188 @@ def test_parse_dsh_output_accepts_direct_json():
 def test_parse_dsh_output_rejects_missing_required_fields():
     with pytest.raises(AgentBackendError, match="missing required field"):
         parse_dsh_output(json.dumps({"markdown": "hello"}))
+
+
+# ---------------------------------------------------------------------------
+# Parallel first pass and pack context trimming
+# ---------------------------------------------------------------------------
+
+
+def test_agent_run_dsh_parallel_first_pass(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    build_out = tmp_path / "build"
+    run_out = tmp_path / "run"
+    _write_multi_page_pdf(source)
+    assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
+    manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
+    assert len(manifest["sections"]) == 3
+
+    calls: list[str] = []
+    active = {"value": 0}
+    peak = {"value": 0}
+    lock = threading.Lock()
+
+    def make_client(**kwargs):
+        client = _FakeDSHClient(**kwargs)
+
+        def generate_with_usage(prompt, system_prompt=None):
+            with lock:
+                active["value"] += 1
+                peak["value"] = max(peak["value"], active["value"])
+            try:
+                # Simulate network latency so the parallel window is observable
+                # (real LLM calls release the GIL during I/O).
+                time.sleep(0.05)
+                calls.append(prompt)
+                repaired = "Repair one SlideNote section" in prompt
+                ids = sorted(set(re.findall(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", prompt)))
+
+                class Result:
+                    text = json.dumps(
+                        {
+                            "markdown": _dsh_result_markdown(ids, repaired=repaired),
+                            "used_asset_paths": [],
+                            "covered_source_ids": ids if repaired else ([ids[0]] if ids else []),
+                            "warnings": [],
+                        },
+                        ensure_ascii=False,
+                    )
+                    usage = {"input_tokens": 10, "output_tokens": 8, "total_tokens": 18}
+
+                return Result()
+            finally:
+                with lock:
+                    active["value"] -= 1
+
+        client.generate_with_usage = generate_with_usage
+        return client
+
+    monkeypatch.setattr("slidenote.agent_backend.LLMClient", make_client)
+
+    exit_code = main(
+        [
+            "agent-run",
+            str(build_out / "agent_pack"),
+            "--out",
+            str(run_out),
+            "--quiet",
+            "--backend",
+            "dsh",
+            "--dsh-concurrency",
+            "3",
+        ]
+    )
+
+    report = json.loads((run_out / "agent_run.json").read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert report["summary"]["sections_total"] == 3
+    assert len(report["sections"]) == 3
+    assert peak["value"] >= 2, f"expected parallel section calls, peak concurrency was {peak['value']}"
+
+
+def test_agent_run_dsh_concurrency_one_runs_sequentially(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    build_out = tmp_path / "build"
+    run_out = tmp_path / "run"
+    _write_multi_page_pdf(source)
+    assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
+
+    active = {"value": 0}
+    peak = {"value": 0}
+    lock = threading.Lock()
+
+    def make_client(**kwargs):
+        client = _FakeDSHClient(**kwargs)
+
+        def generate_with_usage(prompt, system_prompt=None):
+            with lock:
+                active["value"] += 1
+                peak["value"] = max(peak["value"], active["value"])
+            try:
+                ids = sorted(set(re.findall(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", prompt)))
+
+                class Result:
+                    text = json.dumps(
+                        {
+                            "markdown": _dsh_result_markdown(ids, repaired="Repair one SlideNote section" in prompt),
+                            "used_asset_paths": [],
+                            "covered_source_ids": ids,
+                            "warnings": [],
+                        },
+                        ensure_ascii=False,
+                    )
+                    usage = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+
+                return Result()
+            finally:
+                with lock:
+                    active["value"] -= 1
+
+        client.generate_with_usage = generate_with_usage
+        return client
+
+    monkeypatch.setattr("slidenote.agent_backend.LLMClient", make_client)
+
+    exit_code = main(
+        [
+            "agent-run",
+            str(build_out / "agent_pack"),
+            "--out",
+            str(run_out),
+            "--quiet",
+            "--backend",
+            "dsh",
+            "--dsh-concurrency",
+            "1",
+        ]
+    )
+
+    assert exit_code == 0
+    assert peak["value"] == 1, f"concurrency=1 must run sequentially, peak was {peak['value']}"
+
+
+def test_agent_pack_trims_verbose_section_context(tmp_path):
+    """Over-budget pages must cap text blocks while keeping the full source-id list."""
+    source = tmp_path / "lecture.pdf"
+    out = tmp_path / "out"
+    doc = fitz.open()
+    page = doc.new_page(width=360, height=1000)
+    page.insert_text((40, 60), "Long Deck")
+    for index in range(15):
+        page.insert_text((40, 90 + index * 40), f"Bullet {index}: " + ("x" * 300))
+    doc.save(source)
+    doc.close()
+
+    assert main(["agent-pack", str(source), "--out", str(out), "--quiet"]) == 0
+    section_text = (out / "agent_pack" / "sections" / "section_001.md").read_text(encoding="utf-8")
+    assert "omitted" in section_text, "over-budget text blocks should be reported as omitted"
+    assert "source_ids: `s1_t" in section_text, "full source id list must be preserved"
+
+
+def test_render_page_pack_markdown_clips_blocks_and_preserves_source_ids():
+    from slidenote.agent_backend import _render_page_pack_markdown
+    from slidenote.models import Deck, SlidePage, TextBlock
+
+    blocks = [TextBlock(id=f"s1_t{index}", type="paragraph", content=f"Bullet {index}: " + ("x" * 300)) for index in range(15)]
+    page = SlidePage(slide_id=1, title="Long Deck", text_blocks=blocks)
+    deck = Deck(source_path="lecture.pdf", source_type="pdf", pages=[page])
+    expected = {1: [f"s1_t{index}" for index in range(15)]}
+
+    lines = _render_page_pack_markdown(deck, page, {}, expected)
+    text = "\n".join(lines)
+
+    assert "…" in text, "over-length block content should be clipped"
+    assert "omitted" in text, "over-budget text blocks should be reported as omitted"
+    assert "source_ids: `s1_t0`" in text and "`s1_t14`" in text, "full source id list must be preserved"
+    assert "s1_t1" in text and "s1_t14" in text
+
+
+def test_clip_agent_text_truncates_long_values():
+    from slidenote.agent_backend import _clip_agent_text
+
+    assert _clip_agent_text(None, 10) is None
+    assert _clip_agent_text("", 10) == ""
+    assert _clip_agent_text("short", 10) == "short"
+    clipped = _clip_agent_text("x" * 300, 200)
+    assert clipped is not None and clipped.endswith("…") and len(clipped) == 200
+    assert _clip_agent_text("a  b\nc", 100) == "a b c"

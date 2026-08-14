@@ -47,6 +47,12 @@ agent_pack/
 - 每次 section 调用默认启用本地磁盘缓存（`--dsh-cache on`，目录默认
   `<out>/.dsh_cache`，可用 `--dsh-cache-dir` 覆盖、`--dsh-cache off` 关闭；
   缓存键 = prompt + provider + model + schema 版本）。
+- **首轮生成并行**：多个 section 通过 ThreadPoolExecutor 并行调用
+  （`--dsh-concurrency`，默认 3；`slidenote.llm` 每次请求新建客户端，线程安全）；
+  repair 轮保持串行，结果按 section 顺序落盘。
+- **pack 上下文裁剪**：每页最多 12 个文本块、每块 200 字符，OCR/视觉摘要/
+  图片说明设字符上限，超限块报告省略；**source ids 列表保持全量**，保证
+  repair 的 coverage 映射不受裁剪影响。
 - 结果解析走 `_parse_agent_json_text`（fence 剥离 + JSON 提取 + 字段校验）。
 - 元数据记录在 `agent_run.json` 的 `sections[].dsh`：
   `source/model/usage/cache_status`。

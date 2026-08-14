@@ -37,8 +37,13 @@ figure context in the pack (needs provider keys).
 `--backend dsh` — DeepSeek API through `slidenote.llm` (OpenAI-compatible;
 keys via `DEEPSEEK_API_KEY` or `--dsh-api-key`). Local cache is on by default
 at `<out>/.dsh_cache`; override with `--dsh-cache-dir`, disable with
-`--dsh-cache off`. Other providers supported by `slidenote.llm` can be
-selected with `--dsh-provider`.
+`--dsh-cache off`. The first generation pass runs sections in parallel
+(`--dsh-concurrency`, default 3); repair stays sequential. Other providers
+supported by `slidenote.llm` can be selected with `--dsh-provider`.
+
+The agent pack caps per-page context (12 text blocks, 200 chars per block,
+capped OCR/visual summaries) while keeping full source-id lists, so large
+decks stay within prompt budgets without losing coverage mapping.
 
 ## Output contract
 

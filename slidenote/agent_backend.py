@@ -5,6 +5,7 @@ import json
 import re
 import shutil
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
@@ -101,6 +102,7 @@ def run_agent_run(args: argparse.Namespace) -> int:
             cache_mode=args.dsh_cache,
             cache_dir=args.dsh_cache_dir,
             timeout_seconds=args.dsh_timeout,
+            concurrency=args.dsh_concurrency,
             repair_mode=args.repair,
             repair_rounds=args.repair_rounds,
             quiet=args.quiet,
@@ -268,6 +270,7 @@ def run_dsh_agent_pack(
     cache_mode: str = "on",
     cache_dir: Path | None = None,
     timeout_seconds: int = 600,
+    concurrency: int = 3,
     quiet: bool = False,
     repair_mode: str = "auto",
     repair_rounds: int = 1,
@@ -299,6 +302,7 @@ def run_dsh_agent_pack(
         quiet=quiet,
         repair_mode=repair_mode,
         repair_rounds=repair_rounds,
+        concurrency=concurrency,
     )
 
 
@@ -311,6 +315,7 @@ def _run_agent_pack_core(
     quiet: bool,
     repair_mode: str = "auto",
     repair_rounds: int = 1,
+    concurrency: int = 1,
 ) -> dict[str, Any]:
     manifest_path = pack_dir / "manifest.json"
     if not manifest_path.exists():
@@ -334,12 +339,10 @@ def _run_agent_pack_core(
     agent_sections_dir = output_root / "agent_sections"
     ensure_clean_dir(agent_sections_dir)
 
-    for index, section in enumerate(manifest.get("sections") or [], start=1):
+    def process_section(index: int, section: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         section_file = pack_dir / str(section.get("file") or "")
         if not section_file.exists():
             raise AgentBackendError(f"Agent section file not found: {section_file}")
-        if not quiet:
-            print(f"Running {backend} backend for section {index}: {section.get('title') or section.get('section_id')}")
         prompt = _build_agent_prompt(manifest, section, section_file)
         parsed, metadata = runner(prompt)
         markdown = str(parsed["markdown"]).strip()
@@ -347,19 +350,44 @@ def _run_agent_pack_core(
         markdown = _ensure_covered_markers(markdown, parsed["covered_source_ids"], source_id_to_slide)
         section_output = agent_sections_dir / f"section_{index:03d}.md"
         write_text(section_output, markdown.rstrip() + "\n")
-        warnings.extend(str(item) for item in parsed.get("warnings") or [])
-        section_results.append(
-            {
-                "section_id": section.get("section_id"),
-                "title": section.get("title"),
-                "slide_ids": section.get("slide_ids") or [],
-                "file": f"agent_sections/section_{index:03d}.md",
-                "used_asset_paths": parsed["used_asset_paths"],
-                "covered_source_ids": parsed["covered_source_ids"],
-                "warnings": parsed.get("warnings") or [],
-                backend: metadata,
-            }
-        )
+        record = {
+            "section_id": section.get("section_id"),
+            "title": section.get("title"),
+            "slide_ids": section.get("slide_ids") or [],
+            "file": f"agent_sections/section_{index:03d}.md",
+            "used_asset_paths": parsed["used_asset_paths"],
+            "covered_source_ids": parsed["covered_source_ids"],
+            "warnings": parsed.get("warnings") or [],
+            backend: metadata,
+        }
+        return record, [str(item) for item in parsed.get("warnings") or []]
+
+    sections = manifest.get("sections") or []
+    ordered: dict[int, tuple[dict[str, Any], list[str]]] = {}
+    if concurrency > 1 and len(sections) > 1:
+        if not quiet:
+            print(f"Running {backend} backend for {len(sections)} sections (concurrency={concurrency})")
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = {pool.submit(process_section, index, section): index for index, section in enumerate(sections, start=1)}
+            try:
+                for future in as_completed(futures):
+                    index = futures[future]
+                    ordered[index] = future.result()
+                    if not quiet:
+                        print(f"  section {index} complete")
+            except BaseException:
+                for future in futures:
+                    future.cancel()
+                raise
+    else:
+        for index, section in enumerate(sections, start=1):
+            if not quiet:
+                print(f"Running {backend} backend for section {index}: {section.get('title') or section.get('section_id')}")
+            ordered[index] = process_section(index, section)
+    for index in sorted(ordered):
+        record, section_warnings = ordered[index]
+        section_results.append(record)
+        warnings.extend(section_warnings)
 
     notes_markdown = _compose_agent_notes(manifest, section_results, output_root)
     coverage_report = analyze_coverage(deck, notes_markdown, content_guard=manifest.get("content_guard"))
@@ -754,6 +782,24 @@ def _render_section_pack_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
+# Pack context budgets: keep the full source-id lists (repair maps against
+# them) but cap the verbose fields so large decks stay within prompt budgets.
+_AGENT_PACK_MAX_TEXT_BLOCKS = 12
+_AGENT_PACK_MAX_BLOCK_CHARS = 200
+_AGENT_PACK_MAX_OCR_CHARS = 600
+_AGENT_PACK_MAX_VISUAL_CHARS = 300
+_AGENT_PACK_MAX_CAPTION_CHARS = 150
+
+
+def _clip_agent_text(value: str | None, limit: int) -> str | None:
+    if not value:
+        return value
+    text = re.sub(r"\s+", " ", value).strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
 def _render_page_pack_markdown(deck: Deck, page: SlidePage, asset_map: dict[str, str], expected_by_slide: dict[int, list[str]]) -> list[str]:
     del deck
     lines = [
@@ -765,21 +811,25 @@ def _render_page_pack_markdown(deck: Deck, page: SlidePage, asset_map: dict[str,
     if page.page_screenshot and page.page_screenshot in asset_map:
         lines.append(f"- page_screenshot: `{asset_map[page.page_screenshot]}`")
     if page.page_ocr_text:
-        lines.append(f"- page_ocr_text: {page.page_ocr_text}")
+        lines.append(f"- page_ocr_text: {_clip_agent_text(page.page_ocr_text, _AGENT_PACK_MAX_OCR_CHARS)}")
     if page.page_visual_summary:
-        lines.append(f"- page_visual_summary: {page.page_visual_summary}")
+        lines.append(f"- page_visual_summary: {_clip_agent_text(page.page_visual_summary, _AGENT_PACK_MAX_VISUAL_CHARS)}")
     lines.append("")
     if page.text_blocks:
         lines.extend(["#### Text Blocks", ""])
-        for block in page.text_blocks:
-            content = re.sub(r"\s+", " ", block.content).strip()
+        blocks = page.text_blocks[:_AGENT_PACK_MAX_TEXT_BLOCKS]
+        for block in blocks:
+            content = _clip_agent_text(block.content, _AGENT_PACK_MAX_BLOCK_CHARS)
             lines.append(f"- `{block.id}` ({block.type}): {content}")
+        omitted = len(page.text_blocks) - len(blocks)
+        if omitted > 0:
+            lines.append(f"- ... ({omitted} more text block(s) omitted; full source_ids listed above)")
         lines.append("")
     if page.tables:
         lines.extend(["#### Tables", ""])
         for table in page.tables:
             summary = table.table_summary or table.table_conclusion or table_preview(table)
-            lines.append(f"- `{table.id}`: {summary}")
+            lines.append(f"- `{table.id}`: {_clip_agent_text(summary, _AGENT_PACK_MAX_VISUAL_CHARS)}")
             if table.rows:
                 for row in table.rows[:4]:
                     lines.append(f"  - {' | '.join(cell.strip() for cell in row)}")
@@ -791,7 +841,7 @@ def _render_page_pack_markdown(deck: Deck, page: SlidePage, asset_map: dict[str,
             display_path = asset_map[image.path]
             source_ids = ", ".join(f"`{source_id}`" for source_id in [image.id, *image.source_element_ids] if source_id)
             anchors = ", ".join(f"`{anchor_id}`" for anchor_id in image.anchor_element_ids)
-            caption = image.caption or image.id
+            caption = _clip_agent_text(image.caption or image.id, _AGENT_PACK_MAX_CAPTION_CHARS)
             lines.append(f"- `{image.id}`: `{display_path}`")
             lines.append(f"  - caption: {caption}")
             if source_ids:
@@ -799,11 +849,11 @@ def _render_page_pack_markdown(deck: Deck, page: SlidePage, asset_map: dict[str,
             if anchors:
                 lines.append(f"  - anchor_element_ids: {anchors}")
             if image.visual_summary:
-                lines.append(f"  - visual_summary: {image.visual_summary}")
+                lines.append(f"  - visual_summary: {_clip_agent_text(image.visual_summary, _AGENT_PACK_MAX_VISUAL_CHARS)}")
             if image.ocr_text:
-                lines.append(f"  - ocr_text: {image.ocr_text}")
+                lines.append(f"  - ocr_text: {_clip_agent_text(image.ocr_text, _AGENT_PACK_MAX_OCR_CHARS)}")
             if image.figure_explanation:
-                lines.append(f"  - existing_figure_explanation: {image.figure_explanation}")
+                lines.append(f"  - existing_figure_explanation: {_clip_agent_text(image.figure_explanation, _AGENT_PACK_MAX_VISUAL_CHARS)}")
             if image.figure_explanation_status:
                 lines.append(f"  - figure_explanation_status: {image.figure_explanation_status}")
             if image.figure_audit_status:

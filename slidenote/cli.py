@@ -215,6 +215,7 @@ def _add_agent_run_options(command: argparse.ArgumentParser, include_out: bool =
     command.add_argument("--dsh-temperature", type=float, default=0.2, help="DeepSeek backend sampling temperature.")
     command.add_argument("--dsh-cache", choices=["on", "off", "refresh"], default="on", help="DeepSeek backend local cache mode.")
     command.add_argument("--dsh-cache-dir", type=Path, default=None, help="DeepSeek backend cache directory. Defaults to <out>/.dsh_cache when --dsh-cache is on.")
+    command.add_argument("--dsh-concurrency", type=int, default=3, help="Parallel section calls for the first generation pass. Repair stays sequential.")
     command.add_argument("--dsh-timeout", type=int, default=600, help="Per-section DeepSeek backend timeout in seconds.")
     if include_quiet:
         command.add_argument("--quiet", action="store_true", help="Suppress progress output.")
