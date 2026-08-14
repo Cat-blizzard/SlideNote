@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from slidenote.models import normalize_rel_path
@@ -46,21 +47,46 @@ def render_pptx_screenshots(input_path: Path, screenshots_dir: Path, output_root
     return _render_pdf_pages(pdf_path, screenshots_dir, output_root, warnings), warnings
 
 
-def _render_pdf_pages(pdf_path: Path, screenshots_dir: Path, output_root: Path, warnings: list[str]) -> dict[int, str]:
+def _render_pdf_pages(
+    pdf_path: Path,
+    screenshots_dir: Path,
+    output_root: Path,
+    warnings: list[str],
+    concurrency: int = 4,
+) -> dict[int, str]:
     try:
         import fitz
     except ImportError:
         warnings.append("PyMuPDF is not installed; converted PPTX screenshots were skipped.")
         return {}
 
+    with fitz.open(pdf_path) as doc:
+        page_count = doc.page_count
+
+    def render_page(page_index: int) -> tuple[int, str]:
+        # PyMuPDF Documents are not thread-safe: each worker opens its own.
+        worker_doc = fitz.open(pdf_path)
+        try:
+            page = worker_doc.load_page(page_index - 1)
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            target = screenshots_dir / f"slide{page_index}.png"
+            pix.save(target)
+            return page_index, normalize_rel_path(target, output_root)
+        finally:
+            worker_doc.close()
+
+    workers = max(1, min(int(concurrency or 1), page_count))
     result: dict[int, str] = {}
-    doc = fitz.open(pdf_path)
-    for page_index, page in enumerate(doc, start=1):
-        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-        target = screenshots_dir / f"slide{page_index}.png"
-        pix.save(target)
-        result[page_index] = normalize_rel_path(target, output_root)
-    doc.close()
+    if workers == 1:
+        for index in range(1, page_count + 1):
+            page_index, rel = render_page(index)
+            result[page_index] = rel
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(render_page, index): index for index in range(1, page_count + 1)}
+            for future in as_completed(futures):
+                page_index, rel = future.result()
+                result[page_index] = rel
     return result
 
 

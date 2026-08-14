@@ -1,9 +1,34 @@
 import json
 import subprocess
 
+import fitz
+
 from slidenote.extractors import extract_deck
+from slidenote.extractors.pdf import extract_pdf
 from slidenote.models import Deck, SlidePage
 from slidenote.parser_adapters import available_parser_choices, parser_adapter_infos, parser_adapters
+
+
+def test_extract_pdf_parallel_keeps_page_order_and_content(tmp_path):
+    """Page-parallel extraction must return ordered pages with screenshots."""
+    source = tmp_path / "multi.pdf"
+    doc = fitz.open()
+    for index in range(1, 7):
+        page = doc.new_page()
+        page.insert_text((72, 72), f"Slide {index} title")
+        page.insert_text((72, 104), f"Body line for slide {index}")
+    doc.save(str(source))
+    doc.close()
+
+    deck = extract_pdf(source, tmp_path / "out")
+
+    assert [page.slide_id for page in deck.pages] == [1, 2, 3, 4, 5, 6]
+    assert deck.pages[0].title == "Slide 1 title"
+    assert deck.pages[5].title == "Slide 6 title"
+    assert all(page.page_screenshot for page in deck.pages)
+    assert (tmp_path / "out" / "screenshots" / "slide1.png").exists()
+    assert (tmp_path / "out" / "screenshots" / "slide6.png").exists()
+    assert any(block.content.startswith("Body line") for block in deck.pages[2].text_blocks)
 
 
 def test_builtin_parser_adapter_delegates_by_suffix(tmp_path, monkeypatch):

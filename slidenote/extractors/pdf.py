@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from slidenote.image_assets import image_metadata, refine_image_role_for_placement
@@ -9,7 +10,7 @@ from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock,
 from slidenote.utils import unique_path
 
 
-def extract_pdf(input_path: Path, output_root: Path) -> Deck:
+def extract_pdf(input_path: Path, output_root: Path, concurrency: int = 4) -> Deck:
     try:
         import fitz
     except ImportError as exc:
@@ -20,26 +21,44 @@ def extract_pdf(input_path: Path, output_root: Path) -> Deck:
     images_dir.mkdir(parents=True, exist_ok=True)
     screenshots_dir.mkdir(parents=True, exist_ok=True)
 
-    doc = fitz.open(input_path)
-    pages: list[SlidePage] = []
+    with fitz.open(input_path) as doc:
+        page_count = doc.page_count
     warnings: list[str] = []
 
-    for page_index, page in enumerate(doc, start=1):
-        slide = SlidePage(slide_id=page_index)
-        page_size = _page_size(page)
-        if page_size:
-            slide.page_width, slide.page_height = page_size
-        text_blocks = _extract_text_blocks(page, page_index)
-        slide.title = _guess_title(text_blocks)
-        slide.text_blocks = text_blocks
-        slide.tables = _extract_tables(page, page_index)
-        slide.images = _extract_images(doc, page, page_index, images_dir, output_root)
-        slide.page_screenshot = _render_page(page, page_index, screenshots_dir, output_root)
-        if not text_blocks and not any(not image.ignored for image in slide.images):
-            slide.warnings.append("No selectable text or embedded images detected. This page may need OCR.")
-        pages.append(slide)
+    def process_page(page_index: int) -> SlidePage:
+        # PyMuPDF Documents are not thread-safe: each worker opens its own.
+        worker_doc = fitz.open(input_path)
+        try:
+            page = worker_doc.load_page(page_index - 1)
+            slide = SlidePage(slide_id=page_index)
+            page_size = _page_size(page)
+            if page_size:
+                slide.page_width, slide.page_height = page_size
+            text_blocks = _extract_text_blocks(page, page_index)
+            slide.title = _guess_title(text_blocks)
+            slide.text_blocks = text_blocks
+            slide.tables = _extract_tables(page, page_index)
+            slide.images = _extract_images(worker_doc, page, page_index, images_dir, output_root)
+            slide.page_screenshot = _render_page(page, page_index, screenshots_dir, output_root)
+            if not text_blocks and not any(not image.ignored for image in slide.images):
+                slide.warnings.append("No selectable text or embedded images detected. This page may need OCR.")
+            return slide
+        finally:
+            worker_doc.close()
 
-    doc.close()
+    workers = max(1, min(int(concurrency or 1), page_count))
+    pages: list[SlidePage] = []
+    if workers == 1:
+        for page_index in range(1, page_count + 1):
+            pages.append(process_page(page_index))
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(process_page, index): index for index in range(1, page_count + 1)}
+            ordered: dict[int, SlidePage] = {}
+            for future in as_completed(futures):
+                ordered[futures[future]] = future.result()
+            pages = [ordered[index] for index in sorted(ordered)]
+
     return Deck(source_path=str(input_path), source_type="pdf", pages=pages, warnings=warnings)
 
 
