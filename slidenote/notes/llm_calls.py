@@ -6,8 +6,9 @@ from typing import Any
 from slidenote.llm import LLMClient as _DefaultLLMClient, SYSTEM_PROMPT
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json
 from slidenote.models import Deck
+from slidenote.utils import display_path
 
-from .assembly import NoteContext, _display_path
+from .assembly import NoteContext
 from .prompt_payload import _prompt_brief_hash, _prompt_deck_brief, _prompt_slide_scope
 from .prompt_templates import _llm_context_prompt, _llm_page_lecture_prompt, _llm_teaching_enrichment_prompt, _llm_weave_prompt
 from .versions import NOTE_PROMPT_VERSION, PAGE_LECTURE_PROMPT_VERSION, TEACHING_ENRICHMENT_PROMPT_VERSION, WEAVE_PROMPT_VERSION
@@ -16,11 +17,7 @@ LLMClient = _DefaultLLMClient
 
 
 def _make_llm_client(**kwargs):
-    from . import orchestrator
-
-    legacy_client = getattr(orchestrator, "LLMClient", LLMClient)
-    client_class = legacy_client if legacy_client is not _DefaultLLMClient else LLMClient
-    return client_class(**kwargs)
+    return LLMClient(**kwargs)
 
 
 def _generate_llm_context(
@@ -174,7 +171,7 @@ def _generate_llm_context(
         )
 
     context_record["note_chars"] = len(content)
-    context_record["cache_file"] = _display_path(cache_path, output_root)
+    context_record["cache_file"] = display_path(cache_path, output_root)
     return content, context_record
 
 def _generate_page_lecture_context(
@@ -508,7 +505,7 @@ def _generate_cached_llm_text(
         )
 
     context_record["note_chars"] = len(content)
-    context_record["cache_file"] = _display_path(cache_path, output_root)
+    context_record["cache_file"] = display_path(cache_path, output_root)
     return content, context_record
 
 def _base_usage_context_record(
@@ -525,7 +522,7 @@ def _base_usage_context_record(
         "slide_id": context.pages[0].slide_id if context.pages else None,
         "slide_ids": [page.slide_id for page in context.pages],
         "cache_key": cache_key,
-        "cache_file": _display_path(cache_path, output_root),
+        "cache_file": display_path(cache_path, output_root),
         "prompt_hash": prompt_hash,
         "element_counts": {
             "text_blocks": sum(len(page.text_blocks) for page in context.pages),

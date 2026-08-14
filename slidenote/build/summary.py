@@ -10,6 +10,7 @@ from slidenote.content_guard import content_guard_warnings
 from slidenote.exporting import export_warnings, parse_export_formats
 from slidenote.pipeline import ArtifactRegistry
 from slidenote.progress import ProgressReporter
+from slidenote.utils import display_path
 
 
 def _build_run_summary(
@@ -144,7 +145,7 @@ def _build_run_summary(
             "coverage": "coverage.md",
             "quality_report": "quality_report.json" if quality_report else None,
             "source_map": "source_map.json",
-            "progress": _display_path(progress.path, output_root),
+            "progress": display_path(progress.path, output_root),
             "run_summary": "run_summary.json",
             "page_modalities": "page_modalities.json",
             "table_understanding": "table_understanding.json",
@@ -202,10 +203,3 @@ def _export_artifact_path(export_report: dict[str, Any] | None, fmt: str) -> str
             path = result.get("path")
             return str(path) if path else None
     return None
-
-
-def _display_path(path: Path, output_root: Path) -> str:
-    try:
-        return path.resolve().relative_to(output_root.resolve()).as_posix()
-    except ValueError:
-        return str(path)

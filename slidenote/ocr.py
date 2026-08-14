@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import tempfile
 import urllib.error
 import urllib.parse
@@ -15,9 +14,17 @@ from typing import Any, Callable
 from PIL import Image
 
 from slidenote.api_retry import with_api_retries
-from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, utc_now_iso
+from slidenote.llm_cache import LLMCache, make_cache_key, utc_now_iso
 from slidenote.modality import page_has_hint
-from slidenote.models import Deck, ImageAsset, SlidePage
+from slidenote.models import Deck, SlidePage
+from slidenote.utils import (
+    cleanup_temp_image,
+    display_path,
+    file_sha256,
+    first_env,
+    image_area,
+    preview,
+)
 
 OCR_SCHEMA_VERSION = 1
 
@@ -63,8 +70,8 @@ class OCRClient:
         raise ValueError(f"Unsupported OCR provider: {self.provider}")
 
     def _recognize_baidu(self, image_path: Path) -> OCRResult:
-        api_key = self.api_key or _first_env(("BAIDU_OCR_API_KEY", "BAIDU_API_KEY"))
-        secret_key = self.secret_key or _first_env(("BAIDU_OCR_SECRET_KEY", "BAIDU_SECRET_KEY"))
+        api_key = self.api_key or first_env(("BAIDU_OCR_API_KEY", "BAIDU_API_KEY"))
+        secret_key = self.secret_key or first_env(("BAIDU_OCR_SECRET_KEY", "BAIDU_SECRET_KEY"))
         if not api_key or not secret_key:
             raise RuntimeError("Baidu OCR requires BAIDU_OCR_API_KEY and BAIDU_OCR_SECRET_KEY, or --ocr-api-key/--ocr-secret-key.")
         token = _baidu_access_token(api_key, secret_key)
@@ -86,8 +93,8 @@ class OCRClient:
         return OCRResult(text=text, usage={"words_result_num": data.get("words_result_num")}, raw=data)
 
     def _recognize_mathpix(self, image_path: Path) -> OCRResult:
-        app_id = self.api_key or _first_env(("MATHPIX_APP_ID",))
-        app_key = self.secret_key or _first_env(("MATHPIX_APP_KEY",))
+        app_id = self.api_key or first_env(("MATHPIX_APP_ID",))
+        app_key = self.secret_key or first_env(("MATHPIX_APP_KEY",))
         if not app_id or not app_key:
             raise RuntimeError("Mathpix OCR requires MATHPIX_APP_ID and MATHPIX_APP_KEY, or --ocr-api-key/--ocr-secret-key.")
         endpoint = self.endpoint or "https://api.mathpix.com/v3/text"
@@ -105,7 +112,7 @@ class OCRClient:
         return OCRResult(text=text, usage={"confidence": data.get("confidence")}, raw=data)
 
     def _recognize_google(self, image_path: Path) -> OCRResult:
-        api_key = self.api_key or _first_env(("GOOGLE_VISION_API_KEY", "GOOGLE_API_KEY"))
+        api_key = self.api_key or first_env(("GOOGLE_VISION_API_KEY", "GOOGLE_API_KEY"))
         if not api_key:
             raise RuntimeError("Google Vision OCR requires GOOGLE_VISION_API_KEY or --ocr-api-key.")
         endpoint = self.endpoint or "https://vision.googleapis.com/v1/images:annotate"
@@ -232,7 +239,7 @@ def _process_ocr_target(
 
     prepared_path, image_meta = prepared
     try:
-        source_hash = _file_sha256(source_path)
+        source_hash = file_sha256(source_path)
         cache_key_payload = {
             "schema_version": OCR_SCHEMA_VERSION,
             "provider": provider_name,
@@ -294,11 +301,11 @@ def _process_ocr_target(
                 }
             )
 
-        record["text_preview"] = _preview(text)
-        record["cache_file"] = _display_path(cache_path, output_root)
+        record["text_preview"] = preview(text)
+        record["cache_file"] = display_path(cache_path, output_root)
         return record, text, "parsed"
     finally:
-        _cleanup_temp_image(prepared_path)
+        cleanup_temp_image(prepared_path)
 
 
 def select_ocr_targets(
@@ -329,7 +336,7 @@ def _large_image_targets(page: SlidePage, output_root: Path, min_area: int, firs
     for image in page.images:
         if image.ignored:
             continue
-        area = _image_area(output_root / image.path)
+        area = image_area(output_root / image.path)
         if area is not None and area < min_area:
             continue
         targets.append(OCRTarget(page.slide_id, "image", image.path, image_id=image.id, reason="large_embedded_image"))
@@ -372,15 +379,6 @@ def _prepare_image_for_ocr(path: Path, max_edge: int) -> tuple[Path, dict[str, A
             return tmp_path, meta
     except Exception:
         return None
-
-
-def _cleanup_temp_image(path: Path) -> None:
-    if path.parent != Path(tempfile.gettempdir()):
-        return
-    try:
-        path.unlink()
-    except OSError:
-        pass
 
 
 def _baidu_access_token(api_key: str, secret_key: str) -> str:
@@ -447,7 +445,7 @@ def _build_report(
         "provider": provider,
         "mode": mode,
         "language": language,
-        "cache": {"mode": cache_mode, "dir": _display_path(cache_dir, output_root)},
+        "cache": {"mode": cache_mode, "dir": display_path(cache_dir, output_root)},
         "selection": {"max_targets": max_targets, "min_text_chars": min_text_chars, "min_area": min_area, "max_edge": max_edge},
         "summary": summary,
         "targets": records,
@@ -462,7 +460,7 @@ def _base_record(target: OCRTarget, cache_key: str, cache_path: Path, output_roo
         "path": target.path,
         "reason": target.reason,
         "cache_key": cache_key,
-        "cache_file": _display_path(cache_path, output_root),
+        "cache_file": display_path(cache_path, output_root),
         "image_meta": image_meta,
     }
 
@@ -478,18 +476,6 @@ def _skipped_record(target: OCRTarget, status: str) -> dict[str, Any]:
         "skip_reason": status,
         "api_call": False,
     }
-
-
-def _image_area(path: Path) -> int | None:
-    try:
-        with Image.open(path) as image:
-            return image.width * image.height
-    except Exception:
-        return None
-
-
-def _file_sha256(path: Path) -> str:
-    return sha256_text(path.read_bytes().hex())
 
 
 def _normalize_provider(provider: str) -> str:
@@ -510,25 +496,3 @@ def _normalize_provider(provider: str) -> str:
 def _google_language_hints(language: str) -> list[str]:
     mapping = {"CHN_ENG": ["zh", "en"], "ENG": ["en"], "CHN": ["zh"]}
     return mapping.get(language.upper(), [language])
-
-
-def _first_env(names: tuple[str, ...]) -> str | None:
-    for name in names:
-        value = os.environ.get(name)
-        if value:
-            return value
-    return None
-
-
-def _preview(text: str, limit: int = 160) -> str:
-    text = " ".join(text.split())
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1] + "…"
-
-
-def _display_path(path: Path, output_root: Path) -> str:
-    try:
-        return path.resolve().relative_to(output_root.resolve()).as_posix()
-    except ValueError:
-        return str(path)

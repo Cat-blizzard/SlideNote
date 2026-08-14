@@ -5,6 +5,7 @@ from typing import Any
 
 from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck, TableBlock
+from slidenote.utils import preview
 
 
 def enrich_deck_with_table_understanding(deck: Deck) -> dict[str, Any]:
@@ -111,7 +112,7 @@ def table_text_for_prompt(table: TableBlock, raw_rows: int = 3) -> str:
 
 
 def table_preview(table: TableBlock, limit: int = 160, raw_rows: int = 2) -> str:
-    return _preview(table_text_for_prompt(table, raw_rows=raw_rows), limit=limit)
+    return preview(table_text_for_prompt(table, raw_rows=raw_rows), limit=limit)
 
 
 def _clean_rows(rows: list[list[str]]) -> list[tuple[int, list[str]]]:
@@ -260,10 +261,3 @@ def _join_terms(values: list[str], sep: str = "、") -> str:
     if not cleaned:
         return ""
     return sep.join(cleaned)
-
-
-def _preview(text: str, limit: int = 160) -> str:
-    value = re.sub(r"\s+", " ", text).strip()
-    if len(value) <= limit:
-        return value
-    return value[: limit - 1] + "…"

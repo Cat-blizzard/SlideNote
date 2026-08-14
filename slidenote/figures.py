@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,9 +10,21 @@ from PIL import Image
 
 from slidenote.image_assets import image_metadata
 from slidenote.llm import LLMClient, resolve_provider_runtime
-from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
+from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, utc_now_iso
 from slidenote.modality import page_has_hint
 from slidenote.models import Deck, ImageAsset, SlidePage, normalize_rel_path
+from slidenote.utils import (
+    as_float,
+    bbox_area,
+    cleanup_temp_image,
+    display_path,
+    file_sha256,
+    page_by_id,
+    pixel_box,
+    prepare_image_for_api,
+    sum_int,
+    union_bbox,
+)
 from slidenote.semantic_layout import semantic_context_for_page, semantic_layout_for_prompt
 from slidenote.table_understanding import table_preview
 
@@ -95,7 +106,7 @@ def enrich_deck_with_figures(
         progress_callback({"event": "start", "total": len(targets)})
 
     def process(index: int, target: FigureTarget) -> tuple[int, FigureTarget, dict[str, Any], list[ImageAsset]]:
-        page = _page_by_id(deck, target.slide_id)
+        page = page_by_id(deck, target.slide_id)
         record, crops = _process_figure_target(
             target=target,
             page=page,
@@ -136,7 +147,7 @@ def enrich_deck_with_figures(
                     progress_callback({"event": "advance", "record": record, "slide_id": completed_target.slide_id})
 
     for index, target, record, crops in sorted(results, key=lambda item: item[0]):
-        page = _page_by_id(deck, target.slide_id)
+        page = page_by_id(deck, target.slide_id)
         if page is not None:
             page.images.extend(crops)
         records_by_index[index] = record
@@ -184,14 +195,14 @@ def _process_figure_target(
     if not source_path.exists():
         return _skipped_record(target, "missing_file", output_root), []
 
-    prepared = _prepare_image_for_api(source_path, max_edge=max_edge)
+    prepared = prepare_image_for_api(source_path, max_edge=max_edge)
     if prepared is None:
         return _skipped_record(target, "unsupported_or_unreadable_image", output_root), []
 
     prepared_path, image_meta = prepared
     try:
         prompt = _figure_prompt(target, page)
-        image_hash = _file_sha256(source_path)
+        image_hash = file_sha256(source_path)
         cache_key_payload = {
             "schema_version": LLM_CACHE_SCHEMA_VERSION,
             "prompt_version": FIGURE_PROMPT_VERSION,
@@ -289,10 +300,10 @@ def _process_figure_target(
         record["crops"] = crop_records
         record["crops_created"] = len(crops)
         record["skipped_candidates"] = skipped_candidates
-        record["cache_file"] = _display_path(cache_path, output_root)
+        record["cache_file"] = display_path(cache_path, output_root)
         return record, crops
     finally:
-        _cleanup_temp_image(prepared_path)
+        cleanup_temp_image(prepared_path)
 
 
 def _crop_figures(
@@ -375,8 +386,8 @@ def _crop_figures(
                     )
                     continue
                 crop_index = max(1, start_index) + len(crops)
-                pixel_box = _pixel_box(normalized.bbox, width, height)
-                crop = image.crop(pixel_box)
+                pixel_rect = pixel_box(normalized.bbox, width, height)
+                crop = image.crop(pixel_rect)
                 crop_path = figures_dir / f"slide{target.slide_id}_fig{crop_index}.png"
                 crop.save(crop_path, format="PNG")
                 meta = image_metadata(crop_path)
@@ -384,7 +395,7 @@ def _crop_figures(
                     id=f"s{target.slide_id}_fig{crop_index}",
                     path=normalize_rel_path(crop_path, output_root),
                     caption=normalized.label or f"第 {target.slide_id} 页局部图 {crop_index}",
-                    bbox=[float(value) for value in pixel_box],
+                    bbox=[float(value) for value in pixel_rect],
                     source_format="cropped_png",
                     width=meta["width"],
                     height=meta["height"],
@@ -406,7 +417,7 @@ def _crop_figures(
                         "path": image_asset.path,
                         "bbox": normalized.bbox,
                         "original_bbox": refinement.original_bbox,
-                        "pixel_bbox": [float(value) for value in pixel_box],
+                        "pixel_bbox": [float(value) for value in pixel_rect],
                         "label": normalized.label,
                         "content_type": normalized.content_type,
                         "confidence": normalized.confidence,
@@ -424,7 +435,7 @@ def _crop_figures(
 def _structured_text_region_skip_reason(page: SlidePage | None, figure: NormalizedFigure, source_type: str | None) -> str | None:
     if page is None:
         return None
-    crop_area = _bbox_area(figure.bbox)
+    crop_area = bbox_area(figure.bbox)
     if crop_area <= 0:
         return None
     text_boxes, visual_boxes = _page_layout_boxes(page, source_type)
@@ -504,10 +515,6 @@ def _is_text_crop_content(content_type: str, label: str) -> bool:
     return any(token in text for token in ("text", "title", "heading", "paragraph", "bullet", "caption", "ocr", "word", "文字", "标题", "正文"))
 
 
-def _bbox_area(bbox: list[float]) -> float:
-    return max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
-
-
 def _intersection_area(left: list[float], right: list[float]) -> float:
     x1 = max(left[0], right[0])
     y1 = max(left[1], right[1])
@@ -536,7 +543,7 @@ def _normalize_candidate(candidate: dict[str, Any], width: int, height: int) -> 
     y1, y2 = sorted((max(0.0, min(1.0, y1)), max(0.0, min(1.0, y2))))
     if x2 <= x1 or y2 <= y1:
         return None
-    confidence = _as_float(candidate.get("confidence"), default=0.0)
+    confidence = as_float(candidate.get("confidence"), default=0.0)
     label = str(candidate.get("label") or candidate.get("caption") or "").strip()
     content_type = str(candidate.get("content_type") or candidate.get("type") or "unknown").strip() or "unknown"
     return NormalizedFigure(bbox=[x1, y1, x2, y2], label=label, content_type=content_type, confidence=confidence)
@@ -572,7 +579,7 @@ def _refine_crop_candidate(
         warnings.append("trimmed_before_next_candidate")
         quality = "trimmed_neighbor_overlap"
 
-    crop = image.crop(_pixel_box(bbox, width, height))
+    crop = image.crop(pixel_box(bbox, width, height))
     touched_edges = _foreground_touching_edges(crop)
     if touched_edges:
         expanded = _expand_bbox_for_edges(bbox, touched_edges, width=width, height=height)
@@ -580,31 +587,31 @@ def _refine_crop_candidate(
             bbox = expanded
             warnings.extend(f"expanded_{edge}_edge_touch" for edge in touched_edges)
             quality = _prefer_quality(quality, "expanded_edge_touch")
-            crop = image.crop(_pixel_box(bbox, width, height))
+            crop = image.crop(pixel_box(bbox, width, height))
 
     semantic_bbox = _semantic_group_bbox_for_candidate(page, figure, source_type)
-    if semantic_bbox and _bbox_area(semantic_bbox) <= 0.72 and _bbox_area(semantic_bbox) > _bbox_area(bbox):
-        bbox = _round_bbox(_union_bbox([bbox, semantic_bbox]))
+    if semantic_bbox and bbox_area(semantic_bbox) <= 0.72 and bbox_area(semantic_bbox) > bbox_area(bbox):
+        bbox = _round_bbox(union_bbox([bbox, semantic_bbox]))
         warnings.append("merged_semantic_group")
         quality = _prefer_quality(quality, "merged_semantic_group")
-        crop = image.crop(_pixel_box(bbox, width, height))
+        crop = image.crop(pixel_box(bbox, width, height))
 
     merged_context = _merge_nearby_context_boxes(bbox, page, source_type, figure)
     if merged_context[0] != bbox:
         bbox = merged_context[0]
         warnings.extend(merged_context[1])
         quality = _prefer_quality(quality, "merged_caption")
-        crop = image.crop(_pixel_box(bbox, width, height))
+        crop = image.crop(pixel_box(bbox, width, height))
 
     bands = _foreground_row_bands(crop)
     trim_bottom = _bottom_trim_from_bands(bands, crop.height)
     if trim_bottom is not None:
-        pixel_box = _pixel_box(bbox, width, height)
-        new_bottom = max(pixel_box[1] + 1, min(pixel_box[3], pixel_box[1] + trim_bottom))
+        pixel_rect = pixel_box(bbox, width, height)
+        new_bottom = max(pixel_rect[1] + 1, min(pixel_rect[3], pixel_rect[1] + trim_bottom))
         bbox = _round_bbox([bbox[0], bbox[1], bbox[2], new_bottom / height])
         warnings.append("trimmed_bottom_contamination")
         quality = "trimmed_bottom_contamination"
-        crop = image.crop(_pixel_box(bbox, width, height))
+        crop = image.crop(pixel_box(bbox, width, height))
         bands = _foreground_row_bands(crop)
     elif _looks_bottom_contaminated(bands, crop.height):
         return CropRefinement(
@@ -692,7 +699,7 @@ def _semantic_group_bbox_for_candidate(page: SlidePage | None, figure: Normalize
     }
     if not block_boxes:
         return None
-    figure_area = max(_bbox_area(figure.bbox), 0.0001)
+    figure_area = max(bbox_area(figure.bbox), 0.0001)
     best: list[float] | None = None
     best_score = 0.0
     for group in page.semantic_groups:
@@ -700,8 +707,8 @@ def _semantic_group_bbox_for_candidate(page: SlidePage | None, figure: Normalize
         boxes = [block_boxes[item] for item in block_ids if item in block_boxes]
         if not boxes:
             continue
-        group_bbox = _round_bbox(_union_bbox(boxes))
-        group_area = _bbox_area(group_bbox)
+        group_bbox = _round_bbox(union_bbox(boxes))
+        group_area = bbox_area(group_bbox)
         if group_area <= figure_area or group_area > 0.72:
             continue
         overlap = _intersection_area(figure.bbox, group_bbox) / figure_area
@@ -733,7 +740,7 @@ def _merge_nearby_context_boxes(
     warnings: list[str] = []
     for box, role in context_boxes:
         if _should_merge_context_box(merged, box, role, figure):
-            merged = _round_bbox(_union_bbox([merged, box]))
+            merged = _round_bbox(union_bbox([merged, box]))
             warning = "merged_nearby_title" if role == "title" else "merged_nearby_legend"
             if warning not in warnings:
                 warnings.append(warning)
@@ -797,15 +804,6 @@ def _vertical_overlap_ratio(left: list[float], right: list[float]) -> float:
     overlap = max(0.0, min(left[3], right[3]) - max(left[1], right[1]))
     denom = max(0.0001, min(left[3] - left[1], right[3] - right[1]))
     return overlap / denom
-
-
-def _union_bbox(boxes: list[list[float]]) -> list[float]:
-    return [
-        min(box[0] for box in boxes),
-        min(box[1] for box in boxes),
-        max(box[2] for box in boxes),
-        max(box[3] for box in boxes),
-    ]
 
 
 def _is_chart_like(content_type: str) -> bool:
@@ -997,7 +995,7 @@ def _decorative_candidate_reason(figure: NormalizedFigure) -> str | None:
 
 
 def _edge_template_like(bbox: list[float]) -> bool:
-    area = _bbox_area(bbox)
+    area = bbox_area(bbox)
     if area > 0.014:
         return False
     near_edge = bbox[0] <= 0.08 or bbox[1] <= 0.08 or bbox[2] >= 0.92 or bbox[3] >= 0.92
@@ -1039,16 +1037,6 @@ def _is_potential_knowledge_candidate(figure: NormalizedFigure) -> bool:
     )
 
 
-def _pixel_box(bbox: list[float], width: int, height: int) -> tuple[int, int, int, int]:
-    x1, y1, x2, y2 = bbox
-    return (
-        max(0, min(width - 1, int(round(x1 * width)))),
-        max(0, min(height - 1, int(round(y1 * height)))),
-        max(1, min(width, int(round(x2 * width)))),
-        max(1, min(height, int(round(y2 * height)))),
-    )
-
-
 def _iou(left: list[float], right: list[float]) -> float:
     lx1, ly1, lx2, ly2 = left
     rx1, ry1, rx2, ry2 = right
@@ -1072,19 +1060,6 @@ def _page_deserves_figure_crop(page: SlidePage) -> bool:
         return True
     text_len = sum(len(block.content.strip()) for block in page.text_blocks)
     return bool(page.tables or text_len < 800 or page.warnings)
-
-
-def _figure_prompt(target: FigureTarget, page: SlidePage | None) -> str:
-    return (
-        "请分析这张完整幻灯片截图，找出适合单独裁剪放进课程笔记的局部图。输出严格 JSON，不要输出 Markdown。\n"
-        "JSON 格式：{\"figures\":[{\"bbox\":[x1,y1,x2,y2],\"label\":\"...\",\"content_type\":\"diagram/chart/table/formula/code/screenshot/photo/mixed/unknown\",\"confidence\":0.0}]}\n"
-        "bbox 必须使用 0 到 1 的归一化坐标，表示左上角和右下角。不要返回整页、纯标题、普通正文段落、页码、logo 或背景装饰。\n"
-        "纯代码区域通常不要作为图片返回；代码应优先由 OCR/文本提取进入笔记，除非它是必须保留版式的完整代码截图。\n"
-        "bbox 不能包含目标图下方或旁边的相邻图形；如果两个区域之间有明显空白，请拆成独立候选或只返回核心目标。\n"
-        "优先返回最能承载课程知识的 1-3 个区域。若没有适合裁剪的局部图，返回空数组。\n"
-        f"本页文字上下文：{_page_context(page)}\n"
-        f"元数据：slide_id={target.slide_id}, path={target.path}, reason={target.reason}。"
-    )
 
 
 def _page_context(page: SlidePage | None, limit: int = 1000) -> str:
@@ -1146,36 +1121,6 @@ def _parse_figure_json(text: str) -> dict[str, Any]:
     return parsed
 
 
-def _prepare_image_for_api(path: Path, max_edge: int) -> tuple[Path, dict[str, Any]] | None:
-    try:
-        with Image.open(path) as image:
-            original = {"width": image.width, "height": image.height, "mode": image.mode, "format": image.format}
-            image = image.convert("RGB")
-            scale = min(1.0, max_edge / max(image.width, image.height))
-            if scale < 1.0:
-                image = image.resize((max(1, int(image.width * scale)), max(1, int(image.height * scale))))
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
-            tmp_path = Path(tmp.name)
-            tmp.close()
-            image.save(tmp_path, format="JPEG", quality=85, optimize=True)
-            meta = {
-                "original": original,
-                "prepared": {"width": image.width, "height": image.height, "mime_type": "image/jpeg", "bytes": tmp_path.stat().st_size},
-            }
-            return tmp_path, meta
-    except Exception:
-        return None
-
-
-def _cleanup_temp_image(path: Path) -> None:
-    if path.parent != Path(tempfile.gettempdir()):
-        return
-    try:
-        path.unlink()
-    except OSError:
-        pass
-
-
 def _build_report(
     deck: Deck,
     runtime: dict[str, Any],
@@ -1197,10 +1142,10 @@ def _build_report(
         "api_retries": sum(int(record.get("api_retries") or 0) for record in records),
         "skipped": sum(1 for record in records if record.get("cache_status") == "skipped"),
         "skipped_candidates": sum(len(record.get("skipped_candidates", [])) for record in records),
-        "input_tokens": _sum_int(record.get("input_tokens") for record in records),
-        "output_tokens": _sum_int(record.get("output_tokens") for record in records),
-        "total_tokens": _sum_int(record.get("total_tokens") for record in records),
-        "provider_cached_input_tokens": _sum_int(record.get("provider_cached_input_tokens") for record in records),
+        "input_tokens": sum_int(record.get("input_tokens") for record in records),
+        "output_tokens": sum_int(record.get("output_tokens") for record in records),
+        "total_tokens": sum_int(record.get("total_tokens") for record in records),
+        "provider_cached_input_tokens": sum_int(record.get("provider_cached_input_tokens") for record in records),
     }
     return {
         "schema_version": 1,
@@ -1212,7 +1157,7 @@ def _build_report(
         "base_url": runtime["base_url"],
         "prompt_version": FIGURE_PROMPT_VERSION,
         "mode": mode,
-        "cache": {"mode": cache_mode, "dir": _display_path(cache_dir, output_root)},
+        "cache": {"mode": cache_mode, "dir": display_path(cache_dir, output_root)},
         "selection": {
             "max_targets": max_targets,
             "max_crops_per_page": max_crops_per_page,
@@ -1231,7 +1176,7 @@ def _base_record(target: FigureTarget, cache_key: str, cache_path: Path, output_
         "path": target.path,
         "reason": target.reason,
         "cache_key": cache_key,
-        "cache_file": _display_path(cache_path, output_root),
+        "cache_file": display_path(cache_path, output_root),
         "image_meta": image_meta,
     }
 
@@ -1250,10 +1195,6 @@ def _skipped_record(target: FigureTarget, status: str, output_root: Path) -> dic
     }
 
 
-def _page_by_id(deck: Deck, slide_id: int) -> SlidePage | None:
-    return next((page for page in deck.pages if page.slide_id == slide_id), None)
-
-
 def _next_figure_index(page: SlidePage | None) -> int:
     if page is None:
         return 1
@@ -1266,29 +1207,3 @@ def _next_figure_index(page: SlidePage | None) -> int:
         if suffix.isdigit():
             next_index = max(next_index, int(suffix) + 1)
     return next_index
-
-
-def _file_sha256(path: Path) -> str:
-    return sha256_text(path.read_bytes().hex())
-
-
-def _as_float(value: Any, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _display_path(path: Path, output_root: Path) -> str:
-    try:
-        return path.resolve().relative_to(output_root.resolve()).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def _sum_int(values: object) -> int:
-    total = 0
-    for value in values:
-        if isinstance(value, int):
-            total += value
-    return total

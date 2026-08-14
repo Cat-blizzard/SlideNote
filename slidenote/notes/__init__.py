@@ -8,7 +8,6 @@ from slidenote.figure_grounding import FIGURE_PLACEMENT_MODES
 from slidenote.models import Deck
 
 from .assembly import (
-    NoteContext,
     _prepare_note_assets,
     _select_note_contexts,
     _validate_markdown_image_links,
@@ -16,7 +15,6 @@ from .assembly import (
 from .local import _generate_notes_locally
 from .options import NOTE_PROFILES, TEACHING_ENRICHMENT_MODES, resolve_note_depth, should_run_teaching_enrichment
 from .orchestrator import _generate_notes_with_llm
-from .prompts import _llm_page_prompt
 
 # ---------------------------------------------------------------------------
 # Constants

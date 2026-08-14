@@ -8,6 +8,11 @@ from slidenote.content_guard import learning_items_for_page
 from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_preview
+from slidenote.utils import (
+    as_float,
+    preview,
+    str_or_none,
+)
 
 
 UNDERSTANDING_SCHEMA_VERSION = 1
@@ -18,15 +23,8 @@ def build_understanding_reports(
     *,
     section_plan: dict[str, Any] | None = None,
     deck_brief_report: dict[str, Any] | None = None,
-    modality_report: dict[str, Any] | None = None,
-    table_understanding_report: dict[str, Any] | None = None,
-    semantic_layout_report: dict[str, Any] | None = None,
-    image_importance_report: dict[str, Any] | None = None,
-    figure_grounding_report: dict[str, Any] | None = None,
     content_guard_report: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    del modality_report, table_understanding_report, semantic_layout_report, image_importance_report, figure_grounding_report
-
     brief = _brief(deck_brief_report)
     role_by_slide = _page_roles_from_brief(brief)
     section_by_slide = _section_lookup(section_plan, deck)
@@ -51,7 +49,7 @@ def build_understanding_reports(
             "pages_with_tables": sum(1 for page in pages if page["tables"]),
             "pages_with_figures": sum(1 for page in pages if page["figures"]),
             "pages_with_semantic_groups": sum(1 for page in pages if page["semantic"]["groups"]),
-            "high_value_figures": sum(1 for page in pages for figure in page["figures"] if _as_float(figure.get("importance_score"), 0.0) >= 0.65),
+            "high_value_figures": sum(1 for page in pages for figure in page["figures"] if as_float(figure.get("importance_score"), 0.0) >= 0.65),
             "required_items": sum(len(page["required_items"]) for page in pages),
             "role_sources": dict(Counter(page["role"]["source"] for page in pages)),
         },
@@ -71,7 +69,7 @@ def _deck_understanding(
         [figure for page in pages for figure in page["figures"]],
         key=lambda figure: (
             int(figure.get("importance_rank") or 9999),
-            -_as_float(figure.get("importance_score"), 0.0),
+            -as_float(figure.get("importance_score"), 0.0),
             str(figure.get("id") or ""),
         ),
     )
@@ -94,7 +92,7 @@ def _deck_understanding(
             "cross_page_links_total": len(brief.get("cross_page_links") or []),
             "tables_total": len(tables),
             "figures_total": len(figures),
-            "high_value_figures": sum(1 for figure in figures if _as_float(figure.get("importance_score"), 0.0) >= 0.65),
+            "high_value_figures": sum(1 for figure in figures if as_float(figure.get("importance_score"), 0.0) >= 0.65),
             "warnings_total": len(warnings),
         },
         "deck": {
@@ -164,8 +162,8 @@ def _page_understanding(
             "blocks_total": len(page.text_blocks),
             "chars_total": sum(len(block.content.strip()) for block in page.text_blocks),
             "blocks": [_text_block_record(block) for block in page.text_blocks[:12]],
-            "page_ocr_text": _preview(page.page_ocr_text, 500) if page.page_ocr_text else None,
-            "page_visual_summary": _preview(page.page_visual_summary, 500) if page.page_visual_summary else None,
+            "page_ocr_text": preview(page.page_ocr_text, 500) if page.page_ocr_text else None,
+            "page_visual_summary": preview(page.page_visual_summary, 500) if page.page_visual_summary else None,
         },
         "tables": tables,
         "figures": figures,
@@ -272,7 +270,7 @@ def _text_block_record(block: TextBlock) -> dict[str, Any]:
     return {
         "id": block.id,
         "type": block.type,
-        "preview": _preview(block.content, 260),
+        "preview": preview(block.content, 260),
         "bbox": block.bbox,
     }
 
@@ -324,9 +322,9 @@ def _figure_record(page: SlidePage, image: ImageAsset) -> dict[str, Any]:
         "importance_score": image.importance_score,
         "importance_rank": image.importance_rank,
         "importance_reason": image.importance_reason,
-        "visual_summary": _preview(image.visual_summary, 420) if image.visual_summary else None,
-        "ocr_text": _preview(image.ocr_text, 420) if image.ocr_text else None,
-        "figure_explanation": _preview(image.figure_explanation, 420) if image.figure_explanation else None,
+        "visual_summary": preview(image.visual_summary, 420) if image.visual_summary else None,
+        "ocr_text": preview(image.ocr_text, 420) if image.ocr_text else None,
+        "figure_explanation": preview(image.figure_explanation, 420) if image.figure_explanation else None,
         "figure_explanation_status": image.figure_explanation_status,
         "anchor_element_ids": list(image.anchor_element_ids),
         "anchor_group_id": image.anchor_group_id,
@@ -370,13 +368,13 @@ def _key_points(
     if page.title:
         points.append(page.title)
     for group in semantic.get("groups") or []:
-        goal = _str_or_none(group.get("learning_goal"))
+        goal = str_or_none(group.get("learning_goal"))
         if goal:
             points.append(goal)
     for table in tables:
-        points.extend(_str_or_none(table.get(key)) for key in ("table_conclusion", "table_summary"))
+        points.extend(str_or_none(table.get(key)) for key in ("table_conclusion", "table_summary"))
     for figure in figures:
-        points.extend(_str_or_none(figure.get(key)) for key in ("figure_explanation", "visual_summary", "ocr_text"))
+        points.extend(str_or_none(figure.get(key)) for key in ("figure_explanation", "visual_summary", "ocr_text"))
     for block in page.text_blocks:
         if block.type in {"title", "heading"}:
             continue
@@ -385,7 +383,7 @@ def _key_points(
         points.append(page.page_visual_summary)
     if page.page_ocr_text:
         points.append(page.page_ocr_text)
-    return [_preview(point, 220) for point in _dedupe([point for point in points if point])[:8]]
+    return [preview(point, 220) for point in _dedupe([point for point in points if point])[:8]]
 
 
 def _looks_like_example_page(page: SlidePage) -> bool:
@@ -435,20 +433,6 @@ def _dedupe(values: list[str]) -> list[str]:
     return result
 
 
-def _preview(text: str | None, limit: int = 180) -> str:
-    value = re.sub(r"\s+", " ", text or "").strip()
-    if len(value) <= limit:
-        return value
-    return value[: limit - 1] + "..."
-
-
-def _str_or_none(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
 def _int_or_none(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
@@ -456,10 +440,3 @@ def _int_or_none(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
-
-
-def _as_float(value: Any, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default

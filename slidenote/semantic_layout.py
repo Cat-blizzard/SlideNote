@@ -11,7 +11,16 @@ from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_k
 from slidenote.modality import page_has_hint
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_preview
-from slidenote.vision import _cleanup_temp_image, _file_sha256, _prepare_image_for_api
+from slidenote.utils import (
+    as_float,
+    cleanup_temp_image,
+    display_path,
+    file_sha256,
+    parse_json_object,
+    prepare_image_for_api,
+    preview,
+    sum_int,
+)
 
 
 SEMANTIC_LAYOUT_MODES = {"auto", "local", "vision"}
@@ -183,7 +192,7 @@ def enrich_deck_with_semantic_layout(
             "provider": runtime.get("provider") if runtime else None,
             "model": runtime.get("model") if runtime else None,
             "base_url": runtime.get("base_url") if runtime else None,
-            "cache": {"mode": cache_mode, "dir": _display_path(resolved_cache_dir, resolved_output_root) if resolved_cache_dir and resolved_output_root else None},
+            "cache": {"mode": cache_mode, "dir": display_path(resolved_cache_dir, resolved_output_root) if resolved_cache_dir and resolved_output_root else None},
             "prompt_version": SEMANTIC_LAYOUT_PROMPT_VERSION if runtime else None,
         },
         "summary": {
@@ -199,10 +208,10 @@ def enrich_deck_with_semantic_layout(
             "vision_fallback_pages": fallback_pages,
             "vision_skipped_pages": sum(1 for record in vision_records if record.get("status") == "skipped"),
             "vision_warnings": warning_count,
-            "input_tokens": _sum_int(record.get("input_tokens") for record in vision_records),
-            "output_tokens": _sum_int(record.get("output_tokens") for record in vision_records),
-            "total_tokens": _sum_int(record.get("total_tokens") for record in vision_records),
-            "provider_cached_input_tokens": _sum_int(record.get("provider_cached_input_tokens") for record in vision_records),
+            "input_tokens": sum_int(record.get("input_tokens") for record in vision_records),
+            "output_tokens": sum_int(record.get("output_tokens") for record in vision_records),
+            "total_tokens": sum_int(record.get("total_tokens") for record in vision_records),
+            "provider_cached_input_tokens": sum_int(record.get("provider_cached_input_tokens") for record in vision_records),
         },
         "pages": pages,
     }
@@ -259,7 +268,7 @@ def _process_semantic_layout_vision_page(
             "cache_status": "skipped",
             "warnings": ["missing_page_screenshot_file"],
         }
-    prepared = _prepare_image_for_api(source_path, max_edge=max_edge)
+    prepared = prepare_image_for_api(source_path, max_edge=max_edge)
     if prepared is None:
         return {
             "status": "skipped",
@@ -284,7 +293,7 @@ def _process_semantic_layout_vision_page(
             "detail": detail,
             "max_edge": max_edge,
             "source_path": page.page_screenshot,
-            "source_image_hash": _file_sha256(source_path),
+            "source_image_hash": file_sha256(source_path),
             "prompt_hash": sha256_text(prompt),
         }
         cache_key = make_cache_key(cache_key_payload)
@@ -294,7 +303,7 @@ def _process_semantic_layout_vision_page(
             "status": "fallback",
             "reason": reason,
             "cache_key": cache_key,
-            "cache_file": _display_path(cache_path, output_root),
+            "cache_file": display_path(cache_path, output_root),
             "image_meta": image_meta,
             "warnings": [],
             "invalid_references": [],
@@ -351,7 +360,7 @@ def _process_semantic_layout_vision_page(
             record.update(
                 {
                     "cache_status": cache_status,
-                    "cache_file": _display_path(cache_path, output_root),
+                    "cache_file": display_path(cache_path, output_root),
                     "llm_call": True,
                     "api_retries": response_usage.get("retries", 0),
                     "input_tokens": response_usage.get("input_tokens"),
@@ -362,7 +371,7 @@ def _process_semantic_layout_vision_page(
                 }
             )
 
-        parsed = _parse_json_object(result_json)
+        parsed = parse_json_object(result_json)
         if parsed is None:
             record["fallback_reason"] = "model_output_not_json"
             record["warnings"].append("model_output_not_json")
@@ -377,7 +386,7 @@ def _process_semantic_layout_vision_page(
             {
                 "status": "applied",
                 "result": enhanced,
-                "confidence": _as_float(parsed.get("confidence"), _layout_confidence(page, enhanced)),
+                "confidence": as_float(parsed.get("confidence"), _layout_confidence(page, enhanced)),
                 "model_reason": str(parsed.get("reason") or "").strip(),
             }
         )
@@ -392,7 +401,7 @@ def _process_semantic_layout_vision_page(
             "warnings": [f"vision_call_failed:{type(exc).__name__}"],
         }
     finally:
-        _cleanup_temp_image(prepared_path)
+        cleanup_temp_image(prepared_path)
 
 
 def _semantic_layout_vision_prompt(deck: Deck, page: SlidePage, local_result: dict[str, Any], reason: str) -> str:
@@ -446,8 +455,8 @@ def _semantic_layout_vision_prompt(deck: Deck, page: SlidePage, local_result: di
             "page_modality": page.page_modality,
             "candidate_reason": reason,
             "page_size": {"width": page.page_width, "height": page.page_height},
-            "page_ocr_text": _preview(page.page_ocr_text or "", 700),
-            "page_visual_summary": _preview(page.page_visual_summary or "", 500),
+            "page_ocr_text": preview(page.page_ocr_text or "", 700),
+            "page_visual_summary": preview(page.page_visual_summary or "", 500),
         },
         "local": local_result,
         "element_ids": [str(block.get("id")) for block in local_result.get("blocks", [])],
@@ -483,7 +492,7 @@ def _validated_vision_layout(
         if "must_explain" in update:
             block["must_explain"] = bool(update.get("must_explain"))
         if "importance_score" in update:
-            block["importance_score"] = round(max(0.0, min(1.0, _as_float(update.get("importance_score"), block.get("importance_score") or 0.0))), 3)
+            block["importance_score"] = round(max(0.0, min(1.0, as_float(update.get("importance_score"), block.get("importance_score") or 0.0))), 3)
 
     groups: list[dict[str, Any]] = []
     for index, group in enumerate(parsed.get("groups") or [], start=1):
@@ -507,12 +516,12 @@ def _validated_vision_layout(
             "group_id": group_id,
             "slide_id": page.slide_id,
             "scene_type": str(group.get("scene_type") or "visual_explanation"),
-            "learning_goal": str(group.get("learning_goal") or _preview(" ".join(str(block_by_id[item].get("preview") or "") for item in block_ids), 180)),
+            "learning_goal": str(group.get("learning_goal") or preview(" ".join(str(block_by_id[item].get("preview") or "") for item in block_ids), 180)),
             "block_ids": block_ids,
             "source_element_ids": _unique_ids(source_id for item in block_ids for source_id in block_by_id[item].get("source_element_ids", [])),
             "must_explain": bool(group.get("must_explain", True)),
             "crop_policy": str(group.get("crop_policy") or "group_image_near_explanation"),
-            "importance_score": round(max(0.0, min(1.0, _as_float(group.get("importance_score"), 0.7))), 3),
+            "importance_score": round(max(0.0, min(1.0, as_float(group.get("importance_score"), 0.7))), 3),
             "method": "vision_enhanced_v1",
         }
         groups.append(record)
@@ -554,7 +563,7 @@ def _validated_vision_layout(
                 "to": target_id,
                 "relation": str(relation.get("relation") or "related_to"),
                 "reason": str(relation.get("reason") or "vision_semantic_layout"),
-                "confidence": round(max(0.0, min(1.0, _as_float(relation.get("confidence"), 0.65))), 3),
+                "confidence": round(max(0.0, min(1.0, as_float(relation.get("confidence"), 0.65))), 3),
                 "method": "vision_enhanced_v1",
             }
         )
@@ -696,7 +705,7 @@ def _text_block_record(deck: Deck, page: SlidePage, block: TextBlock) -> dict[st
         "bbox": bbox,
         "layout_order": _order_from_bbox(bbox),
         "crop_policy": _crop_policy_for_block(block_type),
-        "preview": _preview(block.content),
+        "preview": preview(block.content, limit=180),
         "group_id": None,
     }
 
@@ -733,7 +742,7 @@ def _image_block_record(deck: Deck, page: SlidePage, image: ImageAsset) -> dict[
         "bbox": bbox,
         "layout_order": image.layout_order if image.layout_order is not None else _order_from_bbox(bbox),
         "crop_policy": "use_existing_image",
-        "preview": _preview(" ".join(part for part in [image.caption, image.figure_explanation, image.visual_summary, image.ocr_text] if part) or image.path),
+        "preview": preview(" ".join(part for part in [image.caption, image.figure_explanation, image.visual_summary, image.ocr_text] if part) or image.path, limit=180),
         "group_id": None,
     }
 
@@ -971,7 +980,7 @@ def _learning_goal(blocks: list[dict[str, Any]], scene_type: str) -> str:
         return "提炼表格结论，而不是逐格复述表格内容。"
     if scene_type == "visual_explanation":
         return "将图示与邻近概念合并讲解，避免把图单独堆放。"
-    return _preview(text, 140) or "讲解本组核心概念。"
+    return preview(text, 140) or "讲解本组核心概念。"
 
 
 def _normalize_bbox(source_type: str, bbox: list[float] | None, page_size: tuple[float | None, float | None] | None) -> list[float] | None:
@@ -1027,49 +1036,3 @@ def _unique_ids(values) -> list[str]:
             result.append(text)
             seen.add(text)
     return result
-
-
-def _parse_json_object(text: str) -> dict[str, Any] | None:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _as_float(value: Any, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _display_path(path: Path | None, output_root: Path | None) -> str | None:
-    if path is None:
-        return None
-    if output_root is None:
-        return str(path)
-    try:
-        return path.resolve().relative_to(output_root.resolve()).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def _sum_int(values: object) -> int:
-    total = 0
-    for value in values:
-        if isinstance(value, int):
-            total += value
-    return total
-
-
-def _preview(text: str, limit: int = 180) -> str:
-    value = re.sub(r"\s+", " ", text).strip()
-    if len(value) <= limit:
-        return value
-    return value[: limit - 1] + "…"

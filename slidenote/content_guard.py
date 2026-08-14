@@ -10,6 +10,11 @@ from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_preview
+from slidenote.utils import (
+    as_float,
+    display_path,
+    preview,
+)
 
 
 CONTENT_GUARD_MODES = {"auto", "off"}
@@ -167,7 +172,7 @@ def required_item_ids(report: dict[str, Any] | None, confidence_threshold: float
         return set()
     ids: set[str] = set()
     for item in report.get("items", []):
-        if item.get("must_explain") and _as_float(item.get("confidence"), 0.0) >= confidence_threshold:
+        if item.get("must_explain") and as_float(item.get("confidence"), 0.0) >= confidence_threshold:
             ids.add(str(item.get("element_id")))
     return ids
 
@@ -184,7 +189,7 @@ def required_items_for_slides(
         slide_id = int(item.get("slide_id") or 0)
         if slide_ids is not None and slide_id not in slide_ids:
             continue
-        if item.get("must_explain") and _as_float(item.get("confidence"), 0.0) >= confidence_threshold:
+        if item.get("must_explain") and as_float(item.get("confidence"), 0.0) >= confidence_threshold:
             result.append(item)
     return result
 
@@ -318,14 +323,14 @@ def _text_candidate(page: SlidePage, block: TextBlock) -> GuardCandidate | None:
         reasons.append("structural_text")
     if not must and role not in {"structural"}:
         return None
-    return GuardCandidate(block.id, page.slide_id, f"text:{block.type}", _preview(text), role, must, confidence, ";".join(reasons))
+    return GuardCandidate(block.id, page.slide_id, f"text:{block.type}", preview(text, limit=220), role, must, confidence, ";".join(reasons))
 
 
 def _table_candidate(page: SlidePage, table: TableBlock) -> GuardCandidate | None:
-    preview = table_preview(table, raw_rows=3)
-    if not preview.strip():
+    table_text = table_preview(table, raw_rows=3)
+    if not table_text.strip():
         return None
-    return GuardCandidate(table.id, page.slide_id, "table", _preview(preview), "table_conclusion", True, 0.82, "table")
+    return GuardCandidate(table.id, page.slide_id, "table", preview(table_text, limit=220), "table_conclusion", True, 0.82, "table")
 
 
 def _image_candidate(page: SlidePage, image: ImageAsset) -> GuardCandidate | None:
@@ -351,7 +356,7 @@ def _image_candidate(page: SlidePage, image: ImageAsset) -> GuardCandidate | Non
         reasons.append("long_image_ocr")
     if not must:
         return None
-    return GuardCandidate(image.id, page.slide_id, "image", _preview(text or image.path), role, must, confidence, ";".join(reasons))
+    return GuardCandidate(image.id, page.slide_id, "image", preview(text or image.path, limit=220), role, must, confidence, ";".join(reasons))
 
 
 def _build_local_report(deck: Deck, candidates: list[GuardCandidate], mode: str) -> dict[str, Any]:
@@ -414,7 +419,7 @@ def _merge_llm_report(deck: Deck, candidates: list[GuardCandidate], parsed: dict
                 "preview": candidate.preview,
                 "learning_role": str(source.get("learning_role") or candidate.local_role),
                 "must_explain": _as_bool(source.get("must_explain"), candidate.must_explain),
-                "confidence": round(_as_float(source.get("confidence"), candidate.confidence), 3),
+                "confidence": round(as_float(source.get("confidence"), candidate.confidence), 3),
                 "reason": str(source.get("reason") or candidate.reason),
                 "local_role": candidate.local_role,
                 "local_reason": candidate.reason,
@@ -428,7 +433,7 @@ def _merge_llm_report(deck: Deck, candidates: list[GuardCandidate], parsed: dict
     for index, page in enumerate(deck.pages):
         page_items = by_slide.get(page.slide_id, [])
         local_structural = _looks_like_structural_page(page, index)
-        has_required = any(item.get("must_explain") and _as_float(item.get("confidence"), 0.0) >= REQUIRED_CONFIDENCE_THRESHOLD for item in page_items)
+        has_required = any(item.get("must_explain") and as_float(item.get("confidence"), 0.0) >= REQUIRED_CONFIDENCE_THRESHOLD for item in page_items)
         role = page_role_by_slide.get(page.slide_id)
         if role not in {"structural", "content", "mixed"}:
             role = "mixed" if local_structural and has_required else "structural" if local_structural else "content"
@@ -515,7 +520,7 @@ def _item_record(candidate: GuardCandidate) -> dict[str, Any]:
 
 
 def _summary(pages: list[dict[str, Any]], items: list[dict[str, Any]]) -> dict[str, Any]:
-    required = [item for item in items if item.get("must_explain") and _as_float(item.get("confidence"), 0.0) >= REQUIRED_CONFIDENCE_THRESHOLD]
+    required = [item for item in items if item.get("must_explain") and as_float(item.get("confidence"), 0.0) >= REQUIRED_CONFIDENCE_THRESHOLD]
     return {
         "pages_total": len(pages),
         "structural_pages": sum(1 for page in pages if page.get("page_role") == "structural"),
@@ -544,7 +549,7 @@ def _llm_record(
         "base_url": runtime["base_url"],
         "cache_status": cache_status,
         "cache_key": cache_key,
-        "cache_file": _display_path(cache_path, output_root),
+        "cache_file": display_path(cache_path, output_root),
         "llm_call": llm_call,
         "input_tokens": usage.get("input_tokens"),
         "output_tokens": usage.get("output_tokens"),
@@ -589,30 +594,9 @@ def _normalize_text_key(value: str) -> str:
     return re.sub(r"[\s:：,，.。;；、\-_（）()<>]+", "", value).lower()
 
 
-def _preview(text: str, limit: int = 220) -> str:
-    value = re.sub(r"\s+", " ", text).strip()
-    if len(value) <= limit:
-        return value
-    return value[: limit - 1] + "…"
-
-
-def _as_float(value: Any, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def _as_bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
         return value.strip().lower() in {"true", "1", "yes"}
     return default
-
-
-def _display_path(path: Path, output_root: Path) -> str:
-    try:
-        return path.resolve().relative_to(output_root.resolve()).as_posix()
-    except ValueError:
-        return str(path)

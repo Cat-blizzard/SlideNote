@@ -5,8 +5,8 @@ from typing import Any
 
 from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck
+from slidenote.utils import display_path, sum_int
 
-from .assembly import _display_path, _sum_int
 from .prompt_payload import _prompt_brief_hash, _prompt_deck_brief
 from .versions import NOTE_PROMPT_VERSION
 
@@ -60,10 +60,10 @@ def _build_usage_report(
         "cache_disabled_calls": sum(1 for context in contexts if context.get("cache_status") == "disabled"),
         "llm_calls": sum(1 for context in contexts if context.get("llm_call")),
         "api_retries": sum(int(context.get("api_retries") or 0) for context in contexts),
-        "input_tokens": _sum_int(context.get("input_tokens") for context in contexts),
-        "output_tokens": _sum_int(context.get("output_tokens") for context in contexts),
-        "total_tokens": _sum_int(context.get("total_tokens") for context in contexts),
-        "provider_cached_input_tokens": _sum_int(context.get("provider_cached_input_tokens") for context in contexts),
+        "input_tokens": sum_int(context.get("input_tokens") for context in contexts),
+        "output_tokens": sum_int(context.get("output_tokens") for context in contexts),
+        "total_tokens": sum_int(context.get("total_tokens") for context in contexts),
+        "provider_cached_input_tokens": sum_int(context.get("provider_cached_input_tokens") for context in contexts),
     }
     return {
         "schema_version": 1,
@@ -76,7 +76,7 @@ def _build_usage_report(
         "prompt_version": NOTE_PROMPT_VERSION,
         "cache": {
             "mode": cache_mode,
-            "dir": _display_path(cache_dir, output_root),
+            "dir": display_path(cache_dir, output_root),
         },
         "request": {
             "temperature": temperature,
@@ -108,28 +108,3 @@ def _build_usage_report(
         "repair_contexts": repair_contexts or [],
     }
 
-
-def _render_generation_info(usage_report: dict[str, Any]) -> list[str]:
-    summary = usage_report["summary"]
-    cache_mode = usage_report["cache"]["mode"]
-    lines = [
-        "## \u751f\u6210\u4fe1\u606f",
-        "",
-        f"- LLM provider\uff1a{usage_report['provider']}",
-        f"- \u6a21\u578b\uff1a{usage_report['model']}",
-        f"- \u7f13\u5b58\u6a21\u5f0f\uff1a{cache_mode}",
-        f"- \u7b14\u8bb0\u7b56\u7565\uff1a{usage_report['request'].get('note_strategy', 'direct')}",
-        f"- \u7b14\u8bb0 profile\uff1a{usage_report['request'].get('note_profile', 'auto')}",
-        f"- \u8f93\u51fa\u8bed\u8a00\uff1a{usage_report['request'].get('note_language', 'zh')}",
-        f"- \u672f\u8bed\u7b56\u7565\uff1a{usage_report['request'].get('term_policy', 'bilingual')}",
-        f"- \u751f\u6210\u4e0a\u4e0b\u6587\uff1a{summary.get('contexts_total', summary['pages_total'])} \u4e2a",
-        f"- \u672c\u5730\u7f13\u5b58\u547d\u4e2d\uff1a{summary['local_cache_hits']} / {summary.get('contexts_total', summary['pages_total'])} \u4e2a\u4e0a\u4e0b\u6587",
-        f"- \u5b9e\u9645 LLM \u8c03\u7528\uff1a{summary['llm_calls']} \u4e2a\u4e0a\u4e0b\u6587",
-        "- \u8be6\u7ec6\u7528\u91cf\u4e0e\u7f13\u5b58\u4fe1\u606f\uff1a`llm_usage.json`",
-        "",
-    ]
-    if usage_report["request"].get("note_strategy") == "lecture-weave":
-        lines.insert(8, f"- \u9010\u9875\u6df1\u8bb2\u8c03\u7528\uff1a{summary.get('page_note_calls', 0)} \u4e2a")
-        lines.insert(9, f"- \u7ae0\u8282\u7f16\u7ec7\u8c03\u7528\uff1a{summary.get('weave_calls', 0)} \u4e2a")
-        lines.insert(10, f"- \u8bb2\u89e3\u589e\u5f3a\u8c03\u7528\uff1a{summary.get('teaching_enrichment_calls', 0)} \u4e2a")
-    return lines

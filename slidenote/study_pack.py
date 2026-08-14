@@ -10,7 +10,8 @@ from slidenote.content_guard import REQUIRED_CONFIDENCE_THRESHOLD
 from slidenote.exporting import clean_markdown_for_export
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
-from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
+from slidenote.models import Deck, TableBlock, TextBlock
+from slidenote.utils import as_float, display_path, round_score
 
 
 STUDY_PACK_MODES = {"off", "auto", "local", "llm"}
@@ -702,13 +703,13 @@ def build_question_quality_report(study_pack_report: dict[str, Any] | None) -> d
     )
     return {
         "schema_version": 1,
-        "overall_score": _round_score(overall),
-        "choice_distractor_score": _round_score(choice_score),
-        "explanation_score": _round_score(explanation_score),
-        "source_ref_score": _round_score(source_ref_score),
-        "question_mix_score": _round_score(question_mix_score),
-        "figure_question_score": _round_score(figure_question_score),
-        "mechanical_definition_score": _round_score(mechanical_definition_score),
+        "overall_score": round_score(overall),
+        "choice_distractor_score": round_score(choice_score),
+        "explanation_score": round_score(explanation_score),
+        "source_ref_score": round_score(source_ref_score),
+        "question_mix_score": round_score(question_mix_score),
+        "figure_question_score": round_score(figure_question_score),
+        "mechanical_definition_score": round_score(mechanical_definition_score),
         "questions_total": len(questions),
         "choice_questions_total": len(choice_questions),
         "flags": flags,
@@ -1359,7 +1360,7 @@ def _content_guard_for_prompt(content_guard: dict[str, Any] | None) -> list[dict
         return []
     result = []
     for item in _dict_list(content_guard.get("items"), limit=300):
-        confidence = _as_float(item.get("confidence"), 0.0)
+        confidence = as_float(item.get("confidence"), 0.0)
         if item.get("must_explain") or confidence >= REQUIRED_CONFIDENCE_THRESHOLD:
             result.append(
                 {
@@ -1408,7 +1409,7 @@ def _llm_record(
         "model": runtime["model"],
         "base_url": runtime["base_url"],
         "cache_key": cache_key,
-        "cache_file": _display_path(cache_path, output_root),
+        "cache_file": display_path(cache_path, output_root),
         "prompt_hash": prompt_hash,
         "cache_status": cache_status,
         "llm_call": llm_call,
@@ -1439,7 +1440,7 @@ def _guard_items(content_guard: dict[str, Any] | None) -> list[dict[str, Any]]:
     items = _dict_list(content_guard.get("items"), limit=1000)
     result = []
     for item in items:
-        if item.get("must_explain") or _as_float(item.get("confidence"), 0.0) >= REQUIRED_CONFIDENCE_THRESHOLD:
+        if item.get("must_explain") or as_float(item.get("confidence"), 0.0) >= REQUIRED_CONFIDENCE_THRESHOLD:
             result.append(item)
     return result
 
@@ -1662,10 +1663,6 @@ def _question_quality_flags(
     return flags
 
 
-def _round_score(value: float) -> float:
-    return round(max(0.0, min(1.0, value)), 3)
-
-
 def _normalize_answer(value: Any, qtype: str) -> Any:
     if qtype == "choice":
         return _as_int(value, 0)
@@ -1761,17 +1758,3 @@ def _as_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
-
-
-def _as_float(value: Any, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _display_path(path: Path, output_root: Path) -> str:
-    try:
-        return path.resolve().relative_to(output_root.resolve()).as_posix()
-    except ValueError:
-        return str(path)

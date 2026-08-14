@@ -5,7 +5,8 @@ from typing import Any
 
 from slidenote.figure_grounding import note_candidate_images
 from slidenote.image_ranking import sorted_images_by_importance
-from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
+from slidenote.models import Deck, SlidePage, TableBlock, TextBlock
+from slidenote.utils import escape_md
 
 from .assembly import (
     NoteContext,
@@ -253,10 +254,10 @@ def _render_table(page: SlidePage, table: TableBlock, source_display: str) -> li
     width = max(len(row) for row in table.rows)
     padded = [row + [""] * (width - len(row)) for row in table.rows]
     header = padded[0]
-    lines.append("| " + " | ".join(_escape_md(cell) or " " for cell in header) + " |")
+    lines.append("| " + " | ".join(escape_md(cell) or " " for cell in header) + " |")
     lines.append("| " + " | ".join("---" for _ in header) + " |")
     for row in padded[1:] or [[""] * width]:
-        lines.append("| " + " | ".join(_escape_md(cell) or " " for cell in row) + " |")
+        lines.append("| " + " | ".join(escape_md(cell) or " " for cell in row) + " |")
     return lines
 
 
@@ -278,7 +279,3 @@ def _format_key_row(row: dict[str, Any]) -> str:
         return label
     separator = "\uff1b"
     return f"{label}\uff1a{separator.join(parts)}"
-
-
-def _escape_md(value: str) -> str:
-    return value.replace("|", "\\|").replace("\n", "<br>")

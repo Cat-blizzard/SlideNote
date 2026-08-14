@@ -6,40 +6,19 @@ from pathlib import Path
 import fitz
 import pytest
 
-from slidenote.cli import (
+from slidenote.build.config import (
     _apply_build_preset_defaults,
     _apply_note_profile_defaults,
-    _apply_speed_mode_defaults,
-    _explicit_cli_options,
     _parse_slide_ranges,
     _resolve_api_concurrency,
-    main,
 )
+from slidenote.cli import _explicit_cli_options, main
 from slidenote.notes import NoteGenerationResult
 
 
 def test_parse_slide_ranges():
     assert _parse_slide_ranges("1,3-5,8") == {1, 3, 4, 5, 8}
     assert _parse_slide_ranges(None) == set()
-
-
-def test_speed_mode_fills_unset_limits():
-    args = Namespace(
-        speed_mode="fast",
-        max_output_tokens=None,
-        ocr_max_targets=None,
-        ocr_max_edge=None,
-        vision_max_targets=None,
-        vision_max_edge=None,
-        vision_max_output_tokens=None,
-        vision_detail=None,
-    )
-
-    _apply_speed_mode_defaults(args)
-
-    assert args.max_output_tokens == 2500
-    assert args.vision_max_targets == 25
-    assert args.vision_detail == "low"
 
 
 def test_api_concurrency_defaults_to_global_value():
@@ -682,7 +661,7 @@ def test_deck_brief_auto_runs_before_lecture_weave(tmp_path, monkeypatch):
             return result
 
     monkeypatch.setattr("slidenote.deck_brief.LLMClient", FakeDeckBriefClient)
-    monkeypatch.setattr("slidenote.notes.orchestrator.LLMClient", FakeNotesClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeNotesClient)
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setattr("slidenote.build.stages.build_section_plan", lambda *args, **kwargs: {"summary": {"sections_total": 1}})
     monkeypatch.setattr("slidenote.build.stages.build_content_guard", lambda *args, **kwargs: None)

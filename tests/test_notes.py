@@ -539,7 +539,7 @@ def test_llm_generation_uses_local_cache(tmp_path, monkeypatch):
 
 
 def test_llm_prompt_uses_page_visual_summary():
-    from slidenote.notes import _llm_page_prompt
+    from slidenote.notes.prompts import _llm_page_prompt
 
     page = SlidePage(slide_id=3, page_visual_summary="图中展示 TCP 三次握手流程。")
 
@@ -550,7 +550,7 @@ def test_llm_prompt_uses_page_visual_summary():
 
 
 def test_llm_prompt_includes_table_understanding_fields():
-    from slidenote.notes import _llm_page_prompt
+    from slidenote.notes.prompts import _llm_page_prompt
 
     table = TableBlock(
         id="s1_tbl1",
@@ -568,7 +568,7 @@ def test_llm_prompt_includes_table_understanding_fields():
 
 
 def test_llm_prompt_includes_semantic_layout_groups():
-    from slidenote.notes import _llm_page_prompt
+    from slidenote.notes.prompts import _llm_page_prompt
 
     page = SlidePage(
         slide_id=1,

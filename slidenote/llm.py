@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import base64
 import mimetypes
-import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from slidenote.api_retry import with_api_retries
+from slidenote.utils import first_env
 
 
 @dataclass(frozen=True, slots=True)
@@ -432,9 +432,9 @@ def resolve_provider_runtime(provider: str, model: str | None = None, base_url: 
 
 def _resolve_model(spec: ProviderSpec, explicit_model: str | None, for_vision: bool = False) -> str:
     if for_vision:
-        model = explicit_model or _first_env(("SLIDENOTE_VISION_MODEL",) + spec.vision_model_envs) or spec.default_vision_model
+        model = explicit_model or first_env(("SLIDENOTE_VISION_MODEL",) + spec.vision_model_envs) or spec.default_vision_model
     else:
-        model = explicit_model or _first_env(("SLIDENOTE_MODEL",) + spec.model_envs) or spec.default_model
+        model = explicit_model or first_env(("SLIDENOTE_MODEL",) + spec.model_envs) or spec.default_model
     if not model:
         model_envs = spec.vision_model_envs if for_vision else spec.model_envs
         generic_env = "SLIDENOTE_VISION_MODEL" if for_vision else "SLIDENOTE_MODEL"
@@ -446,7 +446,7 @@ def _resolve_model(spec: ProviderSpec, explicit_model: str | None, for_vision: b
 
 
 def _resolve_api_key(spec: ProviderSpec, explicit_api_key: str | None) -> str:
-    key = explicit_api_key or _first_env(spec.api_key_envs)
+    key = explicit_api_key or first_env(spec.api_key_envs)
     if not key:
         raise RuntimeError(
             f"Missing API key for provider `{spec.canonical_name}`. Set one of: {', '.join(spec.api_key_envs)} "
@@ -456,15 +456,7 @@ def _resolve_api_key(spec: ProviderSpec, explicit_api_key: str | None) -> str:
 
 
 def _resolve_base_url(spec: ProviderSpec, explicit_base_url: str | None) -> str | None:
-    return explicit_base_url or _first_env(("SLIDENOTE_BASE_URL",) + spec.base_url_envs) or spec.base_url
-
-
-def _first_env(names: tuple[str, ...]) -> str | None:
-    for name in names:
-        value = os.environ.get(name)
-        if value:
-            return value
-    return None
+    return explicit_base_url or first_env(("SLIDENOTE_BASE_URL",) + spec.base_url_envs) or spec.base_url
 
 
 def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:

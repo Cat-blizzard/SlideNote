@@ -4,6 +4,10 @@ from typing import Any
 
 from slidenote.ir_context import IRBuildContext
 from slidenote.models import SlidePage
+from slidenote.utils import (
+    as_float,
+    looks_normalized,
+)
 
 
 def standard_fields(
@@ -30,9 +34,9 @@ def standard_fields(
         fallback=fallback_confidence,
         candidates=confidence_candidates,
     )
-    resolved_layout_order = _as_float(layout_order, None)
+    resolved_layout_order = as_float(layout_order, None)
     if resolved_layout_order is None:
-        resolved_layout_order = _as_float(semantic_value(semantic, "layout_order"), None)
+        resolved_layout_order = as_float(semantic_value(semantic, "layout_order"), None)
     if resolved_layout_order is None:
         resolved_layout_order = _order_from_bbox(normalized)
     coverage_state, coverage = _coverage_state(
@@ -130,7 +134,7 @@ def _resolve_confidence(
         *[(f"candidate_{index}", value) for index, value in enumerate(candidates or [], start=1)],
         ("local_default", fallback),
     ]:
-        score = _as_float(value, None)
+        score = as_float(value, None)
         if score is not None:
             return round(max(0.0, min(1.0, score)), 3), source
     return 0.0, "unknown"
@@ -183,10 +187,10 @@ def _coverage_state(
 def _normalize_bbox(source_type: str, bbox: list[float] | None, page: SlidePage) -> list[float] | None:
     if not bbox:
         return None
-    if _looks_normalized(bbox):
+    if looks_normalized(bbox):
         return _clamp_bbox(bbox)
-    width = _as_float(page.page_width, None)
-    height = _as_float(page.page_height, None)
+    width = as_float(page.page_width, None)
+    height = as_float(page.page_height, None)
     if not width or not height or width <= 0 or height <= 0:
         return None
     x1, y1, third, fourth = bbox
@@ -202,17 +206,13 @@ def _normalize_bbox(source_type: str, bbox: list[float] | None, page: SlidePage)
 def _bbox_format(source_type: str, bbox: list[float] | None) -> str | None:
     if not bbox:
         return None
-    if _looks_normalized(bbox):
+    if looks_normalized(bbox):
         return "normalized_xyxy"
     if source_type == "pptx":
         return "source_xywh"
     if source_type == "pdf":
         return "source_xyxy"
     return "source_xyxy"
-
-
-def _looks_normalized(bbox: list[float]) -> bool:
-    return len(bbox) == 4 and all(-0.001 <= float(value) <= 1.001 for value in bbox)
 
 
 def _clamp_bbox(bbox: list[float]) -> list[float]:
@@ -228,10 +228,3 @@ def _order_from_bbox(bbox: list[float] | None) -> float | None:
     if not bbox:
         return None
     return round(float(bbox[1]) * 1000.0 + float(bbox[0]), 4)
-
-
-def _as_float(value: Any, default: float | None) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default

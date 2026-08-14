@@ -15,6 +15,7 @@ from slidenote.ir_standard import (
 )
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_preview
+from slidenote.utils import preview
 
 
 ElementIR = dict[str, Any]
@@ -124,7 +125,7 @@ def _text_element(
         "roles": compact(roles),
         "evidence": {
             "content": block.content,
-            "preview": _preview(block.content),
+            "preview": preview(block.content),
         },
         "source_ids": [block.id],
         "expected_in_notes": True,
@@ -225,7 +226,7 @@ def _image_element(
             "ocr_text": image.ocr_text,
             "visual_summary": image.visual_summary,
             "figure_explanation": image.figure_explanation,
-            "preview": _preview(" ".join(_truthy([image.caption, image.figure_explanation, image.visual_summary, image.ocr_text])) or image.path),
+            "preview": preview(" ".join(_truthy([image.caption, image.figure_explanation, image.visual_summary, image.ocr_text])) or image.path),
             "width": image.width,
             "height": image.height,
             "crop_source_path": image.crop_source_path,
@@ -323,10 +324,3 @@ def _unique_ids(values: Iterable[Any]) -> list[str]:
         seen.add(text)
         result.append(text)
     return result
-
-
-def _preview(text: str, limit: int = 160) -> str:
-    value = " ".join(str(text).split())
-    if len(value) <= limit:
-        return value
-    return value[: limit - 1] + "..."

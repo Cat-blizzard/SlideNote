@@ -2,7 +2,7 @@ import pytest
 
 from slidenote.llm import LLMClient, LLMResult, get_provider_spec, resolve_provider_runtime
 from slidenote.models import ImageAsset, SlidePage
-from slidenote.notes import _llm_page_prompt
+from slidenote.notes.prompts import _llm_page_prompt
 
 
 def test_provider_aliases():

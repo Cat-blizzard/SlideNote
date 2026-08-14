@@ -7,8 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from slidenote.llm_cache import LLMCache, make_cache_key, sha256_text, utc_now_iso
-from slidenote.ocr import OCRClient, _cleanup_temp_image, _prepare_image_for_ocr
-from slidenote.utils import ensure_clean_dir, write_json, write_text
+from slidenote.ocr import OCRClient, _prepare_image_for_ocr
+from slidenote.utils import (
+    cleanup_temp_image,
+    display_path,
+    ensure_clean_dir,
+    write_json,
+    write_text,
+)
 
 TEXTBOOK_SCHEMA_VERSION = 1
 LOW_TEXT_CHARS = 80
@@ -310,7 +316,7 @@ def _recognize_textbook_page(
         "physical_page": page_number,
         "reason": reason,
         "cache_key": cache_key,
-        "cache_file": _display_path(cache_path, cache.cache_dir.parent.parent),
+        "cache_file": display_path(cache_path, cache.cache_dir.parent.parent),
         "api_call": False,
         "cache_status": "local_hit" if cached else "miss",
     }
@@ -347,10 +353,10 @@ def _recognize_textbook_page(
             },
         )
         if written is not None:
-            record["cache_file"] = _display_path(written, cache.cache_dir.parent.parent)
+            record["cache_file"] = display_path(written, cache.cache_dir.parent.parent)
         return record, text
     finally:
-        _cleanup_temp_image(prepared_path)
+        cleanup_temp_image(prepared_path)
 
 
 def _ocr_report(input_path: Path, provider: str, mode: str, cache_dir: Path, records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -776,10 +782,3 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return "sha256:" + digest.hexdigest()
-
-
-def _display_path(path: Path, root: Path) -> str:
-    try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
-    except ValueError:
-        return str(path)

@@ -9,7 +9,7 @@ from slidenote.build.artifacts import (
     _register_export_artifacts,
     _run_json_stage,
 )
-from slidenote.build.config import _should_build_deck_brief, _vision_features_enabled
+from slidenote.build.config import _should_build_deck_brief
 from slidenote.build.progress import _llm_progress, _slowest_stages, _target_progress
 from slidenote.build.state import BuildState
 from slidenote.build.summary import _build_run_summary
@@ -28,11 +28,12 @@ from slidenote.sections import build_section_plan
 from slidenote.source_map import build_source_map
 from slidenote.table_understanding import enrich_deck_with_table_understanding
 from slidenote.understanding import build_understanding_reports
-from slidenote.visual.crop import enrich_deck_with_composite_figures, enrich_deck_with_figures
-from slidenote.visual.grounding import enrich_deck_with_figure_grounding
-from slidenote.visual.semantic_layout import enrich_deck_with_semantic_layout
-from slidenote.visual.vision import enrich_deck_with_vision
+from slidenote.composite_figures import enrich_deck_with_composite_figures
+from slidenote.figure_grounding import enrich_deck_with_figure_grounding
+from slidenote.figures import enrich_deck_with_figures
 from slidenote.modality import enrich_deck_with_modalities
+from slidenote.semantic_layout import enrich_deck_with_semantic_layout
+from slidenote.vision import enrich_deck_with_vision
 
 
 def _stage_parse(state: BuildState) -> None:
@@ -327,11 +328,6 @@ def _stage_understanding(state: BuildState) -> None:
         deck,
         section_plan=state.section_report,
         deck_brief_report=state.deck_brief_report,
-        modality_report=state.modality_report,
-        table_understanding_report=state.table_understanding_report,
-        semantic_layout_report=state.semantic_layout_report,
-        image_importance_report=state.image_importance_report,
-        figure_grounding_report=state.figure_grounding_report,
         content_guard_report=state.content_guard_report,
     )
     state.deck_understanding_report = deck_understanding

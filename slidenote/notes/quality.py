@@ -6,6 +6,7 @@ from typing import Any
 from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck
 from slidenote.study_pack import build_question_quality_report
+from slidenote.utils import round_score
 
 
 def build_note_quality_report(
@@ -113,13 +114,13 @@ def _coherence_score(paragraphs: list[str], heading_count: int) -> float:
     paragraph_factor = min(1.0, len(paragraphs) / 8)
     heading_factor = min(1.0, heading_count / 5) if heading_count else 0.25
     length_factor = min(1.0, avg_len / 180)
-    return _round_score(0.42 * paragraph_factor + 0.28 * heading_factor + 0.30 * length_factor)
+    return round_score(0.42 * paragraph_factor + 0.28 * heading_factor + 0.30 * length_factor)
 
 
 def _keyword_score(markdown: str, keywords: list[str], base: float) -> float:
     lowered = markdown.lower()
     hits = sum(lowered.count(keyword.lower()) for keyword in keywords)
-    return _round_score(min(1.0, base + hits / 8))
+    return round_score(min(1.0, base + hits / 8))
 
 
 def _figure_integration_score(markdown: str, image_total: int, image_refs: int) -> float:
@@ -128,7 +129,7 @@ def _figure_integration_score(markdown: str, image_total: int, image_refs: int) 
     figure_terms = sum(markdown.count(term) for term in ["图", "表", "公式", "流程", "截图", "figure", "formula"])
     reference_factor = min(1.0, image_refs / max(1, image_total))
     explanation_factor = min(1.0, figure_terms / max(2, image_refs * 2))
-    return _round_score(0.55 * reference_factor + 0.45 * explanation_factor)
+    return round_score(0.55 * reference_factor + 0.45 * explanation_factor)
 
 
 def _mechanical_page_listing_score(markdown: str) -> float:
@@ -143,7 +144,7 @@ def _mechanical_page_listing_score(markdown: str) -> float:
     hits = sum(len(re.findall(pattern, markdown, flags=re.IGNORECASE)) for pattern in patterns)
     page_heading_hits = len(re.findall(r"(?m)^#{2,4}\s*(第\s*\d+\s*页|Slide\s*\d+)", markdown, flags=re.IGNORECASE))
     density = (hits + page_heading_hits * 2) / max(1, len(markdown) / 1000)
-    return _round_score(min(1.0, density / 3))
+    return round_score(min(1.0, density / 3))
 
 
 def _hallucination_risk(
@@ -190,7 +191,3 @@ def _suggest_repairs(
     if pitfall_score < 0.25:
         suggestions.append("补充易错点或常见误解。")
     return suggestions
-
-
-def _round_score(value: float) -> float:
-    return round(max(0.0, min(1.0, value)), 3)

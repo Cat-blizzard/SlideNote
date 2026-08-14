@@ -12,6 +12,11 @@ from slidenote.figure_grounding import normalized_element_bbox, normalized_image
 from slidenote.image_assets import image_metadata
 from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock, normalize_rel_path
+from slidenote.utils import (
+    bbox_area,
+    pixel_box,
+    union_bbox,
+)
 
 
 COMPOSITE_FIGURE_MODES = {"off", "auto"}
@@ -136,27 +141,27 @@ def _process_page(
                     continue
                 cluster = FigureCluster(
                     parts=usable_parts,
-                    bbox=_union_bbox([part.bbox for part in usable_parts]),
+                    bbox=union_bbox([part.bbox for part in usable_parts]),
                     confidence=cluster.confidence,
                     reason=cluster.reason,
                 )
                 crop_bbox = _expand_bbox(cluster.bbox, margin=0.025)
-                pixel_box = _pixel_box(crop_bbox, width, height)
-                if pixel_box[2] <= pixel_box[0] or pixel_box[3] <= pixel_box[1]:
+                pixel_rect = pixel_box(crop_bbox, width, height)
+                if pixel_rect[2] <= pixel_rect[0] or pixel_rect[3] <= pixel_rect[1]:
                     base_record["skipped"].append({"reason": "invalid_crop_box", "bbox": crop_bbox})
                     continue
 
                 figure_id = f"s{page.slide_id}_fig{next_index}"
                 next_index += 1
                 crop_path = figures_dir / f"slide{page.slide_id}_composite{len(base_record['composites']) + 1}.png"
-                rgb.crop(pixel_box).save(crop_path, format="PNG")
+                rgb.crop(pixel_rect).save(crop_path, format="PNG")
                 meta = image_metadata(crop_path)
                 source_ids = _source_ids_for_cluster(deck, page, cluster)
                 image_asset = ImageAsset(
                     id=figure_id,
                     path=normalize_rel_path(crop_path, output_root),
                     caption=f"\u7b2c {page.slide_id} \u9875\u7ec4\u5408\u56fe {len(base_record['composites']) + 1}",
-                    bbox=[float(value) for value in pixel_box],
+                    bbox=[float(value) for value in pixel_rect],
                     source_format="cropped_png",
                     width=meta["width"],
                     height=meta["height"],
@@ -182,7 +187,7 @@ def _process_page(
                         "id": image_asset.id,
                         "path": image_asset.path,
                         "bbox": crop_bbox,
-                        "pixel_bbox": [float(value) for value in pixel_box],
+                        "pixel_bbox": [float(value) for value in pixel_rect],
                         "confidence": image_asset.confidence,
                         "reason": cluster.reason,
                         "child_image_ids": child_ids,
@@ -205,7 +210,7 @@ def _candidate_parts(deck: Deck, page: SlidePage) -> list[FigurePart]:
         bbox = normalized_image_bbox(deck, page, image)
         if not bbox:
             continue
-        area = _area(bbox)
+        area = bbox_area(bbox)
         if area < 0.0002 or area > 0.18:
             continue
         if _edge_decoration_like(bbox, area):
@@ -266,8 +271,8 @@ def _parts_are_neighbors(left: list[float], right: list[float]) -> bool:
 
 
 def _evaluate_group(deck: Deck, page: SlidePage, parts: list[FigurePart], min_children: int) -> FigureCluster | None:
-    bbox = _union_bbox([part.bbox for part in parts])
-    union_area = _area(bbox)
+    bbox = union_bbox([part.bbox for part in parts])
+    union_area = bbox_area(bbox)
     if union_area < 0.04 or union_area > 0.75:
         return None
     span_width = bbox[2] - bbox[0]
@@ -354,15 +359,6 @@ def _next_figure_index(page: SlidePage) -> int:
     return next_index
 
 
-def _union_bbox(boxes: list[list[float]]) -> list[float]:
-    return [
-        min(box[0] for box in boxes),
-        min(box[1] for box in boxes),
-        max(box[2] for box in boxes),
-        max(box[3] for box in boxes),
-    ]
-
-
 def _expand_bbox(bbox: list[float], margin: float) -> list[float]:
     return [
         round(max(0.0, bbox[0] - margin), 4),
@@ -370,20 +366,6 @@ def _expand_bbox(bbox: list[float], margin: float) -> list[float]:
         round(min(1.0, bbox[2] + margin), 4),
         round(min(1.0, bbox[3] + margin), 4),
     ]
-
-
-def _pixel_box(bbox: list[float], width: int, height: int) -> tuple[int, int, int, int]:
-    x1, y1, x2, y2 = bbox
-    return (
-        max(0, min(width - 1, int(round(x1 * width)))),
-        max(0, min(height - 1, int(round(y1 * height)))),
-        max(1, min(width, int(round(x2 * width)))),
-        max(1, min(height, int(round(y2 * height)))),
-    )
-
-
-def _area(bbox: list[float]) -> float:
-    return max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
 
 
 def _intersection_area(left: list[float], right: list[float]) -> float:

@@ -9,6 +9,10 @@ from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.models import Deck, SlidePage
 from slidenote.table_understanding import table_preview
+from slidenote.utils import (
+    display_path,
+    str_or_none,
+)
 
 DECK_BRIEF_PROMPT_VERSION = "deck-brief-v1"
 
@@ -143,9 +147,9 @@ def build_deck_brief(
 
 def render_deck_brief_markdown(report: dict[str, Any]) -> str:
     brief = report.get("brief") if isinstance(report.get("brief"), dict) else {}
-    title = _str_or_none(brief.get("course_title")) or Path(str(report.get("source_path") or "Deck")).stem
+    title = str_or_none(brief.get("course_title")) or Path(str(report.get("source_path") or "Deck")).stem
     lines = [f"# Deck Brief: {title}", ""]
-    summary = _str_or_none(brief.get("one_sentence_summary"))
+    summary = str_or_none(brief.get("one_sentence_summary"))
     if summary:
         lines.extend([summary, ""])
     _render_list_section(lines, "Core Questions", brief.get("core_questions"))
@@ -171,8 +175,8 @@ def deck_brief_for_prompt(report: dict[str, Any] | None, slide_ids: list[int] | 
         return None
     wanted = {int(slide_id) for slide_id in slide_ids or [] if isinstance(slide_id, int)}
     prompt_brief = {
-        "course_title": _str_or_none(brief.get("course_title")),
-        "one_sentence_summary": _str_or_none(brief.get("one_sentence_summary")),
+        "course_title": str_or_none(brief.get("course_title")),
+        "one_sentence_summary": str_or_none(brief.get("one_sentence_summary")),
         "core_questions": _string_list(brief.get("core_questions"), limit=8),
         "chapter_outline": _filter_by_slide_ids(_dict_list(brief.get("chapter_outline"), limit=18), wanted),
         "key_concepts": _dict_list(brief.get("key_concepts"), limit=40),
@@ -226,7 +230,7 @@ def _report(
             "cache": {
                 "mode": cache_mode,
                 "status": cache_status,
-                "file": _display_path(cache_path, output_root),
+                "file": display_path(cache_path, output_root),
             },
             "llm_call": llm_call,
             "prompt_hash": prompt_hash,
@@ -383,8 +387,8 @@ def _normalize_brief(parsed: dict[str, Any], deck: Deck, section_plan: dict[str,
         ]
     page_roles = _normalize_page_roles(raw.get("page_roles"), deck)
     return {
-        "course_title": _str_or_none(raw.get("course_title") or raw.get("title") or raw.get("topic")),
-        "one_sentence_summary": _str_or_none(raw.get("one_sentence_summary") or raw.get("summary")),
+        "course_title": str_or_none(raw.get("course_title") or raw.get("title") or raw.get("topic")),
+        "one_sentence_summary": str_or_none(raw.get("one_sentence_summary") or raw.get("summary")),
         "core_questions": _string_list(raw.get("core_questions"), limit=20),
         "chapter_outline": chapter_outline,
         "key_concepts": _dict_list(raw.get("key_concepts") or raw.get("glossary"), limit=120),
@@ -493,7 +497,7 @@ def _string_list(value: Any, limit: int) -> list[str]:
         if isinstance(item, str) and item.strip():
             result.append(item.strip())
         elif isinstance(item, dict):
-            text = _str_or_none(item.get("text") or item.get("title") or item.get("question") or item.get("guidance"))
+            text = str_or_none(item.get("text") or item.get("title") or item.get("question") or item.get("guidance"))
             if text:
                 result.append(text)
         if len(result) >= limit:
@@ -509,13 +513,6 @@ def _clean_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _clean_value(raw_value) for key, raw_value in value.items() if raw_value not in (None, "", [], {})}
     return value
-
-
-def _str_or_none(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -561,10 +558,3 @@ def _render_dict_section(lines: list[str], title: str, values: Any, keys: list[s
         if parts:
             lines.append(f"- {'; '.join(parts)}")
     lines.append("")
-
-
-def _display_path(path: Path, output_root: Path) -> str:
-    try:
-        return path.resolve().relative_to(output_root.resolve()).as_posix()
-    except ValueError:
-        return str(path)

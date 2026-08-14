@@ -7,6 +7,12 @@ from slidenote.content_guard import required_item_ids, structural_slide_ids as g
 from slidenote.figure_grounding import note_candidate_images
 from slidenote.ir import iter_expected_source_elements
 from slidenote.models import Deck, ImageAsset, SlidePage
+from slidenote.utils import (
+    escape_md,
+    looks_like_outline_page,
+    preview,
+    source_tokens,
+)
 
 
 @dataclass(slots=True)
@@ -130,7 +136,7 @@ def render_coverage_markdown(report: dict[str, object]) -> str:
             scope = "内容页"
         lines.append(
             f"| {trace_status} | {visible_status} | {scope} | {item['slide_id']} | {item['kind']} | "
-            f"`{item['id']}` | {_escape_table(str(item['preview']))} |"
+            f"`{item['id']}` | {escape_md(str(item['preview']))} |"
         )
     if isinstance(figure_coverage, dict) and figure_coverage.get("figures"):
         lines.extend(
@@ -147,15 +153,15 @@ def render_coverage_markdown(report: dict[str, object]) -> str:
             anchors = ", ".join(figure.get("anchor_element_ids") or []) or "无"
             review = figure.get("figure_audit_status") or "ok"
             lines.append(
-                f"| {status} | {figure.get('slide_id')} | `{figure.get('id')}` | {_escape_table(anchors)} | "
-                f"{_escape_table(str(figure.get('figure_explanation_status') or 'missing'))} | {_escape_table(str(review))} |"
+                f"| {status} | {figure.get('slide_id')} | `{figure.get('id')}` | {escape_md(anchors)} | "
+                f"{escape_md(str(figure.get('figure_explanation_status') or 'missing'))} | {escape_md(str(review))} |"
             )
     return "\n".join(lines).rstrip() + "\n"
 
 
 def _collect_items(deck: Deck, notes_markdown: str, content_guard: dict[str, object] | None = None) -> list[CoverageItem]:
     items: list[CoverageItem] = []
-    trace_tokens = _source_tokens(notes_markdown)
+    trace_tokens = source_tokens(notes_markdown)
     visible_tokens = _visible_source_tokens(notes_markdown)
     required_ids = required_item_ids(content_guard)
     structural_slide_ids = guard_structural_slide_ids(content_guard) if content_guard else None
@@ -175,7 +181,7 @@ def _collect_items(deck: Deck, notes_markdown: str, content_guard: dict[str, obj
                 kind=_coverage_kind(element),
                 trace_covered=element_id in trace_tokens,
                 visible_covered=element_id in visible_tokens,
-                preview=_preview(str(evidence.get("preview") or element_id)),
+                preview=preview(str(evidence.get("preview") or element_id), limit=120),
                 structural=slide_id in structural_slide_ids,
                 required=element_id in required_ids or bool(roles.get("required")),
             )
@@ -263,14 +269,10 @@ def _item_record(item: CoverageItem) -> dict[str, object]:
     }
 
 
-def _source_tokens(markdown: str) -> set[str]:
-    return set(re.findall(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", markdown))
-
-
 def _visible_source_tokens(markdown: str) -> set[str]:
     tokens: set[str] = set()
     for block in _markdown_blocks(markdown):
-        block_tokens = _source_tokens(block)
+        block_tokens = source_tokens(block)
         if block_tokens and _block_has_visible_explanation(block):
             tokens.update(block_tokens)
     return tokens
@@ -314,7 +316,7 @@ def _looks_like_structural_page(page: SlidePage, index: int) -> bool:
         return True
     if _has_standalone_structural_label(text):
         return True
-    return _looks_like_outline_page(text)
+    return looks_like_outline_page(text)
 
 
 def _has_structural_title(normalized_title: str) -> bool:
@@ -337,16 +339,6 @@ def _has_standalone_structural_label(text: str) -> bool:
         if normalized in labels:
             return True
     return False
-
-
-def _looks_like_outline_page(text: str) -> bool:
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    numbered = [
-        line
-        for line in lines
-        if re.match(r"^\s*(?:\d+|[\u4e00\u4e8c\u4e09\u56db\u4e94])\s*[.\u3001\uff0e]", line)
-    ]
-    return len(numbered) >= 3 and sum(len(line) for line in numbered) <= 260
 
 
 def _cover_markers() -> set[str]:
@@ -402,14 +394,3 @@ def _figure_record(page: SlidePage, image: ImageAsset, covered: bool) -> dict[st
         "importance_score": image.importance_score,
         "importance_rank": image.importance_rank,
     }
-
-
-def _preview(text: str, limit: int = 120) -> str:
-    text = re.sub(r"\s+", " ", text).strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1] + "…"
-
-
-def _escape_table(value: str) -> str:
-    return value.replace("|", "\\|").replace("\n", "<br>")

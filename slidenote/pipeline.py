@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from slidenote.models import Deck
-from slidenote.utils import write_json, write_text
+from slidenote.utils import display_path, write_json, write_text
 
 
 @dataclass(slots=True)
@@ -73,7 +73,7 @@ class ArtifactRegistry:
     def register(self, name: str, path: str | Path | None) -> None:
         if path is None:
             return
-        value = _display_path(Path(path), self.output_root)
+        value = display_path(Path(path), self.output_root)
         self._artifacts[name] = value
 
     def get(self, name: str) -> str | None:
@@ -93,10 +93,3 @@ def run_stage(deck: Deck, context: BuildContext, stage: Stage) -> StageResult:
     result = stage.run(deck, context)
     context.reports[stage.name] = result
     return result
-
-
-def _display_path(path: Path, output_root: Path) -> str:
-    try:
-        return path.resolve().relative_to(output_root.resolve()).as_posix()
-    except ValueError:
-        return str(path)

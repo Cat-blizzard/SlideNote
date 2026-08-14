@@ -4,7 +4,7 @@ import html
 import json
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 DEFAULT_PRICING = {
     "currency": "USD",

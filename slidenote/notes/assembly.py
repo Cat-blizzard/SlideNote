@@ -9,9 +9,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from slidenote.figure_grounding import FIGURE_PLACEMENT_MODES, note_candidate_images
+from slidenote.figure_grounding import note_candidate_images
 from slidenote.image_ranking import sorted_images_by_importance
-from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
+from slidenote.models import Deck, ImageAsset, SlidePage, TextBlock
+from slidenote.utils import (
+    context_title,
+    display_path,
+    looks_like_outline_page,
+    looks_like_section_title_page,
+    source_tokens,
+    sum_int,
+)
+from .versions import PAGE_LECTURE_PROMPT_VERSION, TEACHING_ENRICHMENT_PROMPT_VERSION, WEAVE_PROMPT_VERSION
 
 SOURCE_COMMENT_PREFIX = "slidenote-source:"
 _CSS_HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -51,7 +60,7 @@ def _ensure_grounded_figures(
                 current = _insert_figure_block(current, page, image, block, figure_placement)
                 continue
             if _image_markdown_present(current, image_path):
-                if image.id not in _source_tokens(current):
+                if image.id not in source_tokens(current):
                     current = _ensure_image_source_marker(current, page, image, image_path, source_display)
                 continue
             current = _insert_figure_block(current, page, image, block, figure_placement)
@@ -149,7 +158,7 @@ def _is_marker_only_for_ids(line: str, source_ids: set[str]) -> bool:
         return False
     if not re.fullmatch(r"<!--.*?-->", stripped):
         return False
-    return bool(source_ids.intersection(_source_tokens(stripped)))
+    return bool(source_ids.intersection(source_tokens(stripped)))
 
 
 def _collapse_blank_lines(lines: list[str]) -> str:
@@ -391,15 +400,15 @@ def _planned_context_title(context: NoteContext, section_plan: dict[str, Any] | 
     return None
 
 
-def _prepare_context_chunk(markdown: str, context_title: str, add_outer_heading: bool) -> str:
+def _prepare_context_chunk(markdown: str, section_title: str, add_outer_heading: bool) -> str:
     text = _remove_generation_info_sections(markdown)
-    text = _drop_redundant_leading_headings(text, context_title) if add_outer_heading else text
+    text = _drop_redundant_leading_headings(text, section_title) if add_outer_heading else text
     text = _demote_chunk_headings(text, minimum_level=3 if add_outer_heading else 2)
     text = _remove_empty_sections(text)
     return text.strip()
 
 
-def _drop_redundant_leading_headings(markdown: str, context_title: str) -> str:
+def _drop_redundant_leading_headings(markdown: str, section_title: str) -> str:
     lines = markdown.splitlines()
     while True:
         first_index = next((index for index, line in enumerate(lines) if line.strip()), None)
@@ -409,16 +418,16 @@ def _drop_redundant_leading_headings(markdown: str, context_title: str) -> str:
         if not match:
             return "\n".join(lines).strip()
         heading_text = _clean_heading_text(match.group(2))
-        if not _is_redundant_context_heading(heading_text, context_title):
+        if not _is_redundant_context_heading(heading_text, section_title):
             return "\n".join(lines).strip()
         del lines[first_index]
         while first_index < len(lines) and not lines[first_index].strip():
             del lines[first_index]
 
 
-def _is_redundant_context_heading(heading_text: str, context_title: str) -> bool:
+def _is_redundant_context_heading(heading_text: str, section_title: str) -> bool:
     heading_norm = _normalize_title_key(heading_text)
-    context_norm = _normalize_title_key(context_title)
+    context_norm = _normalize_title_key(section_title)
     if not heading_norm:
         return True
     if _is_generic_heading_text(heading_text):
@@ -605,7 +614,7 @@ def _is_frontmatter_page(page: SlidePage, index: int) -> bool:
         return True
     if index == 0 and _looks_like_cover_page(text):
         return True
-    return index <= 3 and _looks_like_outline_page(text)
+    return index <= 3 and looks_like_outline_page(text)
 
 
 def _looks_like_cover_page(text: str) -> bool:
@@ -623,16 +632,6 @@ def _looks_like_cover_page(text: str) -> bool:
         "www",
     }
     return any(marker in normalized for marker in cover_markers)
-
-
-def _looks_like_outline_page(text: str) -> bool:
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    numbered = [
-        line
-        for line in lines
-        if re.match(r"^\s*(?:\d+|[\u4e00\u4e8c\u4e09\u56db\u4e94])\s*[.\u3001\uff0e]", line)
-    ]
-    return len(numbered) >= 3 and sum(len(line) for line in numbered) <= 260
 
 
 def _looks_like_frontmatter_text(text: str) -> bool:
@@ -924,7 +923,7 @@ def _section_contexts(deck: Deck, section_plan: dict[str, Any] | None = None) ->
         pages = deck.pages[start_index:end_index]
         if not pages:
             continue
-        title = _context_title(pages, position + 1)
+        title = context_title(pages, position + 1)
         contexts.append(NoteContext(id=f"sec{position + 1}", kind="section", title=title, pages=pages))
     return contexts
 
@@ -945,7 +944,7 @@ def _section_contexts_from_plan(deck: Deck, section_plan: dict[str, Any]) -> lis
         if not pages:
             continue
         context_id = str(section.get("section_id") or f"sec{index}")
-        title = str(section.get("title") or _context_title(pages, index)).strip() or _context_title(pages, index)
+        title = str(section.get("title") or context_title(pages, index)).strip() or context_title(pages, index)
         contexts.append(NoteContext(id=context_id, kind="section", title=title, pages=pages))
     return contexts
 
@@ -959,7 +958,7 @@ def _section_boundaries(deck: Deck) -> list[int]:
             continue
         if any(title == outline or title in outline or outline in title for outline in outline_titles):
             boundaries.append(page.slide_id)
-        elif not outline_titles and _looks_like_section_title_page(page):
+        elif not outline_titles and looks_like_section_title_page(page):
             boundaries.append(page.slide_id)
     return sorted(set(boundaries))
 
@@ -982,25 +981,6 @@ def _outline_titles(deck: Deck) -> set[str]:
 def _normalize_heading_text(value: str) -> str:
     value = re.sub(r"^\s*(?:\d+|[\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341]+)(?:[.\u3001\s-]+)", "", value.strip())
     return re.sub(r"\s+", "", value).strip("\uff1a:")
-
-
-def _looks_like_section_title_page(page: SlidePage) -> bool:
-    content_blocks = [
-        block
-        for block in page.text_blocks
-        if block.content.strip() and not re.fullmatch(r"\d+", block.content.strip())
-    ]
-    if not page.title or len(content_blocks) > 3:
-        return False
-    text_len = sum(len(block.content.strip()) for block in content_blocks)
-    return text_len <= 120
-
-
-def _context_title(pages: list[SlidePage], index: int) -> str:
-    for page in pages:
-        if page.title:
-            return page.title
-    return f"\u7b2c {index} \u8282"
 
 
 # ---------------------------------------------------------------------------
@@ -1161,7 +1141,7 @@ def _build_page_notes_report(
                 "slide_id": page.slide_id,
                 "title": page.title,
                 "markdown": markdown,
-                "source_ids": sorted(_source_tokens(markdown)),
+                "source_ids": sorted(source_tokens(markdown)),
                 "cache_status": record.get("cache_status"),
                 "llm_call": record.get("llm_call"),
                 "cache_file": record.get("cache_file"),
@@ -1178,7 +1158,7 @@ def _build_page_notes_report(
         "provider": provider,
         "model": model,
         "base_url": base_url,
-        "prompt_version": "page-lecture-v4",
+        "prompt_version": PAGE_LECTURE_PROMPT_VERSION,
         "request": {
             "note_depth": note_depth,
             "note_language": note_language,
@@ -1191,9 +1171,9 @@ def _build_page_notes_report(
             "pages_total": len(page_entries),
             "llm_calls": sum(1 for record in page_records if record.get("llm_call")),
             "local_cache_hits": sum(1 for record in page_records if record.get("cache_status") == "local_hit"),
-            "input_tokens": _sum_int(record.get("input_tokens") for record in page_records),
-            "output_tokens": _sum_int(record.get("output_tokens") for record in page_records),
-            "total_tokens": _sum_int(record.get("total_tokens") for record in page_records),
+            "input_tokens": sum_int(record.get("input_tokens") for record in page_records),
+            "output_tokens": sum_int(record.get("output_tokens") for record in page_records),
+            "total_tokens": sum_int(record.get("total_tokens") for record in page_records),
         },
         "pages": page_entries,
     }
@@ -1233,11 +1213,11 @@ def _build_weave_report(
     context_entries: list[dict[str, Any]] = []
     for context in contexts:
         markdown = final_chunks.get(context.id, "")
-        final_tokens = _source_tokens(markdown)
+        final_tokens = source_tokens(markdown)
         input_tokens: set[str] = set()
         pages: list[dict[str, Any]] = []
         for page in context.pages:
-            page_tokens = _source_tokens(page_markdown_by_slide.get(page.slide_id, ""))
+            page_tokens = source_tokens(page_markdown_by_slide.get(page.slide_id, ""))
             input_tokens.update(page_tokens)
             pages.append(
                 {
@@ -1268,7 +1248,7 @@ def _build_weave_report(
         "generated_at": utc_now_iso(),
         "source_path": deck.source_path,
         "source_type": deck.source_type,
-        "prompt_version": "weave-v4",
+        "prompt_version": WEAVE_PROMPT_VERSION,
         "request": {
             "note_context": note_context,
             "note_depth": note_depth,
@@ -1282,9 +1262,9 @@ def _build_weave_report(
             "contexts_total": len(context_entries),
             "llm_calls": sum(1 for record in weave_records if record.get("llm_call")),
             "local_cache_hits": sum(1 for record in weave_records if record.get("cache_status") == "local_hit"),
-            "input_tokens": _sum_int(record.get("input_tokens") for record in weave_records),
-            "output_tokens": _sum_int(record.get("output_tokens") for record in weave_records),
-            "total_tokens": _sum_int(record.get("total_tokens") for record in weave_records),
+            "input_tokens": sum_int(record.get("input_tokens") for record in weave_records),
+            "output_tokens": sum_int(record.get("output_tokens") for record in weave_records),
+            "total_tokens": sum_int(record.get("total_tokens") for record in weave_records),
         },
         "contexts": context_entries,
     }
@@ -1306,17 +1286,16 @@ def _build_teaching_enrichment_report(
 ) -> dict[str, Any]:
     from slidenote.llm_cache import utc_now_iso
     from .prompts import _prompt_deck_brief, _prompt_brief_hash
-    from .versions import TEACHING_ENRICHMENT_PROMPT_VERSION
 
     prompt_brief = _prompt_deck_brief(deck_brief)
     record_by_context = {record.get("context_id"): record for record in teaching_records}
     context_entries: list[dict[str, Any]] = []
     for context in contexts:
         markdown = final_chunks.get(context.id, "")
-        final_tokens = _source_tokens(markdown)
+        final_tokens = source_tokens(markdown)
         input_tokens: set[str] = set()
         for page in context.pages:
-            input_tokens.update(_source_tokens(page_markdown_by_slide.get(page.slide_id, "")))
+            input_tokens.update(source_tokens(page_markdown_by_slide.get(page.slide_id, "")))
         record = record_by_context.get(f"teaching_{context.id}", {})
         context_entries.append(
             {
@@ -1354,36 +1333,13 @@ def _build_teaching_enrichment_report(
             "contexts_total": len(context_entries),
             "llm_calls": sum(1 for record in teaching_records if record.get("llm_call")),
             "local_cache_hits": sum(1 for record in teaching_records if record.get("cache_status") == "local_hit"),
-            "input_tokens": _sum_int(record.get("input_tokens") for record in teaching_records),
-            "output_tokens": _sum_int(record.get("output_tokens") for record in teaching_records),
-            "total_tokens": _sum_int(record.get("total_tokens") for record in teaching_records),
+            "input_tokens": sum_int(record.get("input_tokens") for record in teaching_records),
+            "output_tokens": sum_int(record.get("output_tokens") for record in teaching_records),
+            "total_tokens": sum_int(record.get("total_tokens") for record in teaching_records),
         },
         "contexts": context_entries,
     }
 
 
-def _source_tokens(markdown: str) -> set[str]:
-    return set(re.findall(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", markdown))
-
-
 def _source_slide_ids(markdown: str) -> set[int]:
     return {int(match) for match in re.findall(r"\bp(\d+):", markdown)}
-
-
-# ---------------------------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------------------------
-
-def _display_path(path: Path, output_root: Path) -> str:
-    try:
-        return path.resolve().relative_to(output_root.resolve()).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def _sum_int(values: object) -> int:
-    total = 0
-    for value in values:
-        if isinstance(value, int):
-            total += value
-    return total

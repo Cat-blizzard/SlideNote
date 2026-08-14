@@ -3,14 +3,17 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
 import subprocess
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
-from slidenote.utils import find_executable
+from slidenote.utils import (
+    find_executable,
+    preview,
+    str_or_none,
+)
 
 
 class ParserAdapter(Protocol):
@@ -246,8 +249,8 @@ def _external_parser_error(
     attempted: list[str],
 ) -> str:
     tail = completed[-1] if completed else None
-    stderr = _preview((tail.stderr if tail else "") or "")
-    stdout = _preview((tail.stdout if tail else "") or "")
+    stderr = preview((tail.stderr if tail else "") or "", limit=240)
+    stdout = preview((tail.stdout if tail else "") or "", limit=240)
     attempts = "; ".join(attempted[-3:])
     return f"Parser adapter `{name}` failed. Attempts: {attempts}. stderr: {stderr}. stdout: {stdout}"
 
@@ -364,8 +367,8 @@ def _table_block_from_dict(raw: dict[str, Any], slide_id: int, index: int) -> Ta
         id=str(raw.get("id") or f"s{slide_id}_tbl{index}"),
         rows=rows,
         bbox=_bbox_or_none(raw.get("bbox")),
-        table_summary=_str_or_none(raw.get("table_summary") or raw.get("summary")),
-        table_conclusion=_str_or_none(raw.get("table_conclusion") or raw.get("conclusion")),
+        table_summary=str_or_none(raw.get("table_summary") or raw.get("summary")),
+        table_conclusion=str_or_none(raw.get("table_conclusion") or raw.get("conclusion")),
         key_rows=[item for item in raw.get("key_rows", []) if isinstance(item, dict)],
     )
 
@@ -374,7 +377,7 @@ def _image_asset_from_dict(raw: dict[str, Any], slide_id: int, index: int) -> Im
     kwargs = {field.name: raw.get(field.name) for field in fields(ImageAsset) if field.name in raw}
     kwargs["id"] = str(raw.get("id") or raw.get("image_id") or f"s{slide_id}_img{index}")
     kwargs["path"] = str(raw.get("path") or raw.get("image_path") or raw.get("uri") or "")
-    kwargs["caption"] = _str_or_none(raw.get("caption") or raw.get("alt_text"))
+    kwargs["caption"] = str_or_none(raw.get("caption") or raw.get("alt_text"))
     kwargs["bbox"] = _bbox_or_none(raw.get("bbox"))
     kwargs["role"] = str(raw.get("role") or "content")
     kwargs["ignored"] = bool(raw.get("ignored", False))
@@ -403,13 +406,13 @@ def _deck_from_generic_json(data: dict[str, Any] | list[Any], input_path: Path, 
         pages.append(
             SlidePage(
                 slide_id=slide_id,
-                title=_title_from_blocks(text_blocks) or _str_or_none(raw_page.get("title")),
+                title=_title_from_blocks(text_blocks) or str_or_none(raw_page.get("title")),
                 page_width=_as_float_or_none(raw_page.get("width") or raw_page.get("page_width")),
                 page_height=_as_float_or_none(raw_page.get("height") or raw_page.get("page_height")),
                 text_blocks=text_blocks,
                 tables=tables,
                 images=images,
-                page_screenshot=_str_or_none(raw_page.get("page_screenshot") or raw_page.get("screenshot")),
+                page_screenshot=str_or_none(raw_page.get("page_screenshot") or raw_page.get("screenshot")),
             )
         )
     if not pages:
@@ -473,7 +476,7 @@ def _generic_tables(raw_page: dict[str, Any], slide_id: int) -> list[TableBlock]
 def _generic_images(raw_page: dict[str, Any], slide_id: int, output_root: Path, asset_root: Path) -> list[ImageAsset]:
     images: list[ImageAsset] = []
     for item in _iter_dicts(raw_page.get("images") or raw_page.get("pictures") or raw_page.get("blocks") or raw_page.get("children") or []):
-        path = _str_or_none(item.get("path") or item.get("image_path") or item.get("uri") or item.get("src"))
+        path = str_or_none(item.get("path") or item.get("image_path") or item.get("uri") or item.get("src"))
         kind = str(item.get("type") or item.get("label") or item.get("block_type") or "").lower()
         if not path and "image" not in kind and "picture" not in kind:
             continue
@@ -481,7 +484,7 @@ def _generic_images(raw_page: dict[str, Any], slide_id: int, output_root: Path, 
             ImageAsset(
                 id=str(item.get("id") or item.get("image_id") or f"s{slide_id}_img{len(images) + 1}"),
                 path=_normalize_external_asset_path(path or "", output_root, asset_root),
-                caption=_str_or_none(item.get("caption") or item.get("alt_text") or item.get("text")),
+                caption=str_or_none(item.get("caption") or item.get("alt_text") or item.get("text")),
                 bbox=_bbox_or_none(item.get("bbox")),
                 role=str(item.get("role") or "content"),
                 ignored=bool(item.get("ignored", False)),
@@ -515,9 +518,9 @@ def _markdown_page_chunks(markdown: str) -> list[str]:
 def _markdown_title(markdown: str) -> str | None:
     match = re.search(r"^\s{0,3}#{1,3}\s+(.+?)\s*$", markdown, flags=re.MULTILINE)
     if match:
-        return _preview(match.group(1), 140)
+        return preview(match.group(1), 140)
     first = next((line.strip() for line in markdown.splitlines() if line.strip()), "")
-    return _preview(first, 140) if first else None
+    return preview(first, 140) if first else None
 
 
 def _iter_dicts(value: object) -> list[dict[str, Any]]:
@@ -579,9 +582,9 @@ def _text_type(kind: str, text: str) -> str:
 def _title_from_blocks(blocks: list[TextBlock]) -> str | None:
     for block in blocks:
         if block.type in {"title", "heading"} and block.content.strip():
-            return _preview(block.content.splitlines()[0], 140)
+            return preview(block.content.splitlines()[0], 140)
     if blocks and blocks[0].content.strip():
-        return _preview(blocks[0].content.splitlines()[0], 140)
+        return preview(blocks[0].content.splitlines()[0], 140)
     return None
 
 
@@ -630,13 +633,6 @@ def _as_float_or_none(value: object) -> float | None:
         return None
 
 
-def _str_or_none(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
 def _dedupe(values: list[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
@@ -645,10 +641,3 @@ def _dedupe(values: list[str]) -> list[str]:
             result.append(value)
             seen.add(value)
     return result
-
-
-def _preview(value: str, limit: int = 240) -> str:
-    text = re.sub(r"\s+", " ", value or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1] + "..."

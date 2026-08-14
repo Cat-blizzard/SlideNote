@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from PIL import Image
-
 from slidenote.image_ranking import sorted_images_by_importance
 from slidenote.llm import LLMClient, resolve_provider_runtime
-from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
+from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, utc_now_iso
 from slidenote.modality import page_has_hint
-from slidenote.models import Deck, ImageAsset, SlidePage
+from slidenote.models import Deck, SlidePage
 from slidenote.table_understanding import table_preview
+from slidenote.utils import (
+    cleanup_temp_image,
+    display_path,
+    file_sha256,
+    image_area,
+    page_by_id,
+    prepare_image_for_api,
+    sum_int,
+)
 
 VISION_PROMPT_VERSION = "vision-extract-v1"
 
@@ -74,7 +80,7 @@ def enrich_deck_with_vision(
         progress_callback({"event": "start", "total": len(targets)})
 
     def process(index: int, target: VisionTarget) -> tuple[int, VisionTarget, dict[str, Any], dict[str, Any]]:
-        page = _page_by_id(deck, target.slide_id)
+        page = page_by_id(deck, target.slide_id)
         record, parsed = _process_visual_target(
             target=target,
             page=page,
@@ -142,7 +148,7 @@ def _process_visual_target(
         record = _skipped_record(target, "missing_file", output_root)
         record["visual_status"] = "missing_file"
         return record, {}
-    prepared = _prepare_image_for_api(source_path, max_edge=max_edge)
+    prepared = prepare_image_for_api(source_path, max_edge=max_edge)
     if prepared is None:
         record = _skipped_record(target, "unsupported_or_unreadable_image", output_root)
         record["visual_status"] = "unsupported_or_unreadable_image"
@@ -151,7 +157,7 @@ def _process_visual_target(
     prepared_path, image_meta = prepared
     try:
         prompt = _vision_prompt(target, page)
-        image_hash = _file_sha256(source_path)
+        image_hash = file_sha256(source_path)
         cache_key_payload = {
             "schema_version": LLM_CACHE_SCHEMA_VERSION,
             "prompt_version": VISION_PROMPT_VERSION,
@@ -232,7 +238,7 @@ def _process_visual_target(
         record["visual_status"] = "parsed"
         return record, parsed
     finally:
-        _cleanup_temp_image(prepared_path)
+        cleanup_temp_image(prepared_path)
 
 
 def select_vision_targets(
@@ -278,7 +284,7 @@ def _large_image_targets(page: SlidePage, output_root: Path, min_area: int, firs
         if image.ignored or image.role == "page_image":
             continue
         path = output_root / image.path
-        area = _image_area(path)
+        area = image_area(path)
         if area is not None and area < min_area:
             continue
         reason = "ranked_embedded_image" if image.importance_score is not None else "large_embedded_image"
@@ -303,7 +309,7 @@ def _role_image_targets(page: SlidePage, output_root: Path, role: str, min_area:
         if image.ignored or image.role != role:
             continue
         path = output_root / image.path
-        area = _image_area(path)
+        area = image_area(path)
         if area is not None and area < min_area:
             continue
         targets.append(
@@ -321,44 +327,6 @@ def _role_image_targets(page: SlidePage, output_root: Path, role: str, min_area:
     return targets
 
 
-def _image_area(path: Path) -> int | None:
-    try:
-        with Image.open(path) as image:
-            return image.width * image.height
-    except Exception:
-        return None
-
-
-def _prepare_image_for_api(path: Path, max_edge: int) -> tuple[Path, dict[str, Any]] | None:
-    try:
-        with Image.open(path) as image:
-            original = {"width": image.width, "height": image.height, "mode": image.mode, "format": image.format}
-            image = image.convert("RGB")
-            scale = min(1.0, max_edge / max(image.width, image.height))
-            if scale < 1.0:
-                image = image.resize((max(1, int(image.width * scale)), max(1, int(image.height * scale))))
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
-            tmp_path = Path(tmp.name)
-            tmp.close()
-            image.save(tmp_path, format="JPEG", quality=85, optimize=True)
-            meta = {
-                "original": original,
-                "prepared": {"width": image.width, "height": image.height, "mime_type": "image/jpeg", "bytes": tmp_path.stat().st_size},
-            }
-            return tmp_path, meta
-    except Exception:
-        return None
-
-
-def _cleanup_temp_image(path: Path) -> None:
-    if path.parent != Path(tempfile.gettempdir()):
-        return
-    try:
-        path.unlink()
-    except OSError:
-        pass
-
-
 def _vision_prompt(target: VisionTarget, page: SlidePage | None = None) -> str:
     page_context = _page_context(page)
     return (
@@ -373,10 +341,6 @@ def _vision_prompt(target: VisionTarget, page: SlidePage | None = None) -> str:
         f"本页文字上下文：{page_context}\n"
         f"元数据：slide_id={target.slide_id}, kind={target.kind}, image_id={target.image_id or ''}, path={target.path}。"
     )
-
-
-def _page_by_id(deck: Deck, slide_id: int) -> SlidePage | None:
-    return next((page for page in deck.pages if page.slide_id == slide_id), None)
 
 
 def _page_context(page: SlidePage | None, limit: int = 1200) -> str:
@@ -455,10 +419,10 @@ def _build_report(
         "llm_calls": sum(1 for record in records if record.get("llm_call")),
         "api_retries": sum(int(record.get("api_retries") or 0) for record in records),
         "skipped": sum(1 for record in records if record.get("cache_status") == "skipped"),
-        "input_tokens": _sum_int(record.get("input_tokens") for record in records),
-        "output_tokens": _sum_int(record.get("output_tokens") for record in records),
-        "total_tokens": _sum_int(record.get("total_tokens") for record in records),
-        "provider_cached_input_tokens": _sum_int(record.get("provider_cached_input_tokens") for record in records),
+        "input_tokens": sum_int(record.get("input_tokens") for record in records),
+        "output_tokens": sum_int(record.get("output_tokens") for record in records),
+        "total_tokens": sum_int(record.get("total_tokens") for record in records),
+        "provider_cached_input_tokens": sum_int(record.get("provider_cached_input_tokens") for record in records),
     }
     return {
         "schema_version": 1,
@@ -470,7 +434,7 @@ def _build_report(
         "base_url": runtime["base_url"],
         "prompt_version": VISION_PROMPT_VERSION,
         "mode": mode,
-        "cache": {"mode": cache_mode, "dir": _display_path(cache_dir, output_root)},
+        "cache": {"mode": cache_mode, "dir": display_path(cache_dir, output_root)},
         "selection": {"max_targets": max_targets, "min_area": min_area, "max_edge": max_edge},
         "summary": summary,
         "targets": records,
@@ -486,7 +450,7 @@ def _base_record(target: VisionTarget, cache_key: str, cache_path: Path, output_
         "reason": target.reason,
         "importance_score": target.importance_score,
         "cache_key": cache_key,
-        "cache_file": _display_path(cache_path, output_root),
+        "cache_file": display_path(cache_path, output_root),
         "image_meta": image_meta,
     }
 
@@ -503,22 +467,3 @@ def _skipped_record(target: VisionTarget, status: str, output_root: Path) -> dic
         "skip_reason": status,
         "llm_call": False,
     }
-
-
-def _file_sha256(path: Path) -> str:
-    return sha256_text(path.read_bytes().hex())
-
-
-def _display_path(path: Path, output_root: Path) -> str:
-    try:
-        return path.resolve().relative_to(output_root.resolve()).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def _sum_int(values: object) -> int:
-    total = 0
-    for value in values:
-        if isinstance(value, int):
-            total += value
-    return total

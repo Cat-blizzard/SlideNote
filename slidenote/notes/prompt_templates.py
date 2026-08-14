@@ -11,7 +11,6 @@ from .assembly import NoteContext
 from .prompt_payload import (
     _nearby_page_payloads,
     _page_payload_for_prompt,
-    _prompt_brief_hash,
     _prompt_deck_brief,
     _prompt_slide_scope,
 )
@@ -85,17 +84,7 @@ def _llm_context_prompt(
         }
     if prompt_brief:
         payload["deck_brief"] = prompt_brief
-    source_rule = {
-        "hidden": (
-            "\u5728\u6bcf\u4e2a\u4e3b\u8981\u6bb5\u843d\u6216\u56fe\u7247\u540e\u5199 HTML \u9690\u85cf\u6765\u6e90\u6ce8\u91ca\uff0c\u683c\u5f0f\u4e25\u683c\u4e3a "
-            "`<!-- slidenote-source: p4:s4_t1,s4_t2 -->`\uff1b\u4e0d\u8981\u5728\u53ef\u89c1\u6b63\u6587\u91cc\u5199\u5143\u7d20 ID\u3002"
-        ),
-        "footnote": (
-            "\u6bcf\u4e2a\u4e3b\u8981\u6bb5\u843d\u672b\u5c3e\u53ea\u663e\u793a\u7b80\u6d01\u9875\u7801\uff0c\u4f8b\u5982 `\uff08PPT \u7b2c 4 \u9875\uff09`\uff0c\u5e76\u7ee7\u7eed\u9644\u52a0 "
-            "`<!-- slidenote-source: p4:s4_t1,s4_t2 -->` \u9690\u85cf\u6765\u6e90\u6ce8\u91ca\u3002"
-        ),
-        "inline": "\u53ef\u4ee5\u5728\u6b63\u6587\u4e2d\u663e\u793a\u8be6\u7ec6\u6765\u6e90\u9875\u7801\u548c\u5143\u7d20 ID\uff0c\u540c\u65f6\u4e5f\u8981\u4fdd\u7559\u9690\u85cf\u6765\u6e90\u6ce8\u91ca\u3002",
-    }[source_display]
+    source_rule = _source_prompt_rule(source_display)
     context_rule = {
         "document": "\u8fd9\u662f\u6574\u4efd\u6750\u6599\u7684\u4e0a\u4e0b\u6587\uff0c\u8bf7\u5199\u6210\u4e00\u7bc7\u8fde\u7eed\u7b14\u8bb0\u3002",
         "section": "\u8fd9\u662f\u540c\u4e00\u7ae0\u8282\u6216\u5c0f\u8282\u7684\u4e00\u7ec4\u9875\u9762\uff0c\u8bf7\u5199\u6210\u4e00\u4e2a\u8fde\u8d2f\u5c0f\u8282\uff0c\u4e0d\u8981\u9010\u9875\u673a\u68b0\u7ffb\u8bd1\u3002",

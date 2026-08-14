@@ -8,6 +8,12 @@ from typing import Any
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.models import Deck, SlidePage
+from slidenote.utils import (
+    context_title,
+    display_path,
+    looks_like_section_title_page,
+    parse_json_object,
+)
 
 SECTION_PROMPT_VERSION = "section-detection-v2"
 
@@ -95,7 +101,7 @@ def build_section_plan(
         if written_path is not None:
             cache_path = written_path
 
-    parsed = _parse_section_json(result_text)
+    parsed = parse_json_object(result_text)
     plan = _normalize_model_plan(deck, parsed, local_plan)
     if plan is None:
         plan = build_local_section_plan(deck)
@@ -109,7 +115,7 @@ def build_section_plan(
         "provider": runtime["provider"],
         "model": runtime["model"],
         "base_url": runtime["base_url"],
-        "cache": {"mode": cache_mode, "status": cache_status, "file": _display_path(cache_path, output_root)},
+        "cache": {"mode": cache_mode, "status": cache_status, "file": display_path(cache_path, output_root)},
         "llm_call": llm_call,
         "input_tokens": usage.get("input_tokens") if llm_call else 0,
         "output_tokens": usage.get("output_tokens") if llm_call else 0,
@@ -214,19 +220,6 @@ def _page_brief(page: SlidePage, limit: int = 520) -> str:
     return text[: limit - 1] + "…"
 
 
-def _parse_section_json(text: str) -> dict[str, Any] | None:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
 def _normalize_model_plan(deck: Deck, parsed: dict[str, Any] | None, local_plan: dict[str, Any]) -> dict[str, Any] | None:
     if parsed is None:
         return None
@@ -307,7 +300,7 @@ def _sections_from_boundaries(
         sections.append(
             {
                 "section_id": f"sec{len(sections) + 1}",
-                "title": titles_by_start.get(start_id) or _context_title(pages, len(sections) + 1),
+                "title": titles_by_start.get(start_id) or context_title(pages, len(sections) + 1),
                 "start_slide_id": start_id,
                 "end_slide_id": pages[-1].slide_id,
                 "slide_ids": [page.slide_id for page in pages],
@@ -331,7 +324,7 @@ def _section_boundaries(deck: Deck) -> tuple[list[int], dict[int, str]]:
         if any(_title_matches_outline(title, outline) for outline in outline_titles):
             boundaries.append(page.slide_id)
             reasons[page.slide_id] = "matched_outline_title"
-        elif not outline_titles and _looks_like_section_title_page(page):
+        elif not outline_titles and looks_like_section_title_page(page):
             boundaries.append(page.slide_id)
             reasons[page.slide_id] = "section_title_page"
     if outline_items:
@@ -455,25 +448,6 @@ def _normalize_heading_text(value: str) -> str:
     return re.sub(r"\s+", "", value).strip("：:")
 
 
-def _looks_like_section_title_page(page: SlidePage) -> bool:
-    content_blocks = [
-        block
-        for block in page.text_blocks
-        if block.content.strip() and not re.fullmatch(r"\d+", block.content.strip())
-    ]
-    if not page.title or len(content_blocks) > 3:
-        return False
-    text_len = sum(len(block.content.strip()) for block in content_blocks)
-    return text_len <= 120
-
-
-def _context_title(pages: list[SlidePage], index: int) -> str:
-    for page in pages:
-        if page.title:
-            return page.title
-    return f"第 {index} 节"
-
-
 def _covers_all_pages(deck: Deck, sections: list[dict[str, Any]]) -> bool:
     expected = [page.slide_id for page in deck.pages]
     actual: list[int] = []
@@ -487,10 +461,3 @@ def _covers_all_pages(deck: Deck, sections: list[dict[str, Any]]) -> bool:
 def _page_digest(deck: Deck) -> str:
     payload = [_page_outline_payload(page) for page in deck.pages]
     return sha256_text(stable_json(payload))
-
-
-def _display_path(path: Path, output_root: Path) -> str:
-    try:
-        return path.resolve().relative_to(output_root.resolve()).as_posix()
-    except ValueError:
-        return str(path)

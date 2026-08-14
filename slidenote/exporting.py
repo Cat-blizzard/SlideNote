@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from slidenote.llm_cache import utc_now_iso
-from slidenote.utils import slugify, write_text
+from slidenote.utils import (
+    display_path,
+    slugify,
+    write_text,
+)
 
 
 EXPORT_FORMATS = ("markdown-zip", "markdown-toc", "docx", "pdf", "latex")
@@ -306,7 +310,7 @@ def _markdown_asset_files(output_root: Path) -> list[Path]:
 def _run_pandoc(pandoc: str, source: Path, output_root: Path, fmt: str) -> dict[str, Any]:
     output_name = _output_name(fmt)
     output_path = output_root / output_name
-    command = [pandoc, "-f", "markdown-implicit_figures", _relative_to_output(source, output_root), "-o", output_name]
+    command = [pandoc, "-f", "markdown-implicit_figures", display_path(source, output_root), "-o", output_name]
     if fmt == "latex":
         command.extend(["--standalone", "--pdf-engine=xelatex", "-V", "documentclass=ctexart", "-V", "geometry:margin=1in"])
 
@@ -402,13 +406,6 @@ def _find_libreoffice() -> str | None:
 
 def _output_name(fmt: str) -> str:
     return {"docx": "notes.docx", "pdf": "notes.pdf", "latex": "notes.tex"}[fmt]
-
-
-def _relative_to_output(path: Path, output_root: Path) -> str:
-    try:
-        return path.resolve().relative_to(output_root.resolve()).as_posix()
-    except ValueError:
-        return str(path)
 
 
 def _summarize_stream(value: str, limit: int = 800) -> str:

@@ -12,7 +12,17 @@ from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_k
 from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_text_for_prompt
-from slidenote.vision import _cleanup_temp_image, _file_sha256, _prepare_image_for_api
+from slidenote.utils import (
+    as_float,
+    cleanup_temp_image,
+    display_path,
+    file_sha256,
+    looks_normalized,
+    parse_json_object,
+    prepare_image_for_api,
+    preview,
+    sum_int,
+)
 
 
 FIGURE_GROUNDING_MODES = {"off", "auto", "vision"}
@@ -185,7 +195,7 @@ def enrich_deck_with_figure_grounding(
             "provider": runtime.get("provider") if runtime else None,
             "model": runtime.get("model") if runtime else None,
             "base_url": runtime.get("base_url") if runtime else None,
-            "cache": {"mode": cache_mode, "dir": _display_path(resolved_cache_dir, output_root) if resolved_cache_dir else None},
+            "cache": {"mode": cache_mode, "dir": display_path(resolved_cache_dir, output_root) if resolved_cache_dir else None},
             "prompt_version": FIGURE_GROUNDING_PROMPT_VERSION if runtime else None,
         },
         "summary": {
@@ -201,10 +211,10 @@ def enrich_deck_with_figure_grounding(
             "vision_applied_images": sum(int(record.get("applied_images") or 0) for record in vision_records),
             "vision_fallback_images": sum(int(record.get("fallback_images") or 0) for record in vision_records),
             "vision_fallback_pages": sum(1 for record in vision_records if record.get("status") != "applied"),
-            "input_tokens": _sum_int(record.get("input_tokens") for record in vision_records),
-            "output_tokens": _sum_int(record.get("output_tokens") for record in vision_records),
-            "total_tokens": _sum_int(record.get("total_tokens") for record in vision_records),
-            "provider_cached_input_tokens": _sum_int(record.get("provider_cached_input_tokens") for record in vision_records),
+            "input_tokens": sum_int(record.get("input_tokens") for record in vision_records),
+            "output_tokens": sum_int(record.get("output_tokens") for record in vision_records),
+            "total_tokens": sum_int(record.get("total_tokens") for record in vision_records),
+            "provider_cached_input_tokens": sum_int(record.get("provider_cached_input_tokens") for record in vision_records),
         },
         "pages": page_entries,
     }
@@ -253,14 +263,14 @@ def ordered_page_elements(
                 "source_element_ids": list(image.source_element_ids),
                 "importance_score": image.importance_score,
                 "importance_rank": image.importance_rank,
-                "preview": _preview(_image_text(image) or image.caption or image.path),
+                "preview": preview(_image_text(image) or image.caption or image.path),
             }
         )
     return sorted(elements, key=lambda element: (float(element.get("layout_order") or 9999.0), str(element.get("id") or "")))
 
 
 def normalized_image_bbox(deck: Deck, page: SlidePage, image: ImageAsset) -> list[float] | None:
-    if image.crop_bbox and _looks_normalized(image.crop_bbox):
+    if image.crop_bbox and looks_normalized(image.crop_bbox):
         return _clamp_bbox(image.crop_bbox)
     return _normalize_bbox(deck.source_type, image.bbox, page)
 
@@ -282,7 +292,7 @@ def _layout_elements(deck: Deck, page: SlidePage) -> list[dict[str, Any]]:
                 "type": block.type,
                 "bbox": bbox,
                 "layout_order": order,
-                "preview": _preview(block.content),
+                "preview": preview(block.content),
                 "content": block.content,
             }
         )
@@ -290,7 +300,7 @@ def _layout_elements(deck: Deck, page: SlidePage) -> list[dict[str, Any]]:
     for table in page.tables:
         bbox = normalized_element_bbox(deck, page, table)
         order = _order_from_bbox(bbox) if bbox else float(fallback_index)
-        preview = table_text_for_prompt(table, raw_rows=2)
+        table_preview_text = table_text_for_prompt(table, raw_rows=2)
         elements.append(
             {
                 "id": table.id,
@@ -298,8 +308,8 @@ def _layout_elements(deck: Deck, page: SlidePage) -> list[dict[str, Any]]:
                 "type": "table",
                 "bbox": bbox,
                 "layout_order": order,
-                "preview": _preview(preview),
-                "content": preview,
+                "preview": preview(table_preview_text),
+                "content": table_preview_text,
             }
         )
         fallback_index += 1
@@ -344,7 +354,7 @@ def _process_figure_grounding_vision_page(
             "fallback_images": len(candidates),
             "warnings": ["missing_page_screenshot_file"],
         }
-    prepared = _prepare_image_for_api(source_path, max_edge=max_edge)
+    prepared = prepare_image_for_api(source_path, max_edge=max_edge)
     if prepared is None:
         return {
             "status": "fallback",
@@ -369,7 +379,7 @@ def _process_figure_grounding_vision_page(
             "detail": detail,
             "max_edge": max_edge,
             "source_path": page.page_screenshot,
-            "source_image_hash": _file_sha256(source_path),
+            "source_image_hash": file_sha256(source_path),
             "prompt_hash": sha256_text(prompt),
         }
         cache_key = make_cache_key(cache_key_payload)
@@ -379,7 +389,7 @@ def _process_figure_grounding_vision_page(
             "status": "fallback",
             "slide_id": page.slide_id,
             "cache_key": cache_key,
-            "cache_file": _display_path(cache_path, output_root),
+            "cache_file": display_path(cache_path, output_root),
             "image_meta": image_meta,
             "warnings": [],
             "invalid_references": [],
@@ -437,7 +447,7 @@ def _process_figure_grounding_vision_page(
             record.update(
                 {
                     "cache_status": cache_status,
-                    "cache_file": _display_path(cache_path, output_root),
+                    "cache_file": display_path(cache_path, output_root),
                     "llm_call": True,
                     "api_retries": response_usage.get("retries", 0),
                     "input_tokens": response_usage.get("input_tokens"),
@@ -448,7 +458,7 @@ def _process_figure_grounding_vision_page(
                 }
             )
 
-        parsed = _parse_json_object(result_json)
+        parsed = parse_json_object(result_json)
         if parsed is None:
             record["reason"] = "model_output_not_json"
             record["warnings"].append("model_output_not_json")
@@ -474,7 +484,7 @@ def _process_figure_grounding_vision_page(
             "warnings": [f"vision_call_failed:{type(exc).__name__}"],
         }
     finally:
-        _cleanup_temp_image(prepared_path)
+        cleanup_temp_image(prepared_path)
 
 
 def _figure_grounding_prompt(
@@ -512,8 +522,8 @@ def _figure_grounding_prompt(
             "page_modality": page.page_modality,
             "source_type": deck.source_type,
             "page_size": {"width": page.page_width, "height": page.page_height},
-            "page_ocr_text": _preview(page.page_ocr_text or "", 700),
-            "page_visual_summary": _preview(page.page_visual_summary or "", 500),
+            "page_ocr_text": preview(page.page_ocr_text or "", 700),
+            "page_visual_summary": preview(page.page_visual_summary or "", 500),
         },
         "layout_elements": [
             {
@@ -544,8 +554,8 @@ def _figure_grounding_prompt(
                 "role": image.role,
                 "bbox": normalized_image_bbox(deck, page, image),
                 "caption": image.caption,
-                "ocr_text": _preview(image.ocr_text or "", 500),
-                "visual_summary": _preview(image.visual_summary or "", 500),
+                "ocr_text": preview(image.ocr_text or "", 500),
+                "visual_summary": preview(image.visual_summary or "", 500),
                 "local_anchor_element_ids": list(image.anchor_element_ids),
                 "local_anchor_group_id": image.anchor_group_id,
                 "local_anchor_reason": image.anchor_reason,
@@ -589,7 +599,7 @@ def _apply_vision_grounding(
             invalid_refs.append({"kind": "image_id", "id": image_id})
             continue
         seen.add(image_id)
-        confidence = round(max(0.0, min(1.0, _as_float(item.get("grounding_confidence") or item.get("confidence"), 0.0))), 3)
+        confidence = round(max(0.0, min(1.0, as_float(item.get("grounding_confidence") or item.get("confidence"), 0.0))), 3)
         if confidence < FIGURE_GROUNDING_MIN_CONFIDENCE:
             warnings.append(f"low_confidence_grounding:{image_id}")
             continue
@@ -619,7 +629,7 @@ def _apply_vision_grounding(
         image.grounding_confidence = confidence
         explanation = str(item.get("figure_explanation") or "").strip()
         if explanation:
-            image.figure_explanation = _preview(explanation, limit=420)
+            image.figure_explanation = preview(explanation, limit=420)
             image.figure_explanation_status = "vision_grounding"
         elif not image.figure_explanation:
             explanation, status = _figure_explanation(image)
@@ -777,13 +787,13 @@ def _semantic_anchor(image: ImageAsset, layout_elements: list[dict[str, Any]]) -
 
 def _figure_explanation(image: ImageAsset) -> tuple[str | None, str]:
     if image.figure_explanation:
-        return _preview(image.figure_explanation, limit=420), image.figure_explanation_status or "existing"
+        return preview(image.figure_explanation, limit=420), image.figure_explanation_status or "existing"
     if image.visual_summary:
-        return _preview(image.visual_summary, limit=420), "visual_summary"
+        return preview(image.visual_summary, limit=420), "visual_summary"
     if image.ocr_text:
-        return _preview(image.ocr_text, limit=420), "ocr_text"
+        return preview(image.ocr_text, limit=420), "ocr_text"
     if image.caption and not _is_generic_caption(image.caption):
-        return _preview(image.caption, limit=220), "caption"
+        return preview(image.caption, limit=220), "caption"
     return None, "missing"
 
 
@@ -832,7 +842,7 @@ def _image_record(page: SlidePage, image: ImageAsset, output_root: Path) -> dict
 def _normalize_bbox(source_type: str, bbox: list[float] | None, page: SlidePage) -> list[float] | None:
     if not bbox or len(bbox) != 4:
         return None
-    if _looks_normalized(bbox):
+    if looks_normalized(bbox):
         return _clamp_bbox(bbox)
     width = page.page_width or 0.0
     height = page.page_height or 0.0
@@ -846,10 +856,6 @@ def _normalize_bbox(source_type: str, bbox: list[float] | None, page: SlidePage)
         x2 = third
         y2 = fourth
     return _clamp_bbox([x1 / width, y1 / height, x2 / width, y2 / height])
-
-
-def _looks_normalized(bbox: list[float]) -> bool:
-    return len(bbox) == 4 and all(-0.001 <= float(value) <= 1.001 for value in bbox)
 
 
 def _clamp_bbox(bbox: list[float]) -> list[float]:
@@ -897,45 +903,3 @@ def _tokens(text: str) -> set[str]:
     words = {word.lower() for word in re.findall(r"[A-Za-z0-9_]{2,}", text)}
     cjk = {char for char in text if "\u4e00" <= char <= "\u9fff"}
     return words.union(cjk)
-
-
-def _parse_json_object(text: str) -> dict[str, Any] | None:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _as_float(value: Any, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _display_path(path: Path, output_root: Path) -> str:
-    try:
-        return path.resolve().relative_to(output_root.resolve()).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def _sum_int(values: object) -> int:
-    total = 0
-    for value in values:
-        if isinstance(value, int):
-            total += value
-    return total
-
-
-def _preview(text: str, limit: int = 160) -> str:
-    value = re.sub(r"\s+", " ", text).strip()
-    if len(value) <= limit:
-        return value
-    return value[: limit - 1] + "…"

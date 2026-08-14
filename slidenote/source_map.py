@@ -9,6 +9,7 @@ from slidenote.ir import build_page_ir, element_index_from_ir
 from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_preview
+from slidenote.utils import preview
 
 
 ELEMENT_PATTERN = re.compile(r"\bs\d+_(?:t|tbl|img|fig)\d+\b")
@@ -43,7 +44,7 @@ def build_source_map(deck: Deck, notes_markdown: str, output_root: Path) -> dict
                 "primary_element_id": element_ids[0] if element_ids else None,
                 "source_refs": refs,
                 "image_targets": image_targets,
-                "text_preview": _preview(_visible_text(block["text"])),
+                "text_preview": preview(_visible_text(block["text"])),
                 "ai_supplement": "AI 补充说明" in block["text"],
             }
         )
@@ -259,7 +260,7 @@ def _text_ref(deck: Deck, page: SlidePage, block: TextBlock) -> dict[str, Any]:
         "slide_id": page.slide_id,
         "element_id": block.id,
         "element_type": block.type,
-        "preview": _preview(block.content),
+        "preview": preview(block.content),
     }
 
 
@@ -305,10 +306,3 @@ def _image_ref(deck: Deck, page: SlidePage, image: ImageAsset) -> dict[str, Any]
         "figure_audit_status": image.figure_audit_status,
         "preview": image.caption or image.path,
     }
-
-
-def _preview(text: str, limit: int = 160) -> str:
-    value = " ".join(text.split())
-    if len(value) <= limit:
-        return value
-    return value[: limit - 1] + "…"
