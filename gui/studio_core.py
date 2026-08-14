@@ -7,33 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-PROVIDER_ENV_KEYS: dict[str, tuple[str, ...]] = {
-    "openai": ("OPENAI_API_KEY",),
-    "deepseek": ("DEEPSEEK_API_KEY",),
-    "qwen": ("QWEN_API_KEY", "DASHSCOPE_API_KEY"),
-    "doubao": ("DOUBAO_API_KEY", "ARK_API_KEY", "VOLCENGINE_API_KEY"),
-    "glm": ("GLM_API_KEY", "ZAI_API_KEY", "ZHIPUAI_API_KEY"),
-    "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-    "claude": ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"),
-}
+from slidenote.llm import PROVIDERS as LLM_PROVIDERS
 
-DEFAULT_MODELS: dict[str, str] = {
-    "openai": "gpt-4.1-mini",
-    "deepseek": "deepseek-v4-flash",
-    "qwen": "qwen-plus",
-    "doubao": "",
-    "glm": "glm-5.1",
-    "gemini": "gemini-3-flash-preview",
-    "claude": "claude-sonnet-4-20250514",
-}
+# Provider metadata derives from slidenote.llm.ProviderSpec (single source of truth).
+PROVIDER_ENV_KEYS: dict[str, tuple[str, ...]] = {name: spec.api_key_envs for name, spec in LLM_PROVIDERS.items()}
 
-VISION_DEFAULT_MODELS: dict[str, str] = {
-    "openai": "gpt-4.1-mini",
-    "qwen": "qwen-vl-plus",
-    "doubao": "",
-    "gemini": "gemini-3-flash-preview",
-    "claude": "claude-sonnet-4-20250514",
-}
+DEFAULT_MODELS: dict[str, str] = {name: (spec.default_model or "") for name, spec in LLM_PROVIDERS.items()}
+
+VISION_DEFAULT_MODELS: dict[str, str] = {name: (spec.default_vision_model or "") for name, spec in LLM_PROVIDERS.items()}
 
 SAFE_OUTPUT_RE = re.compile(r"[^a-zA-Z0-9_.-]+")
 
@@ -215,18 +196,9 @@ def build_textbook_command(config: TextbookConfig) -> list[str]:
 
 
 def command_for_display(cmd: list[str]) -> str:
-    redacted = []
-    skip_redact_value = False
-    secret_flags = {"--api-key", "--vision-api-key", "--ocr-api-key", "--ocr-secret-key"}
-    for token in cmd:
-        if skip_redact_value:
-            redacted.append("***")
-            skip_redact_value = False
-            continue
-        redacted.append(token)
-        if token in secret_flags:
-            skip_redact_value = True
-    return " ".join(redacted)
+    # Keys never travel through the command line (they are injected via env),
+    # so no redaction is needed here.
+    return " ".join(cmd)
 
 
 def performance_tips(config: StudioConfig) -> list[str]:
