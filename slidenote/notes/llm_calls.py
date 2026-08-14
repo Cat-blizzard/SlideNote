@@ -66,113 +66,37 @@ def _generate_llm_context(
         content_guard=content_guard,
     )
     prompt_brief = _prompt_deck_brief(deck_brief, [page.slide_id for page in context.pages])
-    cache_key_payload = {
-        "schema_version": LLM_CACHE_SCHEMA_VERSION,
-        "prompt_version": NOTE_PROMPT_VERSION,
-        "provider": provider,
-        "model": model,
-        "base_url": base_url,
-        "temperature": temperature,
-        "max_output_tokens": max_output_tokens,
-        "asset_mode": asset_mode,
-        "source_display": source_display,
-        "note_context": note_context,
-        "note_style": note_style,
-        "note_profile": note_profile,
-        "note_depth": note_depth,
-        "note_language": note_language,
-        "term_policy": term_policy,
-        "screenshot_policy": screenshot_policy,
-        "figure_placement": figure_placement,
-        "deck_brief_hash": _prompt_brief_hash(prompt_brief),
-        "content_guard_used": bool(content_guard),
-        "system_prompt_hash": sha256_text(SYSTEM_PROMPT),
-        "user_prompt_hash": sha256_text(user_prompt),
-        "user_prompt": user_prompt,
-    }
-    cache_key = make_cache_key(cache_key_payload)
-    cache_path = cache.path_for(cache_key)
-    prompt_hash = sha256_text(stable_json(cache_key_payload))
-    cached = None if force_refresh else cache.read(cache_key)
-    context_record = _base_usage_context_record(
+    return _generate_cached_llm_text(
         context=context,
-        cache_key=cache_key,
-        cache_path=cache_path,
         output_root=output_root,
-        prompt_hash=prompt_hash,
+        cache=cache,
+        cache_mode=cache_mode,
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        max_output_tokens=max_output_tokens,
+        temperature=temperature,
+        user_prompt=user_prompt,
+        prompt_version=NOTE_PROMPT_VERSION,
+        generation_stage="note",
+        force_refresh=force_refresh,
+        request_options={
+            "asset_mode": asset_mode,
+            "source_display": source_display,
+            "note_context": note_context,
+            "note_style": note_style,
+            "note_profile": note_profile,
+            "note_depth": note_depth,
+            "note_language": note_language,
+            "term_policy": term_policy,
+            "screenshot_policy": screenshot_policy,
+            "figure_placement": figure_placement,
+            "deck_brief_used": bool(prompt_brief),
+            "deck_brief_hash": _prompt_brief_hash(prompt_brief),
+            "content_guard_used": bool(content_guard),
+        },
     )
-
-    if cached:
-        content = cached["output_text"]
-        cached_usage = cached.get("response_usage") or {}
-        context_record.update(
-            {
-                "cache_status": "local_hit",
-                "llm_call": False,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-                "provider_cached_input_tokens": 0,
-                "cached_entry_usage": cached_usage,
-                "cached_at": cached.get("created_at"),
-            }
-        )
-    else:
-        client = _make_llm_client(
-            provider=provider,
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
-        )
-        llm_result = client.generate_with_usage(user_prompt)
-        content = llm_result.text
-        response_usage = llm_result.usage or {}
-        cache_status = "disabled" if cache_mode == "off" else "refresh" if cache_mode == "refresh" or force_refresh else "miss"
-        written_path = cache.write(
-            cache_key,
-            {
-                "provider": provider,
-                "model": model,
-                "base_url": base_url,
-                "prompt_version": NOTE_PROMPT_VERSION,
-                "context_id": context.id,
-                "context_kind": context.kind,
-                "slide_ids": [page.slide_id for page in context.pages],
-                "request": {
-                    "temperature": temperature,
-                    "max_output_tokens": max_output_tokens,
-                    "note_profile": note_profile,
-                    "note_depth": note_depth,
-                    "note_language": note_language,
-                    "term_policy": term_policy,
-                    "deck_brief_used": bool(prompt_brief),
-                    "content_guard_used": bool(content_guard),
-                },
-                "prompt_hash": prompt_hash,
-                "output_text": content,
-                "response_usage": response_usage,
-            },
-        )
-        if written_path is not None:
-            cache_path = written_path
-        context_record.update(
-            {
-                "cache_status": cache_status,
-                "llm_call": True,
-                "api_retries": response_usage.get("retries", 0),
-                "input_tokens": response_usage.get("input_tokens"),
-                "output_tokens": response_usage.get("output_tokens"),
-                "total_tokens": response_usage.get("total_tokens"),
-                "provider_cached_input_tokens": response_usage.get("provider_cached_input_tokens"),
-                "provider_usage": response_usage,
-            }
-        )
-
-    context_record["note_chars"] = len(content)
-    context_record["cache_file"] = display_path(cache_path, output_root)
-    return content, context_record
 
 def _generate_page_lecture_context(
     deck: Deck,

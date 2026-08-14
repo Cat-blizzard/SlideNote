@@ -4,23 +4,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
-from slidenote.content_guard import record_repair
 from slidenote.llm import resolve_provider_runtime
 from slidenote.llm_cache import LLMCache
 from slidenote.models import Deck
 
 from .assembly import (
     NoteContext,
-    _compose_final_markdown,
-    _ensure_grounded_figures,
+    _finalize_notes_markdown,
     _postprocess_llm_markdown,
-    _repair_markdown_image_links,
     _resolved_context_mode,
     _select_note_contexts,
 )
 from .lecture_weave import _generate_notes_with_lecture_weave
 from .llm_calls import _generate_llm_context
-from .repair import _repair_required_markdown_once
 from .usage import _build_usage_report
 
 
@@ -162,21 +158,16 @@ def _generate_notes_with_llm(
         usage_contexts.append(context_record)
         final_chunks[context.id] = content
 
-    markdown = _compose_final_markdown(
+    repair_context_records: list[dict[str, Any]] = []
+    markdown = _finalize_notes_markdown(
         deck=deck,
         contexts=contexts,
         final_chunks=final_chunks,
         section_plan=section_plan,
         source_display=source_display,
-    )
-    markdown = _repair_markdown_image_links(markdown, output_root, asset_map)
-    markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
-    repair_context_records: list[dict[str, Any]] = []
-    markdown, repair_record = _repair_required_markdown_once(
-        deck=deck,
-        context=NoteContext(id="final", kind="final", title="final", pages=deck.pages),
-        markdown=markdown,
         output_root=output_root,
+        asset_map=asset_map,
+        figure_placement=figure_placement,
         cache=cache,
         cache_mode=cache_mode,
         provider=resolved_provider,
@@ -185,19 +176,12 @@ def _generate_notes_with_llm(
         base_url=resolved_base_url,
         max_output_tokens=max_output_tokens,
         temperature=temperature,
-        source_display=source_display,
         note_language=note_language,
         term_policy=term_policy,
         content_guard=content_guard,
-        stage="final",
+        repair_stage="final",
+        repair_context_records=repair_context_records,
     )
-    if repair_record is not None:
-        record_repair(content_guard, repair_record)
-        if isinstance(repair_record.get("llm"), dict):
-            repair_context_records.append(repair_record["llm"])
-    markdown = _repair_markdown_image_links(markdown, output_root, asset_map)
-    markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
-    markdown = _repair_markdown_image_links(markdown, output_root, asset_map)
     usage_report = _build_usage_report(
         deck=deck,
         provider=resolved_provider,

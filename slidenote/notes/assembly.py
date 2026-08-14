@@ -345,6 +345,76 @@ def _compose_final_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _finalize_notes_markdown(
+    *,
+    deck: Deck,
+    contexts: list[NoteContext],
+    final_chunks: dict[str, str],
+    section_plan: dict[str, Any] | None,
+    source_display: str,
+    output_root: Path,
+    asset_map: dict[str, str],
+    figure_placement: str,
+    cache: Any,
+    cache_mode: str,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    max_output_tokens: int,
+    temperature: float | None,
+    note_language: str,
+    term_policy: str,
+    content_guard: dict[str, Any] | None,
+    repair_stage: str,
+    repair_context_records: list[dict[str, Any]],
+) -> str:
+    """Compose the final markdown, run the required-coverage repair, and re-ground figures.
+
+    Shared finalize tail used by both the direct and lecture-weave strategies.
+    The final repair is the last LLM-capable step; image-link repair and figure
+    grounding after it are deterministic and idempotent.
+    """
+    from slidenote.content_guard import record_repair
+    from .repair import _repair_required_markdown_once
+
+    markdown = _compose_final_markdown(
+        deck=deck,
+        contexts=contexts,
+        final_chunks=final_chunks,
+        section_plan=section_plan,
+        source_display=source_display,
+    )
+    markdown = _repair_markdown_image_links(markdown, output_root, asset_map)
+    markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
+    markdown, repair_record = _repair_required_markdown_once(
+        deck=deck,
+        context=NoteContext(id="final", kind="final", title="final", pages=deck.pages),
+        markdown=markdown,
+        output_root=output_root,
+        cache=cache,
+        cache_mode=cache_mode,
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        max_output_tokens=max_output_tokens,
+        temperature=temperature,
+        source_display=source_display,
+        note_language=note_language,
+        term_policy=term_policy,
+        content_guard=content_guard,
+        stage=repair_stage,
+    )
+    if repair_record is not None:
+        record_repair(content_guard, repair_record)
+        if isinstance(repair_record.get("llm"), dict):
+            repair_context_records.append(repair_record["llm"])
+    markdown = _repair_markdown_image_links(markdown, output_root, asset_map)
+    markdown = _ensure_grounded_figures(markdown, deck, asset_map, source_display, figure_placement)
+    return markdown
+
+
 # ---------------------------------------------------------------------------
 # Heading / title utilities
 # ---------------------------------------------------------------------------
