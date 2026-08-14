@@ -44,7 +44,8 @@ agent_pack/
   支持 `--dsh-provider/--dsh-model/--dsh-api-key/--dsh-base-url`，
   其它 `slidenote.llm` 支持的 provider 均可选择）。
 - 系统提示词 `_AGENT_SYSTEM_PROMPT` 约束模型只返回 SlideNote JSON 契约。
-- 每次 section 调用可走本地磁盘缓存（`--dsh-cache on --dsh-cache-dir <dir>`，
+- 每次 section 调用默认启用本地磁盘缓存（`--dsh-cache on`，目录默认
+  `<out>/.dsh_cache`，可用 `--dsh-cache-dir` 覆盖、`--dsh-cache off` 关闭；
   缓存键 = prompt + provider + model + schema 版本）。
 - 结果解析走 `_parse_agent_json_text`（fence 剥离 + JSON 提取 + 字段校验）。
 - 元数据记录在 `agent_run.json` 的 `sections[].dsh`：

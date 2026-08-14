@@ -272,6 +272,10 @@ def run_dsh_agent_pack(
     repair_mode: str = "auto",
     repair_rounds: int = 1,
 ) -> dict[str, Any]:
+    if cache_mode != "off" and cache_dir is None:
+        cache_dir = output_root / ".dsh_cache"
+    resolved_cache_dir = cache_dir
+
     def runner(prompt: str) -> tuple[dict[str, Any], dict[str, Any]]:
         return _run_dsh_command(
             prompt=prompt,
@@ -283,7 +287,7 @@ def run_dsh_agent_pack(
             max_output_tokens=max_output_tokens,
             temperature=temperature,
             cache_mode=cache_mode,
-            cache_dir=cache_dir,
+            cache_dir=resolved_cache_dir,
             timeout_seconds=timeout_seconds,
         )
 

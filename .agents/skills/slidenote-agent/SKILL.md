@@ -35,8 +35,9 @@ figure context in the pack (needs provider keys).
 ## Backend
 
 `--backend dsh` — DeepSeek API through `slidenote.llm` (OpenAI-compatible;
-keys via `DEEPSEEK_API_KEY` or `--dsh-api-key`). Local cache via
-`--dsh-cache-dir`. Other providers supported by `slidenote.llm` can be
+keys via `DEEPSEEK_API_KEY` or `--dsh-api-key`). Local cache is on by default
+at `<out>/.dsh_cache`; override with `--dsh-cache-dir`, disable with
+`--dsh-cache off`. Other providers supported by `slidenote.llm` can be
 selected with `--dsh-provider`.
 
 ## Output contract

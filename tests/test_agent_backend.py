@@ -265,6 +265,56 @@ def test_agent_run_dsh_uses_local_cache(tmp_path, monkeypatch):
     assert len(calls) == calls_after_first, "second run should hit the local cache without LLM calls"
 
 
+def test_agent_run_dsh_default_cache_dir_enables_caching(tmp_path, monkeypatch):
+    """--dsh-cache on without --dsh-cache-dir must cache under <out>/.dsh_cache."""
+    source = tmp_path / "lecture.pdf"
+    build_out = tmp_path / "build"
+    run_out = tmp_path / "run"
+    _write_pdf(source)
+    assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
+    manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
+    source_ids = manifest["sections"][0]["source_ids"]
+    calls: list[str] = []
+    _install_fake_dsh_client(monkeypatch, calls, source_ids)
+
+    run_args = ["agent-run", str(build_out / "agent_pack"), "--out", str(run_out), "--quiet", "--backend", "dsh"]
+    assert main(run_args) == 0
+    calls_after_first = len(calls)
+    assert calls_after_first >= 1
+    default_cache = run_out / ".dsh_cache"
+    assert default_cache.exists(), "default cache dir <out>/.dsh_cache should be created"
+    assert main(run_args) == 0
+    assert len(calls) == calls_after_first, "second run should hit the default cache without LLM calls"
+
+
+def test_agent_run_dsh_cache_off_skips_cache_dir(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    build_out = tmp_path / "build"
+    run_out = tmp_path / "run"
+    _write_pdf(source)
+    assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
+    manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
+    source_ids = manifest["sections"][0]["source_ids"]
+    calls: list[str] = []
+    _install_fake_dsh_client(monkeypatch, calls, source_ids)
+
+    run_args = [
+        "agent-run",
+        str(build_out / "agent_pack"),
+        "--out",
+        str(run_out),
+        "--quiet",
+        "--backend",
+        "dsh",
+        "--dsh-cache",
+        "off",
+    ]
+    assert main(run_args) == 0
+    assert not (run_out / ".dsh_cache").exists(), "--dsh-cache off must not create a cache dir"
+    assert main(run_args) == 0
+    assert len(calls) >= 2, "--dsh-cache off should call the LLM again on the second run"
+
+
 def test_agent_run_dsh_rejects_invalid_json_output(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
     build_out = tmp_path / "build"
