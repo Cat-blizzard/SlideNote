@@ -201,6 +201,7 @@ def _agent_run_summary(report: dict[str, Any] | None) -> dict[str, Any]:
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
     attempted_repairs = int(repair.get("attempted_sections") or 0)
     return {
+        "backend": str(report.get("backend") or ""),
         "sections_total": int(summary.get("sections_total") or len(sections)),
         "warnings": list(summary.get("warnings") or []),
         "repair": repair,

@@ -4,7 +4,6 @@ import argparse
 import json
 import re
 import shutil
-import subprocess
 import sys
 from dataclasses import fields
 from pathlib import Path
@@ -85,41 +84,27 @@ def run_agent_pack(args: argparse.Namespace) -> int:
 
 
 def run_agent_run(args: argparse.Namespace) -> int:
-    backend = args.backend
-    if backend not in {"claude", "dsh"}:
-        raise AgentBackendError(f"Unsupported agent backend: {backend}")
+    if args.backend != "dsh":
+        raise AgentBackendError(f"Unsupported agent backend: {args.backend}")
     pack_dir = args.agent_pack_dir.resolve()
     out = (args.out.resolve() if getattr(args, "out", None) else pack_dir.parent.resolve())
     try:
-        if backend == "claude":
-            report = run_claude_agent_pack(
-                pack_dir=pack_dir,
-                output_root=out,
-                claude_command=args.claude_command,
-                claude_model=args.claude_model,
-                max_budget_usd=args.max_budget_usd,
-                timeout_seconds=args.claude_timeout,
-                repair_mode=args.repair,
-                repair_rounds=args.repair_rounds,
-                quiet=args.quiet,
-            )
-        else:
-            report = run_dsh_agent_pack(
-                pack_dir=pack_dir,
-                output_root=out,
-                provider=args.dsh_provider,
-                model=args.dsh_model,
-                api_key=args.dsh_api_key,
-                base_url=args.dsh_base_url,
-                max_output_tokens=args.dsh_max_output_tokens,
-                temperature=args.dsh_temperature,
-                cache_mode=args.dsh_cache,
-                cache_dir=args.dsh_cache_dir,
-                timeout_seconds=args.dsh_timeout,
-                repair_mode=args.repair,
-                repair_rounds=args.repair_rounds,
-                quiet=args.quiet,
-            )
+        report = run_dsh_agent_pack(
+            pack_dir=pack_dir,
+            output_root=out,
+            provider=args.dsh_provider,
+            model=args.dsh_model,
+            api_key=args.dsh_api_key,
+            base_url=args.dsh_base_url,
+            max_output_tokens=args.dsh_max_output_tokens,
+            temperature=args.dsh_temperature,
+            cache_mode=args.dsh_cache,
+            cache_dir=args.dsh_cache_dir,
+            timeout_seconds=args.dsh_timeout,
+            repair_mode=args.repair,
+            repair_rounds=args.repair_rounds,
+            quiet=args.quiet,
+        )
     except AgentBackendError as exc:
         _write_agent_diagnostics(out, {"status": "error", "message": str(exc)})
         print(f"Agent run failed: {exc}", file=sys.stderr)
@@ -268,39 +253,6 @@ def build_agent_pack_from_state(state: BuildState) -> dict[str, Any]:
     state.artifacts.register("agent_pack", pack_dir / "manifest.json")
     state.artifacts.register("agent_pack_report", output_root / "agent_pack_report.json")
     return report
-
-
-def run_claude_agent_pack(
-    *,
-    pack_dir: Path,
-    output_root: Path,
-    claude_command: str,
-    claude_model: str | None,
-    max_budget_usd: float | None,
-    timeout_seconds: int,
-    quiet: bool,
-    repair_mode: str = "auto",
-    repair_rounds: int = 1,
-) -> dict[str, Any]:
-    def runner(prompt: str) -> tuple[dict[str, Any], dict[str, Any]]:
-        return _run_claude_command(
-            prompt=prompt,
-            pack_dir=pack_dir,
-            claude_command=claude_command,
-            claude_model=claude_model,
-            max_budget_usd=max_budget_usd,
-            timeout_seconds=timeout_seconds,
-        )
-
-    return _run_agent_pack_core(
-        pack_dir=pack_dir,
-        output_root=output_root,
-        backend="claude",
-        runner=runner,
-        quiet=quiet,
-        repair_mode=repair_mode,
-        repair_rounds=repair_rounds,
-    )
 
 
 def run_dsh_agent_pack(
@@ -861,61 +813,6 @@ def _render_page_pack_markdown(deck: Deck, page: SlidePage, asset_map: dict[str,
     return lines
 
 
-def _run_claude_command(
-    *,
-    prompt: str,
-    pack_dir: Path,
-    claude_command: str,
-    claude_model: str | None,
-    max_budget_usd: float | None,
-    timeout_seconds: int,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    cmd = [claude_command, "-p", "--bare", "--output-format", "json", "--add-dir", str(pack_dir)]
-    if claude_model:
-        cmd.extend(["--model", claude_model])
-    if max_budget_usd is not None:
-        cmd.extend(["--max-budget-usd", str(max_budget_usd)])
-    cmd.append(prompt)
-    try:
-        completed = subprocess.run(
-            cmd,
-            cwd=str(pack_dir),
-            check=False,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise AgentBackendError(f"Claude Code timed out after {timeout_seconds} seconds.") from exc
-    except OSError as exc:
-        raise AgentBackendError(f"Could not run Claude Code command `{claude_command}`: {exc}") from exc
-    if completed.returncode != 0:
-        stderr = completed.stderr.strip()
-        raise AgentBackendError(f"Claude Code exited with code {completed.returncode}: {stderr or completed.stdout.strip()}")
-    parsed, metadata = parse_claude_stdout(completed.stdout)
-    return parsed, metadata
-
-
-def parse_claude_stdout(stdout: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    if not stdout.strip():
-        raise AgentBackendError("Claude Code returned empty stdout.")
-    try:
-        outer = json.loads(stdout)
-    except json.JSONDecodeError as exc:
-        raise AgentBackendError(f"Claude Code stdout was not JSON: {exc}") from exc
-    metadata: dict[str, Any] = {}
-    if isinstance(outer, dict) and "markdown" in outer:
-        payload = outer
-    elif isinstance(outer, dict) and isinstance(outer.get("result"), str):
-        metadata = {key: value for key, value in outer.items() if key != "result"}
-        payload = _parse_json_object_from_text(outer["result"])
-    else:
-        raise AgentBackendError("Claude Code JSON did not contain a SlideNote result object.")
-    _validate_agent_result_payload(payload)
-    return payload, metadata
-
-
 def _parse_json_object_from_text(text: str) -> dict[str, Any]:
     cleaned = text.strip()
     if cleaned.startswith("```"):
@@ -1179,7 +1076,7 @@ When a useful figure is listed, place its Markdown image near the concept it exp
 
 
 def _agent_skill_markdown() -> str:
-    return """# SlideNote Claude Code Skill
+    return """# SlideNote Agent Skill
 
 You are writing one section of a larger SlideNote handout.
 Use the provided section pack as the only source of truth.

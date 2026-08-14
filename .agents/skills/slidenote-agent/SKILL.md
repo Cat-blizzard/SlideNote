@@ -1,6 +1,6 @@
 ---
 name: slidenote-agent
-description: Use when asked to generate, repair, or evaluate SlideNote agent-backend study notes from PPT/PDF course slides in the SlideNote repo — runs the agent-pack -> agent-run/agent-build (claude or dsh backend) -> agent-eval pipeline and verifies coverage reports instead of hand-writing notes.
+description: Use when asked to generate, repair, or evaluate SlideNote agent-backend study notes from PPT/PDF course slides in the SlideNote repo — runs the agent-pack -> agent-run/agent-build (dsh backend) -> agent-eval pipeline and verifies coverage reports instead of hand-writing notes.
 whenToUse: Triggered by requests like "把 X.pptx 做成讲义", "run the agent pipeline", "agent-build", "用 agent 后端生成笔记" or any SlideNote agent workflow.
 ---
 
@@ -9,18 +9,17 @@ whenToUse: Triggered by requests like "把 X.pptx 做成讲义", "run the agent 
 This skill drives the experimental agent pipeline in the SlideNote repository
 (`experiment/dsh-backend` branch). SlideNote keeps every deterministic step
 (parse, assets, coverage, source map, merge); the writing step is delegated to
-an agent backend and validated afterward. The pipeline never trusts the agent's
-self-reported coverage — SlideNote always reruns `analyze_coverage`.
+the DeepSeek backend and validated afterward. The pipeline never trusts the
+model's self-reported coverage — SlideNote always reruns `analyze_coverage`.
 
 ## Commands
 
 ```powershell
-# 1. Build the agent pack (deterministic; no writing agent involved)
+# 1. Build the agent pack (deterministic; no writing model involved)
 python -m slidenote agent-pack <input> --out <dir> [--vision off] [--ocr off]
 
-# 2. Run the writing agent over the pack, then validate/merge/repair
+# 2. Run the DeepSeek backend over the pack, then validate/merge/repair
 python -m slidenote agent-run <pack_dir> --out <dir> --backend dsh
-python -m slidenote agent-run <pack_dir> --out <dir> --backend claude   # control group
 
 # 3. Pack + run in one step
 python -m slidenote agent-build <input> --out <dir> --backend dsh
@@ -33,13 +32,12 @@ python -m slidenote agent-eval <input> --out <dir> --backend dsh
 `--vision auto` / `--ocr auto` only when the user explicitly wants richer
 figure context in the pack (needs provider keys).
 
-## Backends
+## Backend
 
-- `--backend dsh` — DeepSeek API through `slidenote.llm` (OpenAI-compatible;
-  keys via `DEEPSEEK_API_KEY` or `--dsh-api-key`). Local cache via
-  `--dsh-cache-dir` (default: off per run).
-- `--backend claude` — official Claude Code CLI (`claude -p`), kept as the
-  control/legacy backend.
+`--backend dsh` — DeepSeek API through `slidenote.llm` (OpenAI-compatible;
+keys via `DEEPSEEK_API_KEY` or `--dsh-api-key`). Local cache via
+`--dsh-cache-dir`. Other providers supported by `slidenote.llm` can be
+selected with `--dsh-provider`.
 
 ## Output contract
 
@@ -78,5 +76,3 @@ SlideNote rejects unknown `assets/` paths, enforces the source marker format
   commands and inspect the reports.
 - If a run fails, fix the cause (missing key, pack mismatch, malformed agent
   JSON) and rerun; keep the first failing diagnostics in the report.
-- Keep experiments measurable: use `agent-eval` before declaring one backend
-  better than the other.

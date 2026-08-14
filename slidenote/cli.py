@@ -195,18 +195,14 @@ def _add_agent_pack_options(command: argparse.ArgumentParser) -> None:
 def _add_agent_run_options(command: argparse.ArgumentParser, include_out: bool = True, include_quiet: bool = True) -> None:
     command.add_argument(
         "--backend",
-        choices=["claude", "dsh"],
-        default="claude",
-        help="Agent backend. claude runs the official Claude Code CLI; dsh uses the DeepSeek API through slidenote.llm.",
+        choices=["dsh"],
+        default="dsh",
+        help="Agent backend. dsh writes sections through the DeepSeek API (slidenote.llm).",
     )
     if include_out:
         command.add_argument("--out", type=Path, default=None, help="Output directory. Defaults to the agent pack parent directory.")
     command.add_argument("--repair", choices=["auto", "off"], default="auto", help="Run one coverage repair pass after initial agent output. Defaults to auto.")
     command.add_argument("--repair-rounds", type=int, default=1, help="Maximum repair rounds. First version supports 0 or 1.")
-    command.add_argument("--claude-command", default="claude", help="Claude Code executable to run.")
-    command.add_argument("--claude-model", default=None, help="Optional Claude Code model argument.")
-    command.add_argument("--max-budget-usd", type=float, default=None, help="Optional Claude Code --max-budget-usd value.")
-    command.add_argument("--claude-timeout", type=int, default=900, help="Per-section Claude Code timeout in seconds.")
     command.add_argument(
         "--dsh-provider",
         default="deepseek",
