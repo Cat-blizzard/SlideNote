@@ -6,7 +6,7 @@ import re
 import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import fields
+from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any
 
@@ -234,7 +234,7 @@ def build_agent_pack_from_state(state: BuildState) -> dict[str, Any]:
             "element_ir": "../element_ir.json",
             "sections": "../sections.json",
         },
-        "deck": deck.to_dict(),
+        "deck": _minimal_deck_dict(deck),
         "section_plan": state.section_report,
         "content_guard": content_guard,
         "warnings": asset_warnings,
@@ -1206,6 +1206,68 @@ def _deck_title(deck: Deck) -> str:
         if page.title:
             return page.title
     return Path(deck.source_path).stem
+
+
+# Understanding-stage intermediates that agent-run never reads after it
+# rebuilds the Deck from the manifest: coverage and source-map analysis only
+# consume elements, ids, images, and page geometry.
+_MINIMAL_PAGE_DROP_FIELDS = {
+    "semantic_blocks",
+    "semantic_groups",
+    "semantic_relations",
+    "modality_confidence",
+    "modality_reasons",
+    "processing_hints",
+    "notes",
+}
+
+
+def _minimal_deck_dict(deck: Deck) -> dict[str, Any]:
+    """Serialize the deck without understanding-stage intermediates.
+
+    The manifest deck exists only so agent-run can rebuild the Deck for
+    coverage / source-map analysis; `_deck_from_manifest` filters unknown
+    keys, so dropped fields fall back to dataclass defaults on rebuild.
+    Dropping them keeps large decks' manifests 30-50% smaller.
+    """
+    return {
+        "source_path": deck.source_path,
+        "source_type": deck.source_type,
+        "warnings": list(deck.warnings),
+        "pages": [
+            {
+                "slide_id": page.slide_id,
+                "page_width": page.page_width,
+                "page_height": page.page_height,
+                "title": page.title,
+                "text_blocks": [
+                    {"id": block.id, "type": block.type, "content": block.content, "bbox": block.bbox}
+                    for block in page.text_blocks
+                ],
+                "tables": [
+                    {
+                        "id": table.id,
+                        "rows": table.rows,
+                        "bbox": table.bbox,
+                        "table_summary": table.table_summary,
+                        "table_conclusion": table.table_conclusion,
+                        "key_rows": table.key_rows,
+                    }
+                    for table in page.tables
+                ],
+                # Figure coverage reads many image fields, so keep images intact.
+                "images": [asdict(image) for image in page.images],
+                "page_screenshot": page.page_screenshot,
+                "page_ocr_text": page.page_ocr_text,
+                "page_ocr_status": page.page_ocr_status,
+                "page_visual_summary": page.page_visual_summary,
+                "page_visual_status": page.page_visual_status,
+                "page_modality": page.page_modality,
+                "warnings": list(page.warnings),
+            }
+            for page in deck.pages
+        ],
+    }
 
 
 def _deck_from_manifest(manifest: dict[str, Any]) -> Deck:

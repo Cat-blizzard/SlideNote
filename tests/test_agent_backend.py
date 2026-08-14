@@ -114,6 +114,25 @@ def test_agent_pack_writes_manifest_sections_and_assets(tmp_path):
     assert "s1_t" in section_text
     assert "assets/" in section_text
 
+
+def test_agent_pack_manifest_deck_is_minimal(tmp_path):
+    """The manifest deck must skip understanding-stage intermediates while
+    keeping everything coverage/source-map need to rebuild the Deck."""
+    source = tmp_path / "lecture.pdf"
+    out = tmp_path / "out"
+    _write_pdf(source)
+
+    assert main(["agent-pack", str(source), "--out", str(out), "--quiet"]) == 0
+    manifest = json.loads((out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
+    page = manifest["deck"]["pages"][0]
+
+    for dropped in ("semantic_blocks", "semantic_groups", "semantic_relations", "modality_reasons", "processing_hints", "notes"):
+        assert dropped not in page, f"manifest deck should drop {dropped}"
+    for kept in ("slide_id", "page_width", "page_height", "title", "text_blocks", "tables", "images", "page_screenshot"):
+        assert kept in page, f"manifest deck must keep {kept}"
+    assert page["text_blocks"], "text blocks must be preserved"
+    assert all("id" in block and "content" in block for block in page["text_blocks"])
+
 def test_agent_eval_writes_baseline_agent_comparison(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
     eval_out = tmp_path / "eval"
