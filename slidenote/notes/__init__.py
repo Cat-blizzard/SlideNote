@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -34,6 +34,45 @@ TERM_POLICIES = {"preserve", "translate", "bilingual"}
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class NoteOptions:
+    """All note-generation configuration, passed down the pipeline as one object.
+
+    Replaces the ~31-parameter call signatures that used to thread through
+    notes/__init__ -> orchestrator -> direct/lecture_weave -> llm_calls.
+    """
+
+    use_llm: bool = False
+    provider: str = "openai"
+    model: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+    max_output_tokens: int = 4096
+    temperature: float | None = None
+    cache_mode: str = "on"
+    cache_dir: Path | None = None
+    concurrency: int = 1
+    refresh_slide_ids: set[int] | None = None
+    progress_callback: Callable[[dict[str, Any]], None] | None = None
+    asset_mode: str = "bundle"
+    source_display: str = "hidden"
+    note_context: str = "section"
+    note_style: str = "article"
+    note_profile: str = "auto"
+    note_strategy: str = "lecture-weave"
+    note_depth: str | None = None
+    note_language: str = "zh"
+    term_policy: str = "bilingual"
+    teaching_enrichment: str = "auto"
+    weave_dedup: str = "soft"
+    page_neighborhood: int = 1
+    screenshot_policy: str = "fallback"
+    figure_placement: str = "inline"
+    section_plan: dict[str, Any] | None = None
+    deck_brief: dict[str, Any] | None = None
+    content_guard: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -100,96 +139,12 @@ def generate_notes(
     deck_brief: dict[str, Any] | None = None,
     content_guard: dict[str, Any] | None = None,
 ) -> str:
+    """Legacy convenience wrapper; prefer ``generate_notes_result`` with NoteOptions."""
     return generate_notes_result(
-        deck=deck,
-        output_root=output_root,
-        use_llm=use_llm,
-        provider=provider,
-        model=model,
-        api_key=api_key,
-        base_url=base_url,
-        max_output_tokens=max_output_tokens,
-        temperature=temperature,
-        cache_mode=cache_mode,
-        cache_dir=cache_dir,
-        concurrency=concurrency,
-        refresh_slide_ids=refresh_slide_ids,
-        progress_callback=progress_callback,
-        asset_mode=asset_mode,
-        source_display=source_display,
-        note_context=note_context,
-        note_style=note_style,
-        note_profile=note_profile,
-        note_strategy=note_strategy,
-        note_depth=note_depth,
-        note_language=note_language,
-        term_policy=term_policy,
-        teaching_enrichment=teaching_enrichment,
-        weave_dedup=weave_dedup,
-        page_neighborhood=page_neighborhood,
-        screenshot_policy=screenshot_policy,
-        figure_placement=figure_placement,
-        section_plan=section_plan,
-        deck_brief=deck_brief,
-        content_guard=content_guard,
-    ).markdown
-
-
-def generate_notes_result(
-    deck: Deck,
-    output_root: Path,
-    use_llm: bool = False,
-    provider: str = "openai",
-    model: str | None = None,
-    api_key: str | None = None,
-    base_url: str | None = None,
-    max_output_tokens: int = 4096,
-    temperature: float | None = None,
-    cache_mode: str = "on",
-    cache_dir: Path | None = None,
-    concurrency: int = 1,
-    refresh_slide_ids: set[int] | None = None,
-    progress_callback: Callable[[dict[str, Any]], None] | None = None,
-    asset_mode: str = "bundle",
-    source_display: str = "hidden",
-    note_context: str = "section",
-    note_style: str = "article",
-    note_profile: str = "auto",
-    note_strategy: str = "lecture-weave",
-    note_depth: str | None = None,
-    note_language: str = "zh",
-    term_policy: str = "bilingual",
-    teaching_enrichment: str = "auto",
-    weave_dedup: str = "soft",
-    page_neighborhood: int = 1,
-    screenshot_policy: str = "fallback",
-    figure_placement: str = "inline",
-    section_plan: dict[str, Any] | None = None,
-    deck_brief: dict[str, Any] | None = None,
-    content_guard: dict[str, Any] | None = None,
-) -> NoteGenerationResult:
-    resolved_note_depth = resolve_note_depth(note_profile, note_depth)
-    _validate_generation_options(
-        asset_mode,
-        source_display,
-        note_context,
-        note_style,
-        note_profile,
-        note_strategy,
-        resolved_note_depth,
-        note_language,
-        term_policy,
-        teaching_enrichment,
-        weave_dedup,
-        page_neighborhood,
-        screenshot_policy,
-        figure_placement,
-    )
-    asset_map, asset_warnings = _prepare_note_assets(deck, output_root, asset_mode, screenshot_policy=screenshot_policy)
-    if use_llm:
-        result = _generate_notes_with_llm(
-            deck,
-            output_root=output_root,
+        deck,
+        output_root,
+        NoteOptions(
+            use_llm=use_llm,
             provider=provider,
             model=model,
             api_key=api_key,
@@ -201,14 +156,13 @@ def generate_notes_result(
             concurrency=concurrency,
             refresh_slide_ids=refresh_slide_ids,
             progress_callback=progress_callback,
-            asset_map=asset_map,
             asset_mode=asset_mode,
             source_display=source_display,
             note_context=note_context,
             note_style=note_style,
             note_profile=note_profile,
             note_strategy=note_strategy,
-            note_depth=resolved_note_depth,
+            note_depth=note_depth,
             note_language=note_language,
             term_policy=term_policy,
             teaching_enrichment=teaching_enrichment,
@@ -219,6 +173,56 @@ def generate_notes_result(
             section_plan=section_plan,
             deck_brief=deck_brief,
             content_guard=content_guard,
+        ),
+    ).markdown
+
+
+def generate_notes_result(
+    deck: Deck,
+    output_root: Path,
+    options: NoteOptions | None = None,
+    **legacy: Any,
+) -> NoteGenerationResult:
+    """Generate notes from a :class:`NoteOptions` object.
+
+    Legacy keyword arguments (use_llm, provider, ...) are still accepted for
+    backward compatibility and merged over the options object.
+    """
+    if options is None:
+        options = NoteOptions(**legacy) if legacy else NoteOptions()
+    elif legacy:
+        options = replace(options, **legacy)
+    resolved_note_depth = resolve_note_depth(options.note_profile, options.note_depth)
+    if resolved_note_depth != options.note_depth:
+        # Propagate the resolved depth (e.g. lecture-notes -> very-detailed) so
+        # downstream usage reports read the same value as before.
+        options = replace(options, note_depth=resolved_note_depth)
+    _validate_generation_options(
+        options.asset_mode,
+        options.source_display,
+        options.note_context,
+        options.note_style,
+        options.note_profile,
+        options.note_strategy,
+        resolved_note_depth,
+        options.note_language,
+        options.term_policy,
+        options.teaching_enrichment,
+        options.weave_dedup,
+        options.page_neighborhood,
+        options.screenshot_policy,
+        options.figure_placement,
+    )
+    asset_map, asset_warnings = _prepare_note_assets(
+        deck, output_root, options.asset_mode, screenshot_policy=options.screenshot_policy
+    )
+    if options.use_llm:
+        result = _generate_notes_with_llm(
+            deck,
+            output_root=output_root,
+            options=options,
+            note_depth=resolved_note_depth,
+            asset_map=asset_map,
         )
         result.asset_warnings = (result.asset_warnings or []) + asset_warnings + _validate_markdown_image_links(
             result.markdown, output_root
@@ -227,11 +231,11 @@ def generate_notes_result(
     markdown = _generate_notes_locally(
         deck,
         asset_map=asset_map,
-        source_display=source_display,
-        note_style=note_style,
-        screenshot_policy=screenshot_policy,
-        figure_placement=figure_placement,
-        section_plan=section_plan,
+        source_display=options.source_display,
+        note_style=options.note_style,
+        screenshot_policy=options.screenshot_policy,
+        figure_placement=options.figure_placement,
+        section_plan=options.section_plan,
     )
     asset_warnings = asset_warnings + _validate_markdown_image_links(markdown, output_root)
     return NoteGenerationResult(markdown=markdown, asset_warnings=asset_warnings)

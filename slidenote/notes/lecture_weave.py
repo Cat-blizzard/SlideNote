@@ -31,38 +31,46 @@ from .usage import _build_usage_report
 def _generate_notes_with_lecture_weave(
     deck: Deck,
     output_root: Path,
-    provider: str,
-    model: str,
-    api_key: str | None,
-    base_url: str | None,
-    max_output_tokens: int,
-    temperature: float | None,
-    cache_mode: str,
-    cache: LLMCache,
-    cache_dir: Path,
-    concurrency: int,
-    refresh_slide_ids: set[int] | None,
-    progress_callback: Callable[[dict[str, Any]], None] | None,
-    asset_map: dict[str, str],
-    asset_mode: str,
-    source_display: str,
-    note_context: str,
-    note_style: str,
-    note_profile: str,
+    options: "NoteOptions",
+    *,
     note_depth: str,
-    note_language: str,
-    term_policy: str,
-    teaching_enrichment: str,
-    weave_dedup: str,
-    page_neighborhood: int,
-    screenshot_policy: str,
-    figure_placement: str,
+    asset_map: dict[str, str],
+    resolved_provider: str,
+    resolved_model: str,
+    resolved_base_url: str,
+    resolved_cache_dir: Path,
+    cache: LLMCache,
     supports_image_input: bool,
-    section_plan: dict[str, Any] | None,
-    deck_brief: dict[str, Any] | None,
-    content_guard: dict[str, Any] | None = None,
 ) -> "NoteGenerationResult":  # string annotation to avoid circular import
     from . import NoteGenerationResult
+
+    # Unpack the option object into the locals the rest of this function uses.
+    provider = resolved_provider
+    model = resolved_model
+    api_key = options.api_key
+    base_url = resolved_base_url
+    max_output_tokens = options.max_output_tokens
+    temperature = options.temperature
+    cache_mode = options.cache_mode
+    cache_dir = resolved_cache_dir
+    concurrency = options.concurrency
+    refresh_slide_ids = options.refresh_slide_ids
+    progress_callback = options.progress_callback
+    asset_mode = options.asset_mode
+    source_display = options.source_display
+    note_context = options.note_context
+    note_style = options.note_style
+    note_profile = options.note_profile
+    note_language = options.note_language
+    term_policy = options.term_policy
+    teaching_enrichment = options.teaching_enrichment
+    weave_dedup = options.weave_dedup
+    page_neighborhood = options.page_neighborhood
+    screenshot_policy = options.screenshot_policy
+    figure_placement = options.figure_placement
+    section_plan = options.section_plan
+    deck_brief = options.deck_brief
+    content_guard = options.content_guard
 
     refresh_ids = refresh_slide_ids or set()
     workers = max(1, int(concurrency or 1))
@@ -80,29 +88,16 @@ def _generate_notes_with_lecture_weave(
             context=context,
             output_root=output_root,
             cache=cache,
-            cache_mode=cache_mode,
+            options=options,
             provider=provider,
             model=model,
-            api_key=api_key,
             base_url=base_url,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
             supports_image_input=supports_image_input,
             force_refresh=page.slide_id in refresh_ids,
             asset_map=asset_map,
-            asset_mode=asset_mode,
-            source_display=source_display,
-            note_style=note_style,
-            note_profile=note_profile,
             note_depth=note_depth,
-            note_language=note_language,
-            term_policy=term_policy,
             page_neighborhood=page_neighborhood,
             section_title=section_titles.get(page.slide_id),
-            screenshot_policy=screenshot_policy,
-            figure_placement=figure_placement,
-            deck_brief=deck_brief,
-            content_guard=content_guard,
         )
         content = _postprocess_llm_markdown(content, source_display=source_display)
         page_deck = Deck(source_path=deck.source_path, source_type=deck.source_type, pages=[page])
@@ -112,17 +107,7 @@ def _generate_notes_with_lecture_weave(
             markdown=content,
             output_root=output_root,
             cache=cache,
-            cache_mode=cache_mode,
-            provider=provider,
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
-            source_display=source_display,
-            note_language=note_language,
-            term_policy=term_policy,
-            content_guard=content_guard,
+            options=options,
             stage="page_note",
         )
         if repair_record is not None:
@@ -167,24 +152,13 @@ def _generate_notes_with_lecture_weave(
             page_markdown_by_slide=page_markdown_by_slide,
             output_root=output_root,
             cache=cache,
-            cache_mode=cache_mode,
+            options=options,
             provider=provider,
             model=model,
-            api_key=api_key,
             base_url=base_url,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
-            force_refresh=bool(refresh_ids.intersection({page.slide_id for page in context.pages})),
-            source_display=source_display,
             note_context=resolved_note_context,
-            note_style=note_style,
-            note_profile=note_profile,
             note_depth=note_depth,
-            note_language=note_language,
-            term_policy=term_policy,
-            weave_dedup=weave_dedup,
-            deck_brief=deck_brief,
-            content_guard=content_guard,
+            force_refresh=bool(refresh_ids.intersection({page.slide_id for page in context.pages})),
         )
         return context.id, _postprocess_llm_markdown(content, source_display=source_display), record
 
@@ -222,22 +196,13 @@ def _generate_notes_with_lecture_weave(
                 page_markdown_by_slide=page_markdown_by_slide,
                 output_root=output_root,
                 cache=cache,
-                cache_mode=cache_mode,
+                options=options,
                 provider=provider,
                 model=model,
-                api_key=api_key,
                 base_url=base_url,
-                max_output_tokens=max_output_tokens,
-                temperature=temperature,
-                force_refresh=bool(refresh_ids.intersection({page.slide_id for page in context.pages})),
-                source_display=source_display,
                 note_context=resolved_note_context,
-                note_profile=note_profile,
                 note_depth=note_depth,
-                note_language=note_language,
-                term_policy=term_policy,
-                deck_brief=deck_brief,
-                content_guard=content_guard,
+                force_refresh=bool(refresh_ids.intersection({page.slide_id for page in context.pages})),
             )
             return context.id, _postprocess_llm_markdown(content, source_display=source_display), record
 
@@ -276,17 +241,7 @@ def _generate_notes_with_lecture_weave(
         markdown=markdown,
         output_root=output_root,
         cache=cache,
-        cache_mode=cache_mode,
-        provider=provider,
-        model=model,
-        api_key=api_key,
-        base_url=base_url,
-        max_output_tokens=max_output_tokens,
-        temperature=temperature,
-        source_display=source_display,
-        note_language=note_language,
-        term_policy=term_policy,
-        content_guard=content_guard,
+        options=options,
         stage="weave",
     )
     if final_repair_record is not None:
@@ -299,35 +254,14 @@ def _generate_notes_with_lecture_weave(
     all_context_records = page_records + weave_records + teaching_records + repair_context_records
     usage_report = _build_usage_report(
         deck=deck,
-        provider=provider,
-        model=model,
-        base_url=base_url,
-        cache_mode=cache_mode,
-        cache_dir=cache_dir,
         output_root=output_root,
-        max_output_tokens=max_output_tokens,
-        temperature=temperature,
+        options=options,
         contexts=all_context_records,
-        note_context=resolved_note_context,
-        source_display=source_display,
-        note_style=note_style,
-        note_profile=note_profile,
         note_strategy="lecture-weave",
-        note_depth=note_depth,
-        note_language=note_language,
-        term_policy=term_policy,
-        teaching_enrichment=teaching_enrichment,
-        weave_dedup=weave_dedup,
-        page_neighborhood=page_neighborhood,
-        asset_mode=asset_mode,
-        screenshot_policy=screenshot_policy,
-        figure_placement=figure_placement,
         page_contexts=page_records,
         weave_contexts=weave_records,
         teaching_enrichment_contexts=teaching_records,
         repair_contexts=repair_context_records,
-        deck_brief=deck_brief,
-        content_guard=content_guard,
     )
 
     page_notes = _build_page_notes_report(

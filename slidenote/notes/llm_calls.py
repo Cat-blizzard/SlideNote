@@ -24,30 +24,32 @@ def _generate_llm_context(
     context: NoteContext,
     output_root: Path,
     cache: LLMCache,
-    cache_mode: str,
+    options: "NoteOptions",
+    *,
     provider: str,
     model: str,
-    api_key: str | None,
     base_url: str | None,
-    max_output_tokens: int,
-    temperature: float | None,
     supports_image_input: bool,
     asset_map: dict[str, str],
-    asset_mode: str,
-    source_display: str,
     note_context: str,
-    note_style: str,
-    note_profile: str,
     note_depth: str,
-    note_language: str,
-    term_policy: str,
-    screenshot_policy: str,
-    figure_placement: str,
     source_type: str,
-    deck_brief: dict[str, Any] | None = None,
-    content_guard: dict[str, Any] | None = None,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
+    cache_mode = options.cache_mode
+    api_key = options.api_key
+    max_output_tokens = options.max_output_tokens
+    temperature = options.temperature
+    asset_mode = options.asset_mode
+    source_display = options.source_display
+    note_style = options.note_style
+    note_profile = options.note_profile
+    note_language = options.note_language
+    term_policy = options.term_policy
+    screenshot_policy = options.screenshot_policy
+    figure_placement = options.figure_placement
+    deck_brief = options.deck_brief
+    content_guard = options.content_guard
     user_prompt = _llm_context_prompt(
         context,
         supports_image_input=supports_image_input,
@@ -179,31 +181,33 @@ def _generate_page_lecture_context(
     context: NoteContext,
     output_root: Path,
     cache: LLMCache,
-    cache_mode: str,
+    options: "NoteOptions",
+    *,
     provider: str,
     model: str,
-    api_key: str | None,
     base_url: str | None,
-    max_output_tokens: int,
-    temperature: float | None,
     supports_image_input: bool,
     asset_map: dict[str, str],
-    asset_mode: str,
-    source_display: str,
-    note_style: str,
-    note_profile: str,
     note_depth: str,
-    note_language: str,
-    term_policy: str,
     page_neighborhood: int,
     section_title: str | None,
-    screenshot_policy: str,
-    figure_placement: str,
-    deck_brief: dict[str, Any] | None = None,
-    content_guard: dict[str, Any] | None = None,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     from .prompts import _prompt_slide_scope
+    cache_mode = options.cache_mode
+    api_key = options.api_key
+    max_output_tokens = options.max_output_tokens
+    temperature = options.temperature
+    asset_mode = options.asset_mode
+    source_display = options.source_display
+    note_style = options.note_style
+    note_profile = options.note_profile
+    note_language = options.note_language
+    term_policy = options.term_policy
+    screenshot_policy = options.screenshot_policy
+    figure_placement = options.figure_placement
+    deck_brief = options.deck_brief
+    content_guard = options.content_guard
     user_prompt = _llm_page_lecture_prompt(
         deck=deck,
         context=context,
@@ -261,25 +265,27 @@ def _generate_weave_context(
     page_markdown_by_slide: dict[int, str],
     output_root: Path,
     cache: LLMCache,
-    cache_mode: str,
+    options: "NoteOptions",
+    *,
     provider: str,
     model: str,
-    api_key: str | None,
     base_url: str | None,
-    max_output_tokens: int,
-    temperature: float | None,
-    source_display: str,
     note_context: str,
-    note_style: str,
-    note_profile: str,
     note_depth: str,
-    note_language: str,
-    term_policy: str,
-    weave_dedup: str,
-    deck_brief: dict[str, Any] | None = None,
-    content_guard: dict[str, Any] | None = None,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
+    cache_mode = options.cache_mode
+    api_key = options.api_key
+    max_output_tokens = options.max_output_tokens
+    temperature = options.temperature
+    source_display = options.source_display
+    note_style = options.note_style
+    note_profile = options.note_profile
+    note_language = options.note_language
+    term_policy = options.term_policy
+    weave_dedup = options.weave_dedup
+    deck_brief = options.deck_brief
+    content_guard = options.content_guard
     user_prompt = _llm_weave_prompt(
         context=context,
         page_markdown_by_slide=page_markdown_by_slide,
@@ -331,23 +337,25 @@ def _generate_teaching_enrichment_context(
     page_markdown_by_slide: dict[int, str],
     output_root: Path,
     cache: LLMCache,
-    cache_mode: str,
+    options: "NoteOptions",
+    *,
     provider: str,
     model: str,
-    api_key: str | None,
     base_url: str | None,
-    max_output_tokens: int,
-    temperature: float | None,
-    source_display: str,
     note_context: str,
-    note_profile: str,
     note_depth: str,
-    note_language: str,
-    term_policy: str,
-    deck_brief: dict[str, Any] | None = None,
-    content_guard: dict[str, Any] | None = None,
     force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any]]:
+    cache_mode = options.cache_mode
+    api_key = options.api_key
+    max_output_tokens = options.max_output_tokens
+    temperature = options.temperature
+    source_display = options.source_display
+    note_profile = options.note_profile
+    note_language = options.note_language
+    term_policy = options.term_policy
+    deck_brief = options.deck_brief
+    content_guard = options.content_guard
     user_prompt = _llm_teaching_enrichment_prompt(
         context=context,
         woven_markdown=woven_markdown,

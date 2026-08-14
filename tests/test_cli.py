@@ -165,7 +165,8 @@ def test_internal_quality_concurrency_is_wired_to_build_stages(tmp_path, monkeyp
         return {"summary": {"llm_calls": 0}}
 
     def fake_notes(*args, **kwargs):
-        seen["llm"] = kwargs["concurrency"]
+        options = kwargs.get("options") or (args[2] if len(args) > 2 else None)
+        seen["llm"] = options.concurrency if options else 1
         return NoteGenerationResult(markdown="Transport Layer. <!-- slidenote-source: p1:s1_t1 -->")
 
     monkeypatch.setattr("slidenote.build.stages.enrich_deck_with_semantic_layout", fake_semantic_layout)

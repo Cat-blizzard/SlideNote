@@ -19,19 +19,21 @@ def _repair_required_markdown_once(
     markdown: str,
     output_root: Path,
     cache: LLMCache,
-    cache_mode: str,
-    provider: str,
-    model: str,
-    api_key: str | None,
-    base_url: str | None,
-    max_output_tokens: int,
-    temperature: float | None,
-    source_display: str,
-    note_language: str,
-    term_policy: str,
-    content_guard: dict[str, Any] | None,
+    options: "NoteOptions",
+    *,
     stage: str,
 ) -> tuple[str, dict[str, Any] | None]:
+    cache_mode = options.cache_mode
+    provider = options.provider
+    model = options.model
+    api_key = options.api_key
+    base_url = options.base_url
+    max_output_tokens = options.max_output_tokens
+    temperature = options.temperature
+    source_display = options.source_display
+    note_language = options.note_language
+    term_policy = options.term_policy
+    content_guard = options.content_guard
     if not content_guard:
         return markdown, None
     before_coverage = analyze_coverage(deck, markdown, content_guard=content_guard)

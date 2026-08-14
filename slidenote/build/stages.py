@@ -21,7 +21,7 @@ from slidenote.extractors import extract_deck
 from slidenote.image_ranking import rank_deck_images
 from slidenote.ir import build_deck_ir
 from slidenote.models import Deck
-from slidenote.notes import NoteGenerationResult, estimate_note_generation_steps, generate_notes_result
+from slidenote.notes import NoteGenerationResult, NoteOptions, estimate_note_generation_steps, generate_notes_result
 from slidenote.notes.quality import build_note_quality_report
 from slidenote.ocr import enrich_deck_with_ocr
 from slidenote.sections import build_section_plan
@@ -375,35 +375,37 @@ def _stage_notes(state: BuildState) -> None:
     state.notes_result = generate_notes_result(
         deck,
         state.output_root,
-        use_llm=args.use_llm,
-        provider=args.provider,
-        model=args.model,
-        api_key=args.api_key,
-        base_url=args.base_url,
-        max_output_tokens=args.max_output_tokens,
-        temperature=args.temperature,
-        cache_mode=args.cache,
-        cache_dir=state.cache_dirs["llm"],
-        concurrency=state.api_concurrency["llm"],
-        refresh_slide_ids=state.refresh_slide_ids,
-        progress_callback=_llm_progress(state.progress),
-        asset_mode=args.asset_mode,
-        source_display=args.source_display,
-        note_context=args.note_context,
-        note_style=args.note_style,
-        note_profile=args.note_profile,
-        note_language=args.note_language,
-        term_policy=args.term_policy,
-        note_strategy=args.note_strategy,
-        note_depth=args.note_depth,
-        teaching_enrichment=args.teaching_enrichment,
-        weave_dedup=args.weave_dedup,
-        page_neighborhood=args.page_neighborhood,
-        screenshot_policy=args.screenshot_policy,
-        figure_placement=args.figure_placement,
-        section_plan=state.section_report,
-        deck_brief=state.deck_brief_report,
-        content_guard=state.content_guard_report,
+        NoteOptions(
+            use_llm=args.use_llm,
+            provider=args.provider,
+            model=args.model,
+            api_key=args.api_key,
+            base_url=args.base_url,
+            max_output_tokens=args.max_output_tokens,
+            temperature=args.temperature,
+            cache_mode=args.cache,
+            cache_dir=state.cache_dirs["llm"],
+            concurrency=state.api_concurrency["llm"],
+            refresh_slide_ids=state.refresh_slide_ids,
+            progress_callback=_llm_progress(state.progress),
+            asset_mode=args.asset_mode,
+            source_display=args.source_display,
+            note_context=args.note_context,
+            note_style=args.note_style,
+            note_profile=args.note_profile,
+            note_language=args.note_language,
+            term_policy=args.term_policy,
+            note_strategy=args.note_strategy,
+            note_depth=args.note_depth,
+            teaching_enrichment=args.teaching_enrichment,
+            weave_dedup=args.weave_dedup,
+            page_neighborhood=args.page_neighborhood,
+            screenshot_policy=args.screenshot_policy,
+            figure_placement=args.figure_placement,
+            section_plan=state.section_report,
+            deck_brief=state.deck_brief_report,
+            content_guard=state.content_guard_report,
+        ),
     )
     state.notes_markdown = state.notes_result.markdown
     state.artifacts.write_text("notes", "notes.md", state.notes_markdown)

@@ -13,36 +13,38 @@ from .versions import NOTE_PROMPT_VERSION
 
 def _build_usage_report(
     deck: Deck,
-    provider: str,
-    model: str,
-    base_url: str | None,
-    cache_mode: str,
-    cache_dir: Path,
+    *,
     output_root: Path,
-    max_output_tokens: int,
-    temperature: float | None,
+    options: "NoteOptions",
     contexts: list[dict[str, Any]],
-    note_context: str,
-    source_display: str,
-    note_style: str,
-    note_profile: str,
     note_strategy: str,
-    note_depth: str,
-    note_language: str,
-    term_policy: str,
-    teaching_enrichment: str,
-    weave_dedup: str,
-    page_neighborhood: int,
-    asset_mode: str,
-    screenshot_policy: str,
-    figure_placement: str,
     page_contexts: list[dict[str, Any]] | None = None,
     weave_contexts: list[dict[str, Any]] | None = None,
     teaching_enrichment_contexts: list[dict[str, Any]] | None = None,
     repair_contexts: list[dict[str, Any]] | None = None,
-    deck_brief: dict[str, Any] | None = None,
-    content_guard: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    provider = options.provider
+    model = options.model
+    base_url = options.base_url
+    cache_mode = options.cache_mode
+    cache_dir = options.cache_dir
+    max_output_tokens = options.max_output_tokens
+    temperature = options.temperature
+    note_context = options.note_context
+    source_display = options.source_display
+    note_style = options.note_style
+    note_profile = options.note_profile
+    note_depth = options.note_depth
+    note_language = options.note_language
+    term_policy = options.term_policy
+    teaching_enrichment = options.teaching_enrichment
+    weave_dedup = options.weave_dedup
+    page_neighborhood = options.page_neighborhood
+    asset_mode = options.asset_mode
+    screenshot_policy = options.screenshot_policy
+    figure_placement = options.figure_placement
+    deck_brief = options.deck_brief
+    content_guard = options.content_guard
     prompt_brief = _prompt_deck_brief(deck_brief)
     summary = {
         "pages_total": len(deck.pages),
