@@ -66,6 +66,8 @@ python -m pip install -e ".[dev,llm]"
 python -m slidenote doctor
 ```
 
+手动安装默认不含 GUI 依赖；运行 `.\run_gui.ps1` 时脚本会按需自动补装 `".[dev,llm,gui]"`。
+
 如果只想先本地预览，确认课件能正常解析：
 
 ```powershell
@@ -148,7 +150,7 @@ SlideNote 来自一个个人的学习困境。
 
 当然，我也试过自己整理笔记，但这件事既耗时间，也很难保证不遗漏。而且手写笔记的字迹和排版有时会让我自己都不太想回头看。
 
-所以我想做一个工具，把课程 PPT/PDF 转换成结构清晰、内容完整、保留图片、可追溯到原页码的课程笔记。它不只是总结课件，而是尽量把展示材料变成真正适合学习的文字材料。
+所以我想做一个工具，把课程 PPT/PDF 转换成结构清晰、内容完整、保留图片、可追溯到原页码、并且经过覆盖率校验的课程笔记。它不只是总结课件，而是尽量把展示材料变成真正适合学习的文字材料。
 
 于是就有了 SlideNote。
 
@@ -174,6 +176,8 @@ SlideNote 不需要本机 GPU。基础解析只需要 Python 依赖；LLM 改写
 | LibreOffice + Pandoc | PDF 导出会优先从 `notes.docx` 转换，中文/CJK 排版更稳。 |
 
 配置指南见 [CONFIG.zh-CN.md](CONFIG.zh-CN.md)。现在 `build` 入口已经简化，provider、OCR、Vision 和缓存细节主要通过强默认和环境变量处理。
+
+> 安装脚本面向 Windows / PowerShell；`python -m slidenote ...` 命令本身跨平台可用（Linux/macOS 用户直接调用命令即可，跳过 `.ps1` 脚本）。
 
 ## 常用工作流
 

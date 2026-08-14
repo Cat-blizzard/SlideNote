@@ -66,6 +66,8 @@ python -m pip install -e ".[dev,llm]"
 python -m slidenote doctor
 ```
 
+Manual setup does not include the GUI extra; `.\run_gui.ps1` automatically installs `".[dev,llm,gui]"` when it is missing.
+
 For a local preview without API calls:
 
 ```powershell
@@ -173,6 +175,8 @@ Optional software:
 
 Configuration details live in [CONFIG.zh-CN.md](CONFIG.zh-CN.md). The `build` entrypoint is intentionally small; provider, OCR, Vision, and cache details are handled mostly through strong defaults and environment variables.
 
+> The setup scripts target Windows PowerShell; the `python -m slidenote ...` commands themselves are cross-platform (Linux/macOS users can skip the `.ps1` scripts and call the commands directly).
+
 ## Common Workflows
 
 Local rule-based draft:
@@ -210,7 +214,7 @@ python -m slidenote build path\to\lecture.pdf `
 
 ## Technical Docs
 
-README is intentionally kept as a landing page. Detailed behavior lives in the docs:
+README is intentionally kept as a landing page. Detailed behavior lives in the docs (currently Chinese-first; the tables and code examples remain readable for English users):
 
 | Topic | Link |
 | --- | --- |
