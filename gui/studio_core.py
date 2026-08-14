@@ -21,68 +21,26 @@ SAFE_OUTPUT_RE = re.compile(r"[^a-zA-Z0-9_.-]+")
 
 @dataclass(slots=True)
 class StudioConfig:
+    """GUI-facing build configuration.
+
+    Only the fields the GUI actually forwards to the `slidenote build` CLI
+    (or injects via env) are kept. Defaults mirror slidenote/build/config.py
+    QUALITY_BUILD_DEFAULTS so the GUI surface cannot silently drift.
+    """
+
     input_path: Path
     output_dir: Path
     progress_json: Path
     preset: str = "lecture"
-    speed_mode: str = "quality"
-    concurrency: int = 1
-    llm_concurrency: int | None = None
-    vision_concurrency: int | None = None
-    ocr_concurrency: int | None = None
-    figure_concurrency: int | None = None
-    global_cache_dir: Path | None = None
-    refresh_pages: str | None = None
-    use_llm: bool = True
     provider: str = "deepseek"
-    model: str | None = None
     api_key: str | None = None
-    base_url: str | None = None
-    max_output_tokens: int | None = None
-    temperature: float | None = None
-    content_guard: str = "auto"
-    note_context: str = "section"
-    note_style: str = "article"
-    note_language: str = "zh"
-    term_policy: str = "bilingual"
-    note_strategy: str = "lecture-weave"
-    note_depth: str = "very-detailed"
-    weave_dedup: str = "normal"
-    page_neighborhood: int = 1
-    deck_brief: str = "auto"
-    section_detection: str = "auto"
-    section_cache: str = "on"
-    cache: str = "on"
+    vision: str = "auto"
+    vision_provider: str = "qwen"
+    vision_api_key: str | None = None
     ocr: str = "auto"
     ocr_provider: str = "baidu"
     ocr_api_key: str | None = None
     ocr_secret_key: str | None = None
-    ocr_language: str = "CHN_ENG"
-    ocr_cache: str = "on"
-    ocr_max_targets: int | None = None
-    ocr_max_edge: int | None = None
-    vision: str = "auto"
-    vision_provider: str = "qwen"
-    vision_model: str | None = None
-    vision_api_key: str | None = None
-    vision_base_url: str | None = None
-    vision_cache: str = "on"
-    vision_max_targets: int | None = None
-    vision_max_edge: int | None = None
-    vision_detail: str | None = "low"
-    vision_max_output_tokens: int | None = None
-    figure_crop: str = "auto"
-    figure_max_targets: int | None = None
-    figure_grounding: str = "auto"
-    figure_audit: str = "local"
-    composite_figures: str = "auto"
-    image_ranking: str = "local"
-    screenshot_policy: str = "fallback"
-    source_display: str = "hidden"
-    asset_mode: str = "bundle"
-    review_mode: str = "off"
-    exam_mode: str = "off"
-    exam_question_count: int = 12
     export: str | None = None
     quiet: bool = True
 
