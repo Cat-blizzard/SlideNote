@@ -4,30 +4,11 @@ import threading
 import time
 from pathlib import Path
 
-import fitz
 import pytest
 
 from slidenote.agent_backend import AgentBackendError, parse_dsh_output
 from slidenote.cli import main
-
-
-def _write_pdf(path: Path) -> None:
-    doc = fitz.open()
-    page = doc.new_page(width=360, height=240)
-    page.insert_text((40, 60), "Consensus")
-    page.insert_text((40, 95), "Quorum reads and writes must overlap.")
-    doc.save(path)
-    doc.close()
-
-
-def _write_multi_page_pdf(path: Path) -> None:
-    doc = fitz.open()
-    for title in ("Consensus", "Replication", "Failure Detection"):
-        page = doc.new_page(width=360, height=240)
-        page.insert_text((40, 60), title)
-        page.insert_text((40, 95), f"Body text for {title}")
-    doc.save(path)
-    doc.close()
+from conftest import write_pdf
 
 
 def _add_test_figure_to_pack(pack_dir: Path) -> dict:
@@ -99,7 +80,7 @@ def _add_test_figure_to_pack(pack_dir: Path) -> dict:
 def test_agent_pack_writes_manifest_sections_and_assets(tmp_path):
     source = tmp_path / "lecture.pdf"
     out = tmp_path / "out"
-    _write_pdf(source)
+    write_pdf(source, [["Consensus", "Quorum reads and writes must overlap."]])
 
     exit_code = main(["agent-pack", str(source), "--out", str(out), "--quiet"])
 
@@ -120,7 +101,7 @@ def test_agent_pack_manifest_deck_is_minimal(tmp_path):
     keeping everything coverage/source-map need to rebuild the Deck."""
     source = tmp_path / "lecture.pdf"
     out = tmp_path / "out"
-    _write_pdf(source)
+    write_pdf(source, [["Consensus", "Quorum reads and writes must overlap."]])
 
     assert main(["agent-pack", str(source), "--out", str(out), "--quiet"]) == 0
     manifest = json.loads((out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
@@ -136,7 +117,7 @@ def test_agent_pack_manifest_deck_is_minimal(tmp_path):
 def test_agent_eval_writes_baseline_agent_comparison(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
     eval_out = tmp_path / "eval"
-    _write_pdf(source)
+    write_pdf(source, [["Consensus", "Quorum reads and writes must overlap."]])
     build_out = eval_out / "agent_build"
     assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
     manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
@@ -216,7 +197,7 @@ def test_agent_run_with_mock_dsh_writes_notes_coverage_and_sources(tmp_path, mon
     source = tmp_path / "lecture.pdf"
     build_out = tmp_path / "build"
     run_out = tmp_path / "run"
-    _write_pdf(source)
+    write_pdf(source, [["Consensus", "Quorum reads and writes must overlap."]])
     assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
     manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
     asset_path = manifest["assets"][0]["path"]
@@ -244,7 +225,7 @@ def test_agent_run_dsh_repairs_missing_trace_coverage(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
     build_out = tmp_path / "build"
     run_out = tmp_path / "run"
-    _write_pdf(source)
+    write_pdf(source, [["Consensus", "Quorum reads and writes must overlap."]])
     assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
     manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
     source_ids = manifest["sections"][0]["source_ids"]
@@ -270,7 +251,7 @@ def test_agent_run_dsh_uses_local_cache(tmp_path, monkeypatch):
     build_out = tmp_path / "build"
     run_out = tmp_path / "run"
     cache_dir = tmp_path / "cache"
-    _write_pdf(source)
+    write_pdf(source, [["Consensus", "Quorum reads and writes must overlap."]])
     assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
     manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
     source_ids = manifest["sections"][0]["source_ids"]
@@ -302,7 +283,7 @@ def test_agent_run_dsh_default_cache_dir_enables_caching(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
     build_out = tmp_path / "build"
     run_out = tmp_path / "run"
-    _write_pdf(source)
+    write_pdf(source, [["Consensus", "Quorum reads and writes must overlap."]])
     assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
     manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
     source_ids = manifest["sections"][0]["source_ids"]
@@ -323,7 +304,7 @@ def test_agent_run_dsh_cache_off_skips_cache_dir(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
     build_out = tmp_path / "build"
     run_out = tmp_path / "run"
-    _write_pdf(source)
+    write_pdf(source, [["Consensus", "Quorum reads and writes must overlap."]])
     assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
     manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
     source_ids = manifest["sections"][0]["source_ids"]
@@ -351,7 +332,7 @@ def test_agent_run_dsh_rejects_invalid_json_output(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
     build_out = tmp_path / "build"
     run_out = tmp_path / "run"
-    _write_pdf(source)
+    write_pdf(source, [["Consensus", "Quorum reads and writes must overlap."]])
     assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
 
     def make_client(**kwargs):
@@ -408,7 +389,7 @@ def test_agent_run_dsh_parallel_first_pass(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
     build_out = tmp_path / "build"
     run_out = tmp_path / "run"
-    _write_multi_page_pdf(source)
+    write_pdf(source, [["Consensus", "Body text for Consensus"], ["Replication", "Body text for Replication"], ["Failure Detection", "Body text for Failure Detection"]])
     assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
     manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
     assert len(manifest["sections"]) == 3
@@ -480,7 +461,7 @@ def test_agent_run_dsh_concurrency_one_runs_sequentially(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
     build_out = tmp_path / "build"
     run_out = tmp_path / "run"
-    _write_multi_page_pdf(source)
+    write_pdf(source, [["Consensus", "Body text for Consensus"], ["Replication", "Body text for Replication"], ["Failure Detection", "Body text for Failure Detection"]])
     assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
 
     active = {"value": 0}
@@ -539,6 +520,8 @@ def test_agent_run_dsh_concurrency_one_runs_sequentially(tmp_path, monkeypatch):
 
 def test_agent_pack_trims_verbose_section_context(tmp_path):
     """Over-budget pages must cap text blocks while keeping the full source-id list."""
+    import fitz
+
     source = tmp_path / "lecture.pdf"
     out = tmp_path / "out"
     doc = fitz.open()

@@ -7,6 +7,8 @@ from slidenote.notes.assembly import _postprocess_llm_markdown
 from slidenote.semantic_layout import enrich_deck_with_semantic_layout
 from slidenote.table_understanding import enrich_deck_with_table_understanding
 
+from conftest import make_fake_client
+
 
 def test_local_notes_include_all_element_ids():
     deck = Deck(
@@ -253,18 +255,7 @@ def test_llm_notes_rewrite_raw_image_path_to_bundled_asset(tmp_path, monkeypatch
         ],
     )
 
-    class FakeClient:
-        def __init__(self, **kwargs):
-            pass
-
-        def generate_with_usage(self, prompt):
-            class Result:
-                text = "Quorum overlap.\n\n![Quorum figure](images/diagram.png) <!-- slidenote-source: p1:s1_t1 -->"
-                usage = {}
-
-            return Result()
-
-    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", make_fake_client(text="Quorum overlap.\n\n![Quorum figure](images/diagram.png) <!-- slidenote-source: p1:s1_t1 -->", usage={}))
 
     result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct")
 
@@ -349,18 +340,7 @@ def test_llm_result_auto_inserts_missing_grounded_image(tmp_path, monkeypatch):
         ],
     )
 
-    class FakeClient:
-        def __init__(self, **kwargs):
-            pass
-
-        def generate_with_usage(self, prompt):
-            class Result:
-                text = "Quorum 保证读写集合相交。<!-- slidenote-source: p1:s1_t1 -->"
-                usage = {}
-
-            return Result()
-
-    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", make_fake_client(text="Quorum 保证读写集合相交。<!-- slidenote-source: p1:s1_t1 -->", usage={}))
 
     result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct")
 
@@ -385,18 +365,7 @@ def test_llm_result_adds_source_marker_to_existing_image(tmp_path, monkeypatch):
         ],
     )
 
-    class FakeClient:
-        def __init__(self, **kwargs):
-            pass
-
-        def generate_with_usage(self, prompt):
-            class Result:
-                text = "Quorum 保证读写集合相交。<!-- slidenote-source: p1:s1_t1 -->\n\n![图](notes.assets/images/diagram.png)"
-                usage = {}
-
-            return Result()
-
-    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", make_fake_client(text="Quorum 保证读写集合相交。<!-- slidenote-source: p1:s1_t1 -->\n\n![图](notes.assets/images/diagram.png)", usage={}))
 
     result = generate_notes_result(deck, tmp_path, use_llm=True, provider="openai", api_key="test", note_strategy="direct")
 

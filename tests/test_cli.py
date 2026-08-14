@@ -15,6 +15,8 @@ from slidenote.build.config import (
 from slidenote.cli import _explicit_cli_options, main
 from slidenote.notes import NoteGenerationResult
 
+from conftest import write_pdf
+
 
 def test_parse_slide_ranges():
     assert _parse_slide_ranges("1,3-5,8") == {1, 3, 4, 5, 8}
@@ -47,11 +49,7 @@ def test_api_concurrency_can_override_individual_stages():
 
 def test_build_writes_progress_and_run_summary(tmp_path):
     source = tmp_path / "lecture.pdf"
-    doc = fitz.open()
-    page = doc.new_page()
-    page.insert_text((72, 72), "Transport Layer")
-    doc.save(source)
-    doc.close()
+    write_pdf(source, [["Transport Layer"]])
     out = tmp_path / "out"
 
     exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--preset", "local"])
@@ -140,11 +138,7 @@ def test_build_writes_progress_and_run_summary(tmp_path):
 
 def test_internal_quality_concurrency_is_wired_to_build_stages(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
-    doc = fitz.open()
-    page = doc.new_page()
-    page.insert_text((72, 72), "Transport Layer")
-    doc.save(source)
-    doc.close()
+    write_pdf(source, [["Transport Layer"]])
     out = tmp_path / "out"
     seen = {}
 
@@ -198,11 +192,7 @@ def test_internal_quality_concurrency_is_wired_to_build_stages(tmp_path, monkeyp
 
 def test_local_preset_does_not_call_figure_crop_api(tmp_path):
     source = tmp_path / "lecture.pdf"
-    doc = fitz.open()
-    page = doc.new_page()
-    page.insert_text((72, 72), "Transport Layer")
-    doc.save(source)
-    doc.close()
+    write_pdf(source, [["Transport Layer"]])
     out = tmp_path / "out"
 
     exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--preset", "local"])
@@ -217,11 +207,7 @@ def test_missing_default_vision_key_prints_text_mode_hint(tmp_path, monkeypatch,
     monkeypatch.delenv("QWEN_API_KEY", raising=False)
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     source = tmp_path / "lecture.pdf"
-    doc = fitz.open()
-    page = doc.new_page()
-    page.insert_text((72, 72), "A short slide")
-    doc.save(source)
-    doc.close()
+    write_pdf(source, [["A short slide"]])
     out = tmp_path / "out"
 
     exit_code = main(
@@ -250,11 +236,7 @@ def test_missing_default_vision_key_prints_text_mode_hint(tmp_path, monkeypatch,
 def test_missing_default_text_key_prints_env_gui_or_local_hint(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     source = tmp_path / "lecture.pdf"
-    doc = fitz.open()
-    page = doc.new_page()
-    page.insert_text((72, 72), "This slide has enough native text to skip OCR auto before text model setup is checked.")
-    doc.save(source)
-    doc.close()
+    write_pdf(source, [["This slide has enough native text to skip OCR auto before text model setup is checked."]])
     out = tmp_path / "out"
 
     exit_code = main(
@@ -285,11 +267,7 @@ def test_missing_default_ocr_key_prints_env_gui_or_local_hint(tmp_path, monkeypa
     monkeypatch.delenv("BAIDU_OCR_API_KEY", raising=False)
     monkeypatch.delenv("BAIDU_OCR_SECRET_KEY", raising=False)
     source = tmp_path / "lecture.pdf"
-    doc = fitz.open()
-    page = doc.new_page()
-    page.insert_text((72, 72), "Tiny")
-    doc.save(source)
-    doc.close()
+    write_pdf(source, [["Tiny"]])
     out = tmp_path / "out"
 
     exit_code = main(
@@ -490,11 +468,7 @@ def test_doctor_reports_pywin32_missing_when_parent_package_is_absent(monkeypatc
 def test_build_can_export_markdown_package_and_toc_without_pandoc(tmp_path, monkeypatch):
     monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: None)
     source = tmp_path / "lecture.pdf"
-    doc = fitz.open()
-    page = doc.new_page()
-    page.insert_text((72, 72), "Transport Layer")
-    doc.save(source)
-    doc.close()
+    write_pdf(source, [["Transport Layer"]])
     out = tmp_path / "out"
 
     exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--preset", "local", "--export", "markdown-zip,markdown-toc"])
@@ -516,11 +490,7 @@ def test_build_can_export_markdown_package_and_toc_without_pandoc(tmp_path, monk
 
 def test_study_pack_command_generates_local_review_and_exam_pack(tmp_path):
     source = tmp_path / "lecture.pdf"
-    doc = fitz.open()
-    page = doc.new_page()
-    page.insert_text((72, 72), "Transport Layer\nTCP provides reliable ordered delivery.")
-    doc.save(source)
-    doc.close()
+    write_pdf(source, [["Transport Layer", "TCP provides reliable ordered delivery."]])
     out = tmp_path / "out"
 
     exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--preset", "local"])
@@ -555,13 +525,7 @@ def test_first_run_local_workflow_creates_shareable_notes_and_study_pack(tmp_pat
     ):
         monkeypatch.delenv(key, raising=False)
     source = tmp_path / "first-run.pdf"
-    doc = fitz.open()
-    page = doc.new_page()
-    page.insert_text((72, 72), "Transport Layer")
-    page.insert_text((72, 104), "TCP provides reliable ordered delivery.")
-    page.insert_text((72, 136), "UDP is lightweight and connectionless.")
-    doc.save(source)
-    doc.close()
+    write_pdf(source, [["Transport Layer", "TCP provides reliable ordered delivery.", "UDP is lightweight and connectionless."]])
     out = tmp_path / "out"
 
     exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--preset", "local", "--export", "markdown-zip"])
@@ -596,11 +560,7 @@ def test_first_run_local_workflow_creates_shareable_notes_and_study_pack(tmp_pat
 def test_build_returns_nonzero_when_requested_pandoc_export_is_missing(tmp_path, monkeypatch):
     monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: None)
     source = tmp_path / "lecture.pdf"
-    doc = fitz.open()
-    page = doc.new_page()
-    page.insert_text((72, 72), "Transport Layer")
-    doc.save(source)
-    doc.close()
+    write_pdf(source, [["Transport Layer"]])
     out = tmp_path / "out"
 
     exit_code = main(["build", str(source), "--out", str(out), "--quiet", "--preset", "local", "--export", "docx"])
@@ -616,11 +576,7 @@ def test_build_returns_nonzero_when_requested_pandoc_export_is_missing(tmp_path,
 
 def test_deck_brief_auto_runs_before_lecture_weave(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
-    doc = fitz.open()
-    page = doc.new_page()
-    page.insert_text((72, 72), "Replication")
-    doc.save(source)
-    doc.close()
+    write_pdf(source, [["Replication"]])
     out = tmp_path / "out"
     calls = []
 
