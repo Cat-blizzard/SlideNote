@@ -1,12 +1,55 @@
+import io
 import json
+import random
 import subprocess
 
 import fitz
+from PIL import Image
 
 from slidenote.extractors import extract_deck
 from slidenote.extractors.pdf import extract_pdf
 from slidenote.models import Deck, SlidePage
 from slidenote.parser_adapters import available_parser_choices, parser_adapter_infos, parser_adapters
+
+
+def _png_bytes(size: int, color: str) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (size, size), color).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _noisy_png_bytes(size: int) -> bytes:
+    """Random pixels so the compressed file stays well above the tiny_file threshold."""
+    pixels = bytearray(random.Random(42).randbytes(size * size * 3))
+    buffer = io.BytesIO()
+    Image.frombytes("RGB", (size, size), bytes(pixels)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_extract_pdf_skips_tiny_images_without_writing_them(tmp_path):
+    """Tiny decorations must be classified from xref metadata and never decoded to disk."""
+    source = tmp_path / "images.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_image(fitz.Rect(50, 50, 90, 90), stream=_png_bytes(8, "red"))  # min_dim 8 < 24
+    page.insert_image(fitz.Rect(150, 50, 300, 200), stream=_noisy_png_bytes(120))  # real content image
+    doc.save(str(source))
+    doc.close()
+
+    deck = extract_pdf(source, tmp_path / "out")
+
+    page_images = deck.pages[0].images
+    assert len(page_images) == 2
+    tiny = next(image for image in page_images if image.role == "decorative")
+    content = next(image for image in page_images if image.role == "content")
+    assert tiny.ignored is True
+    assert tiny.ignore_reason in {"tiny_area", "tiny_dimension", "thin_decoration"}
+    assert not (tmp_path / "out" / tiny.path).exists(), "tiny image must not be written to disk"
+    assert content.ignored is False
+    assert (tmp_path / "out" / content.path).exists()
+    # Only the real image should be on disk.
+    written = list((tmp_path / "out" / "images").glob("slide1_img*"))
+    assert len(written) == 1
 
 
 def test_extract_pdf_parallel_keeps_page_order_and_content(tmp_path):

@@ -150,14 +150,33 @@ def _extract_images(doc: object, page: object, page_index: int, images_dir: Path
         if xref in seen:
             continue
         seen.add(xref)
+        bbox = _image_bbox(page, xref)
+        page_size = _page_size(page)
+        page_like = _is_page_like_bbox(bbox, page_size)
+        # get_images(full=True) carries the embedded pixel size, so tiny
+        # decorations can be classified without decoding or writing them.
+        prescreen = _prescreen_tiny_image(int(image[2] or 0), int(image[3] or 0))
+        if prescreen and not page_like:
+            role, reason = prescreen
+            images.append(
+                ImageAsset(
+                    id=f"s{page_index}_img{image_index}",
+                    path=f"images/slide{page_index}_img{image_index}.skip",
+                    caption=f"第 {page_index} 页嵌入图片 {image_index}",
+                    bbox=bbox,
+                    width=int(image[2] or 0) or None,
+                    height=int(image[3] or 0) or None,
+                    role=role,
+                    ignored=True,
+                    ignore_reason=reason,
+                )
+            )
+            continue
         extracted = doc.extract_image(xref)
         ext = extracted.get("ext", "png")
         image_path = unique_path(images_dir / f"slide{page_index}_img{image_index}.{ext}")
         image_path.write_bytes(extracted["image"])
         meta = image_metadata(image_path)
-        bbox = _image_bbox(page, xref)
-        page_size = _page_size(page)
-        page_like = _is_page_like_bbox(bbox, page_size)
         role = "page_image" if page_like else meta["role"]
         ignored = True if page_like else meta["ignored"]
         ignore_reason = "full_page_image" if page_like else meta["ignore_reason"]
@@ -184,6 +203,28 @@ def _extract_images(doc: object, page: object, page_index: int, images_dir: Path
             )
         )
     return images
+
+
+def _prescreen_tiny_image(width: int, height: int) -> tuple[str, str] | None:
+    """Classify a tiny decoration from xref metadata without decoding it.
+
+    Mirrors image_assets.classify_image_asset for the dimension/area/aspect
+    rules; tiny_file (byte size) still requires decoding and is handled by
+    image_metadata afterwards.
+    """
+    if width <= 0 or height <= 0:
+        return None
+    area = width * height
+    min_dim = min(width, height)
+    max_dim = max(width, height)
+    aspect_ratio = max_dim / max(1, min_dim)
+    if area < 10_000:
+        return "decorative", "tiny_area"
+    if min_dim < 24:
+        return "decorative", "tiny_dimension"
+    if aspect_ratio >= 8 and area < 150_000:
+        return "decorative", "thin_decoration"
+    return None
 
 
 def _image_bbox(page: object, xref: int) -> list[float] | None:
