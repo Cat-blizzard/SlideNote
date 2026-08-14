@@ -4,15 +4,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from slidenote.build_pipeline import (
-    UserFacingConfigError,
-    _apply_build_preset_defaults,
-    _apply_note_profile_defaults,
-    _apply_speed_mode_defaults,
-    _parse_slide_ranges,
-    _resolve_api_concurrency,
-    run_build,
-)
+from slidenote.build.config import friendly_ocr_key_hint
+from slidenote.build.errors import UserFacingConfigError
+from slidenote.build.runner import run_build
 from slidenote.doctor import render_doctor_report, run_doctor
 from slidenote.extractors import available_parser_choices
 from slidenote.llm import supported_provider_names
@@ -139,23 +133,15 @@ def _textbook_index(args: argparse.Namespace) -> int:
 
 
 def _friendly_textbook_error(message: str, args: argparse.Namespace) -> str | None:
-    if "Baidu OCR requires" in message:
-        return (
-            f"当前 `textbook-index --ocr {args.ocr}` 需要百度 OCR key，但没有找到可用凭据。\n"
-            "请设置环境变量：BAIDU_OCR_API_KEY 和 BAIDU_OCR_SECRET_KEY，或在 GUI 页面里填写 OCR API key 和 secret。\n"
-            "如果这本教材是可复制文字的电子 PDF，可先使用 `--ocr off` 构建教材库。"
-        )
-    if "Mathpix OCR requires" in message:
-        return (
-            f"当前 `textbook-index --ocr {args.ocr}` 需要 Mathpix OCR key，但没有找到可用凭据。\n"
-            "请设置环境变量：MATHPIX_APP_ID 和 MATHPIX_APP_KEY，或改用 `--ocr off`。"
-        )
-    if "Google Vision OCR requires" in message:
-        return (
-            f"当前 `textbook-index --ocr {args.ocr}` 需要 Google Vision OCR key，但没有找到可用凭据。\n"
-            "请设置环境变量：GOOGLE_VISION_API_KEY 或 GOOGLE_API_KEY，或改用 `--ocr off`。"
-        )
-    return None
+    hint = friendly_ocr_key_hint(message)
+    if not hint:
+        return None
+    provider, envs = hint
+    return (
+        f"当前 `textbook-index --ocr {args.ocr}` 需要{provider} key，但没有找到可用凭据。\n"
+        f"请设置环境变量：{envs}，或在 GUI 页面里填写 OCR API key 和 secret。\n"
+        "如果这本教材是可复制文字的电子 PDF，可先使用 `--ocr off` 构建教材库。"
+    )
 
 
 if __name__ == "__main__":

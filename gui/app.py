@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import io
 import html
@@ -37,6 +37,7 @@ from gui.studio_core import (
     discover_outputs,
     discover_textbook_outputs,
     needs_text_api,
+    needs_vision_api,
     performance_tips,
     progress_percent,
     provider_env_key,
@@ -157,7 +158,7 @@ def _run_simplified_app() -> None:
 
     with left:
         text_status = _api_status(needs_text_api(preview_config), api_key, provider)
-        vision_status = _api_status(_needs_vision_api(preview_config), preview_config.vision_api_key, vision_provider)
+        vision_status = _api_status(needs_vision_api(preview_config), preview_config.vision_api_key, vision_provider)
         ocr_status = _ocr_status(preview_config.ocr != "off", ocr_api_key, ocr_secret_key, "baidu")
         _render_compact_run_state(preview_config, export_options, text_status, vision_status, ocr_status)
         _render_key_warnings(preview_config, provider, text_status, vision_status, ocr_status)
@@ -399,7 +400,7 @@ def _render_key_warnings(
     messages: list[str] = []
     if needs_text_api(config) and text_status[0] == "Missing key":
         messages.append(f"Missing text key: set {provider_env_key(provider)}, fill API keys here, or use Local preview.")
-    if _needs_vision_api(config) and vision_status[0] == "Missing key":
+    if needs_vision_api(config) and vision_status[0] == "Missing key":
         messages.append("Missing vision key: fill Qwen/DashScope key or set Vision off.")
     if config.ocr != "off" and ocr_status[0] == "Missing key":
         messages.append("OCR auto is enabled; scanned PDFs may need Baidu OCR key and secret.")
@@ -580,19 +581,6 @@ def _ocr_status(enabled: bool, api_key: str | None, secret_key: str | None, prov
     return ("Ready", "page key" if api_key else "GOOGLE_*", "good") if (api_key or env_ready) else ("Missing key", "Google Vision key", "bad")
 
 
-def _cache_status(cache_mode: str, use_global_cache: bool) -> tuple[str, str, str]:
-    if cache_mode == "off":
-        return "Off", "Disabled", "muted"
-    if cache_mode == "refresh":
-        return "Refresh", "Bypass selected", "muted"
-    return "On", "Shared" if use_global_cache else "Local", "good"
-
-
-def _concurrency_status(concurrency: int) -> tuple[str, str, str]:
-    detail = "worker" if int(concurrency) == 1 else "workers"
-    return str(concurrency), detail, "good" if int(concurrency) <= 4 else "muted"
-
-
 def _status_card(label: str, status: str, detail: str, tone: str, icon: str = "•") -> None:
     st.markdown(
         f"""
@@ -604,10 +592,6 @@ def _status_card(label: str, status: str, detail: str, tone: str, icon: str = "�
         """,
         unsafe_allow_html=True,
     )
-
-
-def _needs_vision_api(config: StudioConfig) -> bool:
-    return config.preset == "lecture" and config.vision != "off"
 
 
 def _render_doctor_panel(text_status: tuple[str, str, str], vision_status: tuple[str, str, str], ocr_status: tuple[str, str, str]) -> None:
@@ -850,12 +834,6 @@ def _render_detail_results(output_dir: Path, config: StudioConfig | None = None)
                 _download_file(path)
 
 
-def _render_results(output_dir: Path, config: StudioConfig | None = None) -> None:
-    _render_notes_workspace(output_dir, config)
-    st.divider()
-    _render_detail_results(output_dir, config)
-
-
 def _render_textbook_workspace(output_dir: Path | None) -> None:
     st.markdown("### Textbook library")
     if not output_dir or not output_dir.exists():
@@ -916,78 +894,6 @@ def _render_textbook_downloads(output_dir: Path, outputs: dict[str, Path]) -> No
         else:
             col.button(label, disabled=True, use_container_width=True)
     st.download_button("all textbook files", data=_zip_output_dir(output_dir), file_name=f"{output_dir.name}.zip", mime="application/zip", use_container_width=True)
-
-
-def _render_quick_downloads(output_dir: Path, outputs: dict[str, Path]) -> None:
-    c1, c2, c3, c4 = st.columns(4)
-    if outputs.get("notes_zip"):
-        c1.download_button("Download Markdown notes ZIP", data=outputs["notes_zip"].read_bytes(), file_name="notes.zip", mime="application/zip", use_container_width=True)
-        st.info("Reminder: the shareable Markdown notes are inside notes.zip with their image assets.")
-    elif outputs.get("notes"):
-        c1.download_button("Download notes.md", data=outputs["notes"].read_bytes(), file_name="notes.md", mime="text/markdown", use_container_width=True)
-    else:
-        c1.button("notes.md not found", disabled=True, use_container_width=True)
-    if outputs.get("coverage"):
-        c2.download_button("Download coverage.md", data=outputs["coverage"].read_bytes(), file_name="coverage.md", mime="text/markdown", use_container_width=True)
-    else:
-        c2.button("coverage.md not found", disabled=True, use_container_width=True)
-    if outputs.get("cost_markdown"):
-        c3.download_button("Download cost_report.md", data=outputs["cost_markdown"].read_bytes(), file_name="cost_report.md", mime="text/markdown", use_container_width=True)
-    else:
-        c3.button("cost_report.md not found", disabled=True, use_container_width=True)
-    c4.download_button("Download all results (.zip)", data=_zip_output_dir(output_dir), file_name=f"{output_dir.name}.zip", mime="application/zip", use_container_width=True)
-
-    exported = [("Markdown ZIP", outputs.get("notes_zip")), ("Word", outputs.get("docx")), ("PDF", outputs.get("pdf")), ("LaTeX", outputs.get("latex")), ("TOC Markdown", outputs.get("notes_toc"))]
-    available = [(label, path) for label, path in exported if path]
-    if available:
-        st.caption("Exported files")
-        cols = st.columns(min(5, len(available)))
-        for col, (label, path) in zip(cols, available):
-            col.download_button(f"Download {label}", data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path), use_container_width=True)
-    study_files = [("Review", outputs.get("review")), ("Exam", outputs.get("exam")), ("Exam HTML", outputs.get("exam_html"))]
-    available_study = [(label, path) for label, path in study_files if path]
-    if available_study:
-        st.caption("Study pack")
-        cols = st.columns(min(3, len(available_study)))
-        for col, (label, path) in zip(cols, available_study):
-            col.download_button(f"Download {label}", data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path), use_container_width=True)
-
-
-def _render_study_pack_tab(output_dir: Path, config: StudioConfig | None = None) -> None:
-    outputs = discover_outputs(output_dir)
-    report = _read_json(output_dir / "study_pack.json")
-    question_count = st.slider("Question count", 4, 40, 12, step=2)
-    if st.button("Generate study pack from this output", type="primary", use_container_width=True):
-        run_config = config or StudioConfig(input_path=ROOT / "example.pdf", output_dir=output_dir, progress_json=output_dir / "progress.json")
-        run_config = _clone_config_for_run(run_config, input_path=run_config.input_path, output_dir=output_dir, progress_json=output_dir / "progress.json")
-        _run_study_pack(run_config, question_count)
-        st.rerun()
-    rows = [
-        ("Review checklist", outputs.get("review"), "review.md"),
-        ("Self-test Markdown", outputs.get("exam"), "exam.md"),
-        ("Interactive self-test", outputs.get("exam_html"), "exam.html"),
-        ("Question JSON", outputs.get("exam_json"), "exam.json"),
-    ]
-    st.dataframe(
-        [{"artifact": label, "file": filename, "status": "ready" if path else "not generated"} for label, path, filename in rows],
-        use_container_width=True,
-        hide_index=True,
-    )
-    ready = [(label, path) for label, path, _ in rows if path]
-    if ready:
-        cols = st.columns(min(4, len(ready)))
-        for col, (label, path) in zip(cols, ready):
-            col.download_button(f"Download {label}", data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path), use_container_width=True)
-    else:
-        st.info("No study pack was generated yet. Click the button above; the notes are in the existing build output directory.")
-
-    if outputs.get("review"):
-        _render_markdown_file(outputs["review"], "review.md")
-    if outputs.get("exam"):
-        _render_markdown_file(outputs["exam"], "exam.md")
-    if report:
-        with st.expander("study_pack.json", expanded=False):
-            st.json(report)
 
 
 def _render_exports_tab(output_dir: Path) -> None:

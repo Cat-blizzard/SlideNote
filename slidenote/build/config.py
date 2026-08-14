@@ -60,28 +60,29 @@ def _friendly_build_error(exc: Exception, args: argparse.Namespace) -> str | Non
     return None
 
 
+def friendly_ocr_key_hint(message: str) -> tuple[str, str] | None:
+    """Return (provider_label, env_hint) for a known OCR missing-key error."""
+    if "Baidu OCR requires" in message:
+        return "百度 OCR", "BAIDU_OCR_API_KEY 和 BAIDU_OCR_SECRET_KEY"
+    if "Mathpix OCR requires" in message:
+        return "Mathpix OCR", "MATHPIX_APP_ID 和 MATHPIX_APP_KEY"
+    if "Google Vision OCR requires" in message:
+        return "Google Vision OCR", "GOOGLE_VISION_API_KEY 或 GOOGLE_API_KEY"
+    return None
+
+
 def _friendly_ocr_key_error(message: str, args: argparse.Namespace) -> str | None:
     if getattr(args, "command", "build") != "build":
         return None
-    if "Baidu OCR requires" in message:
-        return (
-            "当前 `lecture` preset 的 OCR auto 需要百度 OCR key，但没有找到可用凭据。\n"
-            "请设置环境变量：BAIDU_OCR_API_KEY 和 BAIDU_OCR_SECRET_KEY，或在 GUI 页面里填写 OCR API key 和 secret。\n"
-            "如果只是第一次验证本地解析和 Markdown 输出，请使用 `--preset local`。"
-        )
-    if "Mathpix OCR requires" in message:
-        return (
-            "当前 OCR auto 需要 Mathpix OCR key，但没有找到可用凭据。\n"
-            "请设置环境变量：MATHPIX_APP_ID 和 MATHPIX_APP_KEY，或在 GUI 页面里填写 OCR API key 和 secret。\n"
-            "如果只是第一次验证本地解析和 Markdown 输出，请使用 `--preset local`。"
-        )
-    if "Google Vision OCR requires" in message:
-        return (
-            "当前 OCR auto 需要 Google Vision OCR key，但没有找到可用凭据。\n"
-            "请设置环境变量：GOOGLE_VISION_API_KEY 或 GOOGLE_API_KEY，或在 GUI 页面里填写 OCR API key。\n"
-            "如果只是第一次验证本地解析和 Markdown 输出，请使用 `--preset local`。"
-        )
-    return None
+    hint = friendly_ocr_key_hint(message)
+    if not hint:
+        return None
+    provider, envs = hint
+    return (
+        f"当前 OCR auto 需要{provider} key，但没有找到可用凭据。\n"
+        f"请设置环境变量：{envs}，或在 GUI 页面里填写 OCR API key 和 secret。\n"
+        "如果只是第一次验证本地解析和 Markdown 输出，请使用 `--preset local`。"
+    )
 
 
 def _provider_from_missing_key_error(message: str) -> str | None:
@@ -230,55 +231,6 @@ def _apply_build_preset_defaults(args: argparse.Namespace) -> None:
     explicit_options = set(getattr(args, "_explicit_options", set()) or set())
     for name, value in preset_defaults.items():
         if preset == "local" or name not in explicit_options:
-            setattr(args, name, value)
-
-
-def _apply_speed_mode_defaults(args: argparse.Namespace) -> None:
-    presets = {
-        "fast": {
-            "max_output_tokens": 2500,
-            "ocr_max_targets": 40,
-            "ocr_max_edge": 1200,
-            "figure_max_targets": 25,
-            "vision_max_targets": 25,
-            "vision_max_edge": 1000,
-            "vision_max_output_tokens": 800,
-            "vision_detail": "low",
-        },
-        "balanced": {
-            "max_output_tokens": 4096,
-            "ocr_max_targets": 120,
-            "ocr_max_edge": 1800,
-            "figure_max_targets": 80,
-            "vision_max_targets": 80,
-            "vision_max_edge": 1400,
-            "vision_max_output_tokens": 1200,
-            "vision_detail": "low",
-        },
-        "quality": {
-            "max_output_tokens": 7000,
-            "ocr_max_targets": 0,
-            "ocr_max_edge": 2200,
-            "figure_max_targets": 160,
-            "vision_max_targets": 160,
-            "vision_max_edge": 1800,
-            "vision_max_output_tokens": 2000,
-            "vision_detail": "high",
-        },
-        "debug": {
-            "max_output_tokens": 4096,
-            "ocr_max_targets": 20,
-            "ocr_max_edge": 1400,
-            "figure_max_targets": 20,
-            "vision_max_targets": 20,
-            "vision_max_edge": 1200,
-            "vision_max_output_tokens": 1000,
-            "vision_detail": "low",
-        },
-    }
-    preset = presets[args.speed_mode]
-    for name, value in preset.items():
-        if getattr(args, name, None) is None:
             setattr(args, name, value)
 
 

@@ -86,11 +86,6 @@ def _iter_shapes(shapes: Iterable[object]) -> Iterable[object]:
             yield shape
 
 
-def _shape_text(shape: object) -> str:
-    text, _ = _shape_text_and_runs(shape)
-    return text
-
-
 def _shape_text_and_runs(shape: object) -> tuple[str, list[dict[str, object]]]:
     if not getattr(shape, "has_text_frame", False):
         return "", []

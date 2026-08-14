@@ -5,7 +5,6 @@ import argparse
 from slidenote.build.config import (
     _apply_build_preset_defaults,
     _apply_note_profile_defaults,
-    _apply_speed_mode_defaults,
     _friendly_build_error,
 )
 from slidenote.build.errors import UserFacingConfigError
@@ -16,7 +15,6 @@ from slidenote.exporting import parse_export_formats
 
 def run_build(args: argparse.Namespace) -> int:
     _apply_build_preset_defaults(args)
-    _apply_speed_mode_defaults(args)
     _apply_note_profile_defaults(args)
     try:
         export_formats = parse_export_formats(args.export)

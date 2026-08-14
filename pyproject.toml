@@ -28,9 +28,6 @@ slidenote = "slidenote.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = [
-    "integration: requires optional external software, desktop apps, live APIs, or network services",
-]
 
 [tool.setuptools.packages.find]
 include = ["slidenote*", "gui*"]
