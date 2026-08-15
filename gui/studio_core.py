@@ -154,9 +154,17 @@ def build_textbook_command(config: TextbookConfig) -> list[str]:
 
 
 def command_for_display(cmd: list[str]) -> str:
-    # Keys never travel through the command line (they are injected via env),
-    # so no redaction is needed here.
-    return " ".join(cmd)
+    redacted: list[str] = []
+    redact_next = False
+    secret_flags = {"--api-key", "--vision-api-key", "--ocr-api-key", "--ocr-secret-key"}
+    for token in cmd:
+        if redact_next:
+            redacted.append("***")
+            redact_next = False
+            continue
+        redacted.append(token)
+        redact_next = token in secret_flags
+    return " ".join(redacted)
 
 
 def performance_tips(config: StudioConfig) -> list[str]:

@@ -13,9 +13,11 @@ from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_preview
 from slidenote.utils import (
     as_float,
+    clamp_normalized_bbox as _clamp_bbox,
     cleanup_temp_image,
     display_path,
     file_sha256,
+    layout_order_from_bbox as _order_from_bbox,
     parse_json_object,
     prepare_image_for_api,
     preview,
@@ -1003,21 +1005,6 @@ def _page_size_for_bbox(deck: Deck, page: SlidePage | None) -> tuple[float | Non
     if page is not None:
         return page.page_width, page.page_height
     return None
-
-
-def _clamp_bbox(bbox: list[float]) -> list[float]:
-    x1, y1, x2, y2 = [max(0.0, min(1.0, float(value))) for value in bbox]
-    if x2 < x1:
-        x1, x2 = x2, x1
-    if y2 < y1:
-        y1, y2 = y2, y1
-    return [round(x1, 4), round(y1, 4), round(x2, 4), round(y2, 4)]
-
-
-def _order_from_bbox(bbox: list[float] | None) -> float:
-    if not bbox:
-        return 9999.0
-    return round(float(bbox[1]) * 1000.0 + float(bbox[0]), 4)
 
 
 def _layout_order(block: dict[str, Any]) -> float:

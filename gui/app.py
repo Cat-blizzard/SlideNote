@@ -1267,6 +1267,7 @@ def _style() -> None:
         }
         header[data-testid="stHeader"] { background: transparent !important; }
         [data-testid="stToolbar"], [data-testid="stDecoration"], #MainMenu, footer { display: none !important; }
+        [data-testid="stAppDeployButton"], [data-testid="stAppDeployButton"] button { display: none !important; }
         .block-container { padding: 1.25rem 3rem 3rem; max-width: 1420px; position: relative; z-index: 1; }
         .stApp h1, .stApp h2, .stApp h3, .stApp h4,
         .stApp [data-testid="stMarkdownContainer"] h1,
@@ -1504,4 +1505,8 @@ def _style() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+if __name__ == "__main__":
+    main()
 

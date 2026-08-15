@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import os
 import sys
 from pathlib import Path
@@ -101,6 +102,14 @@ def test_textbook_command_uses_env_for_ocr_keys(tmp_path: Path):
     assert env["BAIDU_OCR_SECRET_KEY"] == "ocr-secret"
 
 
+def test_command_display_redacts_secret_flags_defensively():
+    display = command_for_display(
+        ["slidenote", "build", "lecture.pdf", "--api-key", "text-secret", "--vision-api-key", "vision-secret"]
+    )
+
+    assert display == "slidenote build lecture.pdf --api-key *** --vision-api-key ***"
+
+
 def test_discover_outputs_includes_markdown_zip_and_exports(tmp_path: Path):
     for filename in ("notes.zip", "notes.toc.md", "notes.docx", "notes.pdf", "notes.tex"):
         (tmp_path / filename).write_bytes(b"x")
@@ -194,6 +203,20 @@ def test_gui_workbench_surface_replaces_hero_cards():
     assert "Textbook library" in source
     assert "Usage & diagnostics" in source
     assert "_render_empty_upload_panel" in source
+
+
+def test_gui_app_invokes_main_when_streamlit_executes_the_script():
+    source = (Path(__file__).resolve().parents[1] / "gui" / "app.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    final_statement = tree.body[-1]
+
+    assert isinstance(final_statement, ast.If)
+    assert isinstance(final_statement.test, ast.Compare)
+    assert ast.unparse(final_statement.test) == "__name__ == '__main__'"
+    assert any(
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "main"
+        for node in ast.walk(final_statement)
+    )
 
 
 def test_gui_workbench_file_size_helper():

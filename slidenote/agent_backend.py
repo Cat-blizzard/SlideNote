@@ -6,7 +6,7 @@ import re
 import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, fields
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +32,7 @@ from slidenote.coverage import analyze_coverage, render_coverage_markdown
 from slidenote.ir import iter_expected_source_elements
 from slidenote.llm import LLMClient
 from slidenote.llm_cache import LLMCache, make_cache_key, utc_now_iso
-from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
+from slidenote.models import Deck, ImageAsset, SlidePage, deck_from_dict
 from slidenote.notes.assembly import _section_contexts
 from slidenote.source_map import build_source_map
 from slidenote.table_understanding import table_preview
@@ -1274,26 +1274,4 @@ def _deck_from_manifest(manifest: dict[str, Any]) -> Deck:
     deck_data = manifest.get("deck")
     if not isinstance(deck_data, dict):
         raise AgentBackendError("Agent pack manifest does not contain deck data.")
-    return Deck(
-        source_path=str(deck_data.get("source_path") or ""),
-        source_type=str(deck_data.get("source_type") or ""),
-        warnings=list(deck_data.get("warnings") or []),
-        pages=[_page_from_dict(page) for page in deck_data.get("pages") or []],
-    )
-
-
-def _page_from_dict(data: dict[str, Any]) -> SlidePage:
-    kwargs = _filtered_kwargs(SlidePage, data)
-    kwargs["text_blocks"] = [_dataclass_from_dict(TextBlock, item) for item in data.get("text_blocks") or []]
-    kwargs["tables"] = [_dataclass_from_dict(TableBlock, item) for item in data.get("tables") or []]
-    kwargs["images"] = [_dataclass_from_dict(ImageAsset, item) for item in data.get("images") or []]
-    return SlidePage(**kwargs)
-
-
-def _dataclass_from_dict(cls: type[Any], data: dict[str, Any]) -> Any:
-    return cls(**_filtered_kwargs(cls, data))
-
-
-def _filtered_kwargs(cls: type[Any], data: dict[str, Any]) -> dict[str, Any]:
-    allowed = {field.name for field in fields(cls)}
-    return {key: value for key, value in data.items() if key in allowed}
+    return deck_from_dict(deck_data)

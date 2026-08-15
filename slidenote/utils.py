@@ -188,6 +188,21 @@ def bbox_area(bbox: list[float]) -> float:
     return max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
 
 
+def clamp_normalized_bbox(bbox: list[float]) -> list[float]:
+    x1, y1, x2, y2 = [max(0.0, min(1.0, float(value))) for value in bbox]
+    if x2 < x1:
+        x1, x2 = x2, x1
+    if y2 < y1:
+        y1, y2 = y2, y1
+    return [round(x1, 4), round(y1, 4), round(x2, 4), round(y2, 4)]
+
+
+def layout_order_from_bbox(bbox: list[float] | None) -> float:
+    if not bbox:
+        return 9999.0
+    return round(float(bbox[1]) * 1000.0 + float(bbox[0]), 4)
+
+
 def file_sha256(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes().hex().encode("utf-8")).hexdigest()
 
