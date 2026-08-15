@@ -1,5 +1,5 @@
-from slidenote.models import Deck, TableBlock, TextBlock
-from slidenote.utils import as_float, display_path, round_score
+from slidenote.models import Deck
+from slidenote.utils import round_score
 from typing import Any
 import re
 from .common import (

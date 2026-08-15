@@ -14,10 +14,12 @@ from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_text_for_prompt
 from slidenote.utils import (
     as_float,
+    clamp_normalized_bbox as _clamp_bbox,
     cleanup_temp_image,
     display_path,
     file_sha256,
     looks_normalized,
+    layout_order_from_bbox as _order_from_bbox,
     parse_json_object,
     prepare_image_for_api,
     preview,
@@ -856,21 +858,6 @@ def _normalize_bbox(source_type: str, bbox: list[float] | None, page: SlidePage)
         x2 = third
         y2 = fourth
     return _clamp_bbox([x1 / width, y1 / height, x2 / width, y2 / height])
-
-
-def _clamp_bbox(bbox: list[float]) -> list[float]:
-    x1, y1, x2, y2 = [max(0.0, min(1.0, float(value))) for value in bbox]
-    if x2 < x1:
-        x1, x2 = x2, x1
-    if y2 < y1:
-        y1, y2 = y2, y1
-    return [round(x1, 4), round(y1, 4), round(x2, 4), round(y2, 4)]
-
-
-def _order_from_bbox(bbox: list[float] | None) -> float:
-    if not bbox:
-        return 9999.0
-    return round(float(bbox[1]) * 1000.0 + float(bbox[0]), 4)
 
 
 def _horizontal_overlap_ratio(a: list[float], b: list[float]) -> float:

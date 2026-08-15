@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import contextlib
 import io
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from slidenote.image_assets import image_metadata, refine_image_role_for_placement
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock, normalize_rel_path
 from slidenote.utils import unique_path
+
+
+_TABLE_EXTRACTION_LOCK = threading.Lock()
 
 
 def extract_pdf(input_path: Path, output_root: Path, concurrency: int = 4) -> Deck:
@@ -127,8 +131,12 @@ def _extract_tables(page: object, page_index: int) -> list[TableBlock]:
     if finder is None:
         return tables
     try:
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            found = finder()
+        # redirect_stdout/redirect_stderr mutate process-global streams. Page
+        # extraction is parallel, so serialize this small noisy call to prevent
+        # interleaved context managers from restoring the wrong stream object.
+        with _TABLE_EXTRACTION_LOCK:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                found = finder()
     except Exception:
         return tables
     for table_index, table in enumerate(getattr(found, "tables", []) or [], start=1):

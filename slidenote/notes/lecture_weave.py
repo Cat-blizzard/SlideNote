@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from slidenote.content_guard import record_repair
 from slidenote.llm_cache import LLMCache
@@ -35,24 +35,22 @@ def _generate_notes_with_lecture_weave(
     *,
     note_depth: str,
     asset_map: dict[str, str],
-    resolved_provider: str,
-    resolved_model: str,
-    resolved_base_url: str,
-    resolved_cache_dir: Path,
     cache: LLMCache,
     supports_image_input: bool,
 ) -> "NoteGenerationResult":  # string annotation to avoid circular import
     from . import NoteGenerationResult
 
-    # Unpack the option object into the locals the rest of this function uses.
-    provider = resolved_provider
-    model = resolved_model
+    # ``direct`` resolves provider runtime defaults once and stores them back
+    # into the immutable copy passed here, keeping calls, cache keys and reports
+    # on the same canonical provider/model/base URL/cache directory.
+    provider = options.provider
+    model = options.model
     api_key = options.api_key
-    base_url = resolved_base_url
+    base_url = options.base_url
     max_output_tokens = options.max_output_tokens
     temperature = options.temperature
     cache_mode = options.cache_mode
-    cache_dir = resolved_cache_dir
+    cache_dir = options.cache_dir
     concurrency = options.concurrency
     refresh_slide_ids = options.refresh_slide_ids
     progress_callback = options.progress_callback

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 import json
 import re
 from pathlib import Path
@@ -11,7 +10,7 @@ from slidenote.exporting import clean_markdown_for_export
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.models import Deck, TableBlock, TextBlock
-from slidenote.utils import as_float, display_path, round_score
+from slidenote.utils import as_float, display_path
 
 from .common import (
     IMPORTANCE_LABELS,

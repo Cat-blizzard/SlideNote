@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from slidenote.content_guard import record_repair
 from slidenote.llm import resolve_provider_runtime
@@ -40,22 +41,26 @@ def _generate_notes_with_llm(
     resolved_base_url = runtime["base_url"]
     supports_image_input = bool(runtime["supports_image_input"])
     resolved_cache_dir = (options.cache_dir or (output_root / ".cache" / "llm")).resolve()
-    cache = LLMCache(resolved_cache_dir, mode=options.cache_mode)
-    if options.note_strategy == "lecture-weave":
+    runtime_options = replace(
+        options,
+        provider=resolved_provider,
+        model=resolved_model,
+        base_url=resolved_base_url,
+        cache_dir=resolved_cache_dir,
+    )
+    cache = LLMCache(resolved_cache_dir, mode=runtime_options.cache_mode)
+    if runtime_options.note_strategy == "lecture-weave":
         return _generate_notes_with_lecture_weave(
             deck=deck,
             output_root=output_root,
-            options=options,
+            options=runtime_options,
             note_depth=note_depth,
             asset_map=asset_map,
-            resolved_provider=resolved_provider,
-            resolved_model=resolved_model,
-            resolved_base_url=resolved_base_url,
-            resolved_cache_dir=resolved_cache_dir,
             cache=cache,
             supports_image_input=supports_image_input,
         )
 
+    options = runtime_options
     contexts = _select_note_contexts(deck, options.note_context, section_plan=options.section_plan)
     resolved_note_context = _resolved_context_mode(deck, options.note_context)
     refresh_ids = options.refresh_slide_ids or set()

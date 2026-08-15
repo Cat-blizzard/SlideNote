@@ -1,7 +1,6 @@
 from typing import Any
 import html
 import json
-import re
 from .common import (
     QUESTION_TYPE_LABELS,
     _as_int,

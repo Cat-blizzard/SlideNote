@@ -2,12 +2,16 @@ import io
 import json
 import random
 import subprocess
+import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import fitz
 from PIL import Image
 
 from slidenote.extractors import extract_deck
-from slidenote.extractors.pdf import extract_pdf
+from slidenote.extractors.pdf import _extract_tables, extract_pdf
 from slidenote.models import Deck, SlidePage
 from slidenote.parser_adapters import available_parser_choices, parser_adapter_infos, parser_adapters
 
@@ -72,6 +76,42 @@ def test_extract_pdf_parallel_keeps_page_order_and_content(tmp_path):
     assert (tmp_path / "out" / "screenshots" / "slide1.png").exists()
     assert (tmp_path / "out" / "screenshots" / "slide6.png").exists()
     assert any(block.content.startswith("Body line") for block in deck.pages[2].text_blocks)
+
+
+def test_parallel_table_extraction_restores_process_streams():
+    first_started = threading.Event()
+
+    class Found:
+        tables = []
+
+    class FakePage:
+        def __init__(self, first: bool):
+            self.first = first
+
+        def find_tables(self):
+            if self.first:
+                first_started.set()
+                time.sleep(0.05)
+            else:
+                time.sleep(0.1)
+            return Found()
+
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    streams_restored = False
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(_extract_tables, FakePage(True), 1)
+            assert first_started.wait(timeout=1)
+            second = executor.submit(_extract_tables, FakePage(False), 2)
+            first.result()
+            second.result()
+        streams_restored = sys.stdout is original_stdout and sys.stderr is original_stderr
+    finally:
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+
+    assert streams_restored
 
 
 def test_builtin_parser_adapter_delegates_by_suffix(tmp_path, monkeypatch):

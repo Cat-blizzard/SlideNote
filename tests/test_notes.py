@@ -1205,6 +1205,72 @@ def test_content_guard_repairs_marker_only_required_content(tmp_path, monkeypatc
     assert result.llm_usage["summary"]["repair_contexts"] == 1
 
 
+def test_note_options_use_one_resolved_runtime_for_generation_repair_and_usage(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                title="Quorum",
+                text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Quorum requires intersecting sets.")],
+            )
+        ],
+    )
+    content_guard = {
+        "required_confidence_threshold": 0.7,
+        "summary": {"repair_attempts": 0, "required_missing": 0, "residual_risks": 0},
+        "pages": [{"slide_id": 1, "page_role": "content", "items": []}],
+        "items": [
+            {
+                "element_id": "s1_t1",
+                "slide_id": 1,
+                "learning_role": "definition",
+                "must_explain": True,
+                "confidence": 0.95,
+                "reason": "definition",
+            }
+        ],
+        "repairs": [],
+    }
+    client_options = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            client_options.append(kwargs)
+
+        def generate_with_usage(self, prompt):
+            class Result:
+                usage = {}
+
+            result = Result()
+            if '"task": "repair_required_learning_coverage"' in prompt:
+                result.text = "Quorum requires intersecting read and write sets. <!-- slidenote-source: p1:s1_t1 -->"
+            else:
+                result.text = "<!-- slidenote-source: p1:s1_t1 -->"
+            return result
+
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
+
+    result = generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="chatgpt",
+        api_key="test",
+        note_strategy="direct",
+        note_context="page",
+        content_guard=content_guard,
+    )
+
+    assert len(client_options) == 2
+    assert {item["provider"] for item in client_options} == {"openai"}
+    assert {item["model"] for item in client_options} == {"gpt-4.1-mini"}
+    assert result.llm_usage["provider"] == "openai"
+    assert result.llm_usage["model"] == "gpt-4.1-mini"
+    assert result.llm_usage["cache"]["dir"] == ".cache/llm"
+
+
 def test_section_context_notes_use_numbered_outline_headings(tmp_path, monkeypatch):
     deck = Deck(
         source_path="ch06.pdf",
