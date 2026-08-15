@@ -22,6 +22,7 @@ README 只保留项目首页需要的信息：它是什么、怎么跑、为什�
 | [Quality And Guard](quality-and-guard.zh-CN.md) | coverage、content guard、quality report、review/exam 学习包。 |
 | [Element IR And Source Map](ir-and-source-map.zh-CN.md) | `content.json`、`element_ir.json`、`source_map.json` 和图片资产。 |
 | [Providers And Cost](providers-and-cost.zh-CN.md) | LLM provider、OCR、Vision、缓存、并发和导出依赖。 |
+| [基准测试指南](benchmark.zh-CN.md) | 用真实课件建立质量基线与对比流程（含实验分支 agent 基准）。 |
 | [Roadmap Design Notes](roadmap/extension-notes.zh-CN.md) | 从旧 Roadmap 迁出的模块设计笔记。 |
 | [CONFIG.zh-CN.md](../CONFIG.zh-CN.md) | 简化配置指南；先按场景选命令，再看环境变量和旧参数迁移。 |
 | [GUI 文档](../gui/README_GUI.zh-CN.md) | SlideNote Studio 的安装、运行和界面说明。 |
