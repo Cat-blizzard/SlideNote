@@ -74,9 +74,6 @@ def _stage_table_understanding(state: BuildState) -> None:
 def _stage_semantic_layout(state: BuildState) -> None:
     args = state.args
     deck = _require_deck(state)
-    mode = args.semantic_layout
-    if args.vision == "off" and mode == "auto":
-        mode = "local"
     state.semantic_layout_report = _run_json_stage(
         deck,
         state.build_context,
@@ -89,7 +86,7 @@ def _stage_semantic_layout(state: BuildState) -> None:
         runner=lambda stage_deck: enrich_deck_with_semantic_layout(
             stage_deck,
             output_root=state.output_root,
-            mode=mode,
+            mode=args.semantic_layout,
             provider=args.vision_provider,
             model=args.vision_model,
             api_key=args.vision_api_key,
