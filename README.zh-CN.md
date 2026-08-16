@@ -274,6 +274,8 @@ SlideNote 名称、logo 和其它品牌素材不授权作独立复用。具体�
 - 感谢 [MOm0-000](https://github.com/MOm0-000) 对测试工作的贡献。
 - SlideNote 的 parser adapter、统一文档 IR 和外部解析器路线参考了 [Microsoft MarkItDown](https://github.com/microsoft/markitdown)、[Docling](https://github.com/docling-project/docling)、[Marker](https://github.com/datalab-to/marker)、[MinerU](https://github.com/opendatalab/MinerU) 和 [Unstructured](https://github.com/Unstructured-IO/unstructured) 等项目的思路。
 - SlideNote 后续的检索、来源追踪和生成后质检方向也参考了 [RAGFlow](https://github.com/infiniflow/ragflow) 这类深度文档理解 / RAG 系统。这些项目是思路参考，不代表已作为依赖打包进 SlideNote。
+- 感谢 [LEO690201](https://github.com/LEO690201) 为 SlideNote 修复 bug、提升项目稳定性所作的贡献。
+- SlideNote 的开发也得到了 Codex、Claude Code 和 DeepSeek Harness 在代码分析、实现与调试方面的辅助。所有 AI 辅助改动仍须经过维护者审核和项目测试。
 
 ## 参考文档
 

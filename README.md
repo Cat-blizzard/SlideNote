@@ -278,6 +278,8 @@ The SlideNote name, logo, and other brand assets are not licensed for standalone
 - Testing contributions from [MOm0-000](https://github.com/MOm0-000).
 - SlideNote's parser-adapter and document-IR roadmap is informed by prior art such as [Microsoft MarkItDown](https://github.com/microsoft/markitdown), [Docling](https://github.com/docling-project/docling), [Marker](https://github.com/datalab-to/marker), [MinerU](https://github.com/opendatalab/MinerU), and [Unstructured](https://github.com/Unstructured-IO/unstructured).
 - SlideNote's future retrieval, source tracing, and post-generation QA direction is informed by systems such as [RAGFlow](https://github.com/infiniflow/ragflow). These projects are references and inspirations, not bundled dependencies unless explicitly listed elsewhere.
+- Thanks to [LEO690201](https://github.com/LEO690201) for contributing bug fixes that improved SlideNote's reliability.
+- SlideNote's development has also benefited from code analysis, implementation, and debugging assistance provided by Codex, Claude Code, and DeepSeek Harness. All AI-assisted changes remain subject to maintainer review and project testing.
 
 ## References
 
