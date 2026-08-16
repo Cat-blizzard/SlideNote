@@ -214,6 +214,59 @@ def test_local_preset_does_not_call_figure_crop_api(tmp_path):
     assert run_summary["figure_crop"] is None
 
 
+def test_vision_off_uses_and_reports_local_semantic_layout(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Transport Layer")
+    doc.save(source)
+    doc.close()
+    out = tmp_path / "out"
+
+    class UnexpectedVisionClient:
+        def __init__(self, **kwargs):
+            raise AssertionError("vision client should not be constructed")
+
+    def unexpected_ocr(*args, **kwargs):
+        raise AssertionError("OCR should remain disabled")
+
+    monkeypatch.setattr("slidenote.semantic_layout.LLMClient", UnexpectedVisionClient)
+    monkeypatch.setattr("slidenote.build.stages.enrich_deck_with_ocr", unexpected_ocr)
+    monkeypatch.setattr("slidenote.build.stages.build_section_plan", lambda *args, **kwargs: {"summary": {"sections_total": 1}})
+    monkeypatch.setattr("slidenote.build.stages.build_deck_brief", lambda *args, **kwargs: {"summary": {"llm_call": False}})
+    monkeypatch.setattr("slidenote.build.stages.render_deck_brief_markdown", lambda report: "# Deck brief\n")
+    monkeypatch.setattr("slidenote.build.stages.build_content_guard", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "slidenote.build.stages.generate_notes_result",
+        lambda *args, **kwargs: NoteGenerationResult(markdown="Transport Layer. <!-- slidenote-source: p1:s1_t1 -->"),
+    )
+
+    exit_code = main(
+        [
+            "build",
+            str(source),
+            "--out",
+            str(out),
+            "--quiet",
+            "--provider",
+            "openai",
+            "--vision",
+            "off",
+            "--ocr",
+            "off",
+        ]
+    )
+
+    assert exit_code == 0
+    semantic_layout = json.loads((out / "semantic_layout.json").read_text(encoding="utf-8"))
+    run_summary = json.loads((out / "run_summary.json").read_text(encoding="utf-8"))
+    assert semantic_layout["mode"] == "local"
+    assert semantic_layout["summary"]["vision_calls"] == 0
+    assert run_summary["run"]["semantic_layout"] == "local"
+    assert not (out / "vision_usage.json").exists()
+    assert not (out / "ocr_usage.json").exists()
+
+
 def test_missing_default_vision_key_prints_text_mode_hint(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("QWEN_API_KEY", raising=False)
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
@@ -374,6 +427,17 @@ def test_lecture_preset_maps_to_teacher_style_pipeline():
     assert args.deck_brief == "auto"
     assert args.content_guard == "auto"
     assert args.source_display == "hidden"
+
+
+def test_explicit_ocr_off_survives_lecture_preset_defaults():
+    from slidenote.cli import _build_parser
+
+    argv = ["build", "lecture.pdf", "--ocr", "off"]
+    args = _build_parser().parse_args(argv)
+    args._explicit_options = _explicit_cli_options(argv)
+    _apply_build_preset_defaults(args)
+
+    assert args.ocr == "off"
 
 
 def test_build_rejects_removed_lower_level_options():

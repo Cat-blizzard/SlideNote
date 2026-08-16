@@ -232,6 +232,8 @@ def _apply_build_preset_defaults(args: argparse.Namespace) -> None:
     for name, value in preset_defaults.items():
         if preset == "local" or name not in explicit_options:
             setattr(args, name, value)
+    if args.vision == "off" and args.semantic_layout == "auto":
+        args.semantic_layout = "local"
 
 
 def _resolve_api_concurrency(args: argparse.Namespace) -> dict[str, int]:
