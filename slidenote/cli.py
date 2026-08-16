@@ -73,6 +73,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Vision extraction mode. auto is the quality default; off skips visual API calls.",
     )
+    build.add_argument(
+        "--ocr",
+        choices=["off", "auto", "all"],
+        default=None,
+        help="OCR mode. auto only OCRs low-text/scanned pages (default); off skips OCR; all OCRs every page.",
+    )
 
     doctor = subparsers.add_parser("doctor", help="Check local dependencies, optional tools, and API key environment variables.")
     doctor.add_argument("--json", type=Path, default=None, help="Write the doctor report as JSON to this path.")
