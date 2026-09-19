@@ -357,37 +357,68 @@ def test_windows_job_assignment_failure_kills_suspended_process(tmp_path, monkey
 
 
 @pytest.mark.skipif(harness.os.name != "nt", reason="Windows orphan process ownership")
-def test_windows_orphan_tool_is_terminated_not_only_its_pipe(tmp_path):
+@pytest.mark.parametrize("startup_delay", [0, 0.75])
+def test_windows_orphan_tool_is_terminated_not_only_its_pipe(tmp_path, monkeypatch, startup_delay):
     import ctypes
     from ctypes import wintypes
 
-    pid_file = tmp_path / "tool.pid"
-    parent = (
-        "import pathlib, subprocess, sys; "
-        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(15)']); "
-        f"pathlib.Path({str(pid_file)!r}).write_text(str(child.pid))"
-    )
-    with pytest.raises(HarnessError, match="timeout"):
-        HarnessRunner(HarnessConfig(), tmp_path)._execute(
-            [sys.executable, "-c", parent], prompt="", timeout=0.5,
-        )
-    assert pid_file.is_file(), "fixture must spawn a tool before the timeout"
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel.OpenProcess.restype = wintypes.HANDLE
     kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
     kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel.TerminateProcess.restype = wintypes.BOOL
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel.CloseHandle.restype = wintypes.BOOL
-    child = kernel.OpenProcess(0x00100000, False, int(pid_file.read_text()))  # SYNCHRONIZE
-    if child:
+
+    pid_file = tmp_path / "tool.pid"
+    parent = (
+        "import pathlib, subprocess, sys, time; "
+        f"time.sleep({startup_delay}); "
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(child.pid))"
+    )
+    resume = harness._WindowsJob.assign_and_resume
+    child = None
+    deadline_started = None
+
+    def resume_when_fixture_ready(job, pid):
+        nonlocal child, deadline_started
+        parent_handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+        assert parent_handle, "fixture parent must exist before resuming"
         try:
-            assert kernel.WaitForSingleObject(child, 0) == 0, "orphan tool is still running"
+            resume(job, pid)
+            # Establish the actual orphan condition before starting the short
+            # timeout. Python cold-start time is not what this test measures.
+            assert kernel.WaitForSingleObject(parent_handle, 10_000) == 0, "fixture parent did not exit"
         finally:
+            kernel.CloseHandle(parent_handle)
+        assert pid_file.is_file(), "fixture must spawn a tool before the timeout"
+        child = kernel.OpenProcess(0x00100001, False, int(pid_file.read_text()))  # SYNCHRONIZE | TERMINATE
+        assert child, "fixture tool must exist"
+        assert kernel.WaitForSingleObject(child, 0) == 258, "fixture tool must still be running"
+        deadline_started = harness.time.monotonic()
+
+    monkeypatch.setattr(harness._WindowsJob, "assign_and_resume", resume_when_fixture_ready)
+    try:
+        with pytest.raises(HarnessError, match="0.2-second timeout"):
+            HarnessRunner(HarnessConfig(), tmp_path)._execute(
+                [sys.executable, "-c", parent], prompt="", timeout=0.2,
+            )
+        assert deadline_started is not None
+        assert harness.time.monotonic() - deadline_started < 4, "orphan pipe defeated the timeout"
+        # Windows termination is asynchronous. Still require a signaled process
+        # handle well before the fixture's 60-second natural exit, rather than
+        # assuming it is signaled immediately after the kill request.
+        assert kernel.WaitForSingleObject(child, 5_000) == 0, "orphan tool is still running"
+    finally:
+        if child:
+            # A failing regression must not leave its own fixture behind.
+            if kernel.WaitForSingleObject(child, 0) == 258:
+                kernel.TerminateProcess(child, 1)
+                kernel.WaitForSingleObject(child, 5_000)
             kernel.CloseHandle(child)
-    else:
-        # A terminated process with no remaining handles disappears entirely.
-        assert ctypes.get_last_error() == 87  # ERROR_INVALID_PARAMETER
 
 
 @pytest.mark.skipif(harness.os.name != "nt", reason="Windows suspended process interruption")
