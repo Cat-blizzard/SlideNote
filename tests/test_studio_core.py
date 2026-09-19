@@ -193,16 +193,27 @@ def test_gui_first_run_surface_has_two_presets_and_markdown_zip_default():
     assert _selected_export_formats(True, False, False, False, False) == ["markdown-zip"]
 
 
-def test_gui_workbench_surface_replaces_hero_cards():
+def test_gui_workbench_surface_prioritizes_real_upload_flow():
     source = (Path(__file__).resolve().parents[1] / "gui" / "app.py").read_text(encoding="utf-8")
 
     assert "def _render_hero" not in source
     assert "hero-card" not in source
+    assert "hero-device" not in source
+    assert "hero-button" not in source
+    assert "Course Intelligence" not in source
+    assert "94%" not in source
     assert "Run settings" not in source
     assert "Notes workspace" in source
     assert "Textbook library" in source
     assert "Usage & diagnostics" in source
     assert "_render_empty_upload_panel" in source
+    assert "_render_workflow_stepper" in source
+    assert "Upload your course material" in source
+    assert 'key="source_upload"' in source
+    assert "st.columns([0.27, 0.46, 0.27]" in source
+    assert "_render_review_export_rail" in source
+    assert "Coverage and downloads will appear here." in source
+    assert "review-summary" in source
 
 
 def test_gui_app_invokes_main_when_streamlit_executes_the_script():
@@ -221,8 +232,121 @@ def test_gui_app_invokes_main_when_streamlit_executes_the_script():
 
 def test_gui_workbench_file_size_helper():
     pytest.importorskip("streamlit")
-    from gui.app import _format_file_size
+    from gui.app import _format_file_size, _has_generated_notes
 
     assert _format_file_size(512) == "512 B"
     assert _format_file_size(1536) == "1.5 KB"
     assert _format_file_size(None) == "unknown size"
+    assert not _has_generated_notes(None)
+
+
+def test_gui_workflow_only_marks_real_notes_as_generated(tmp_path: Path):
+    pytest.importorskip("streamlit")
+    from gui.app import _has_generated_notes
+
+    output_dir = tmp_path / "run"
+    output_dir.mkdir()
+    assert not _has_generated_notes(output_dir)
+
+    (output_dir / "progress.json").write_text('{"status":"complete"}', encoding="utf-8")
+    assert not _has_generated_notes(output_dir)
+
+    (output_dir / "notes.md").write_text("# Notes", encoding="utf-8")
+    assert _has_generated_notes(output_dir)
+
+
+def test_gui_uploaded_file_opens_three_part_workspace(tmp_path: Path):
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+
+    app_path = Path(__file__).resolve().parents[1] / "gui" / "app.py"
+    app = AppTest.from_file(app_path, default_timeout=10).run()
+    assert not app.exception
+    assert len(app.file_uploader) == 1
+
+    output_dir = tmp_path / "generated"
+    output_dir.mkdir()
+    (output_dir / "notes.md").write_text("# Generated notes", encoding="utf-8")
+    (output_dir / "notes.zip").write_bytes(b"package")
+    (output_dir / "coverage.md").write_text("# Coverage", encoding="utf-8")
+    (output_dir / "coverage.json").write_text('{"total":4,"covered":4,"missing":0}', encoding="utf-8")
+    (output_dir / "run_summary.json").write_text('{"counts":{"pages":2}}', encoding="utf-8")
+    app.file_uploader[0].set_value(("lecture.pdf", b"%PDF-1.4\n%%EOF\n", "application/pdf"))
+    app.run()
+    app.session_state["last_output_dir"] = str(output_dir)
+    app.run()
+
+    assert not app.exception
+    assert len(app.columns) >= 3
+    markdown = [element.value for element in app.markdown]
+    assert "### Source" in markdown
+    assert "### Notes workspace" in markdown
+    assert "### Review & export" in markdown
+    assert any("Ready to review" in value for value in markdown)
+    assert any("100.0%" in value for value in markdown)
+
+
+@pytest.mark.parametrize("write_notes", [True, False])
+def test_gui_workflow_updates_immediately_after_build(tmp_path: Path, monkeypatch, write_notes: bool):
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+    import gui.app as studio
+
+    output_dir = tmp_path / "generated"
+    output_dir.mkdir()
+    monkeypatch.setattr(
+        studio, "_prepare_run_paths",
+        lambda *_args: (tmp_path / "lecture.pdf", output_dir, output_dir / "progress.json"),
+    )
+
+    def fake_build(config):
+        if write_notes:
+            (config.output_dir / "notes.md").write_text("# Generated notes", encoding="utf-8")
+            studio.st.success("Test build finished")
+        else:
+            studio.st.error("Test build failed")
+
+    monkeypatch.setattr(studio, "_run_build", fake_build)
+    app = AppTest.from_string("from gui.app import main\nmain()", default_timeout=10).run()
+    app.file_uploader[0].set_value(("lecture.pdf", b"%PDF-1.4\n%%EOF\n", "application/pdf")).run()
+    next(button for button in app.button if button.label == "Run SlideNote build").click().run()
+
+    assert not app.exception
+    stepper = next(element.value for element in app.markdown if "<div class='workflow-steps'>" in element.value)
+    assert stepper.count("workflow-step-complete") == (2 if write_notes else 1)
+    assert ("Test build finished" in [element.value for element in app.success]) == write_notes
+    assert ("Test build failed" in [element.value for element in app.error]) == (not write_notes)
+    assert app.session_state["last_output_dir"] == str(output_dir)
+
+    app.file_uploader[0].set_value(("replacement.pdf", b"%PDF-1.4\n%replacement\n%%EOF\n", "application/pdf")).run()
+    assert not app.exception
+    assert "last_output_dir" not in app.session_state
+    markdown = [element.value for element in app.markdown]
+    assert "# Generated notes" not in markdown
+    assert any("Coverage and downloads will appear here." in value for value in markdown)
+    if write_notes:
+        assert (output_dir / "notes.md").exists()
+
+
+def test_gui_review_rail_warns_when_exports_fail(tmp_path: Path):
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+
+    (tmp_path / "notes.md").write_text("# Generated notes", encoding="utf-8")
+    (tmp_path / "export_report.json").write_text(
+        '{"summary":{"failed":1,"blocking_failures":1},"results":[{"format":"docx","status":"failed","reason":"pandoc_not_found","blocking":true}]}',
+        encoding="utf-8",
+    )
+    app = AppTest.from_string(
+        "from pathlib import Path\n"
+        "from gui.app import _render_review_export_rail, StudioConfig\n"
+        f"output_dir = Path({str(tmp_path)!r})\n"
+        "config = StudioConfig(input_path=output_dir / 'lecture.pdf', output_dir=output_dir, progress_json=output_dir / 'progress.json')\n"
+        "_render_review_export_rail(output_dir, config, ['docx'])",
+        default_timeout=10,
+    ).run()
+
+    assert not app.exception
+    markdown = [element.value for element in app.markdown]
+    assert any("review-summary-warn" in value and "exports need attention" in value for value in markdown)
+    assert any("Some exports failed" in warning.value for warning in app.warning)

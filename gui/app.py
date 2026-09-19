@@ -70,25 +70,29 @@ def _run_simplified_app() -> None:
         return
 
     uploaded = st.session_state.get("source_upload")
-    if uploaded is None:
-        _render_empty_upload_panel()
-        uploaded = st.file_uploader(
-            "Upload PPTX / PPT / PDF",
-            type=["pptx", "ppt", "pdf"],
-            key="source_upload",
-            label_visibility="collapsed",
+    last_output_value = st.session_state.get("last_output_dir")
+    last_output_dir = Path(last_output_value) if last_output_value else None
+    workflow = st.empty()
+    with workflow.container():
+        _render_workflow_stepper(
+            has_source=uploaded is not None,
+            has_output=_has_generated_notes(last_output_dir),
         )
+    if uploaded is None:
+        uploaded = _render_empty_upload_panel()
         if uploaded is not None:
             st.rerun()
         return
 
-    left, right = st.columns([0.36, 0.64], gap="large")
+    source_col, notes_col, review_col = st.columns([0.27, 0.46, 0.27], gap="large")
+    left = source_col
     with left:
         st.markdown("### Source")
         uploaded = st.file_uploader(
             "Replace PPTX / PPT / PDF",
             type=["pptx", "ppt", "pdf"],
             key="source_upload",
+            on_change=_clear_source_output,
             label_visibility="collapsed",
         )
         if uploaded is None:
@@ -180,12 +184,20 @@ def _run_simplified_app() -> None:
             st.error(f"Could not prepare output folder: {exc}")
             return
         config = _clone_config_for_run(preview_config, input_path=input_path, output_dir=output_dir, progress_json=progress_json)
-        _run_build(config)
+        with notes_col:
+            _run_build(config)
         st.session_state["last_output_dir"] = str(output_dir)
+        with workflow.container():
+            _render_workflow_stepper(
+                has_source=True,
+                has_output=_has_generated_notes(output_dir),
+            )
 
     last_output_dir = Path(st.session_state.get("last_output_dir", "")) if st.session_state.get("last_output_dir") else None
-    with right:
+    with notes_col:
         _render_notes_workspace(last_output_dir, preview_config)
+    with review_col:
+        _render_review_export_rail(last_output_dir, preview_config, export_options)
 
     if last_output_dir and last_output_dir.exists():
         st.divider()
@@ -202,6 +214,16 @@ def _ensure_dirs() -> None:
     GLOBAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _clear_source_output() -> None:
+    st.session_state.pop("last_output_dir", None)
+
+
+def _has_generated_notes(output_dir: Path | None) -> bool:
+    if not output_dir or not output_dir.exists():
+        return False
+    return bool(discover_outputs(output_dir).get("notes"))
+
+
 def _render_top_bar() -> None:
     st.markdown(
         """
@@ -213,63 +235,91 @@ def _render_top_bar() -> None:
               <div class="studio-brand-subtitle">AI course notes workspace</div>
             </div>
           </div>
-          <div class="studio-nav-links">
-            <span>Upload</span>
-            <span>Generate</span>
-            <span>Review</span>
-            <span>Export</span>
-            <span class="studio-nav-cta">Start build</span>
+          <div class="workspace-status">
+            <span class="workspace-status-dot"></span>
+            Local workspace
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-def _render_empty_upload_panel() -> None:
+def _render_workflow_stepper(*, has_source: bool, has_output: bool) -> None:
+    if has_output:
+        states = ("complete", "complete", "active", "ready")
+    elif has_source:
+        states = ("complete", "active", "pending", "pending")
+    else:
+        states = ("active", "pending", "pending", "pending")
+    steps = (
+        ("Upload", "Add course material"),
+        ("Generate", "Build structured notes"),
+        ("Review", "Check notes and coverage"),
+        ("Export", "Download and share"),
+    )
+    rendered = []
+    for index, ((label, detail), state) in enumerate(zip(steps, states, strict=True), start=1):
+        marker = "&#10003;" if state == "complete" else str(index)
+        rendered.append(
+            f'<div class="workflow-step workflow-step-{state}">'
+            f'<span class="workflow-marker">{marker}</span>'
+            f'<span class="workflow-copy"><b>{label}</b><small>{detail}</small></span>'
+            "</div>"
+        )
+    st.markdown(f"<div class='workflow-steps'>{''.join(rendered)}</div>", unsafe_allow_html=True)
+
+
+def _render_empty_upload_panel() -> Any:
     st.markdown(
         """
-        <div class="hero-shell">
-          <div class="hero-copy">
-            <div class="hero-badge"><span class="hero-dot"></span> Local-first AI note generator</div>
-            <h1><span>Slide</span>Note<br/>Studio</h1>
-            <p>
-              Upload lecture slides, connect optional model keys, generate structured notes,
-              coverage reports and shareable exports from one clean workspace.
-            </p>
-            <div class="hero-actions">
-              <span class="hero-button hero-button-dark">Upload slides below</span>
-              <span class="hero-button hero-button-orange">Run local preview</span>
-              <span class="hero-button hero-button-light">Export notes</span>
-            </div>
+        <div class="upload-heading">
+          <div>
+            <span class="upload-eyebrow">Source file</span>
+            <h2>Upload your course material</h2>
           </div>
-          <div class="hero-device">
-            <div class="device-top">
-              <span class="win-dot red"></span><span class="win-dot yellow"></span><span class="win-dot green"></span>
-              <span class="device-title">slidenote://course-build</span>
+          <p>Files are processed in this local workspace. Maximum size: 200 MB.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    uploaded = st.file_uploader(
+        "Choose a PPTX, PPT, or PDF",
+        type=["pptx", "ppt", "pdf"],
+        key="source_upload",
+        on_change=_clear_source_output,
+        label_visibility="collapsed",
+    )
+    st.caption("Supported formats: PPTX, PPT, PDF · Use Local preview if you want to test without model API keys.")
+    st.markdown(
+        """
+        <div class="welcome-shell">
+          <div class="welcome-copy">
+            <div class="welcome-kicker"><span></span> Source-first course workspace</div>
+            <h1>Turn course files into notes you can actually study.</h1>
+            <p>
+              Start with a PPTX, PPT, or PDF. SlideNote keeps the source visible while it builds
+              structured notes, coverage checks, and portable exports.
+            </p>
+          </div>
+          <div class="outcome-list">
+            <div class="outcome-item">
+              <span class="outcome-index">01</span>
+              <span><b>Structured notes</b><small>Readable Markdown organized from the source.</small></span>
             </div>
-            <div class="device-card">
-              <div class="device-card-title">Course Intelligence</div>
-              <div class="device-status">running</div>
-              <div class="device-progress"><span></span></div>
-              <div class="device-tabs">
-                <span>Parse</span><span>Notes</span><span>Cover</span><span>Export</span>
-              </div>
+            <div class="outcome-item">
+              <span class="outcome-index">02</span>
+              <span><b>Coverage and source map</b><small>See what was captured and what needs review.</small></span>
             </div>
-            <div class="device-grid">
-              <div class="device-metric"><small>Coverage</small><b>94%</b></div>
-              <div class="device-ring"><span>SN</span></div>
-            </div>
-            <div class="device-log">
-              <code>$ slidenote build --preset lecture</code><br/>
-              <code class="ok">✓ source map generated</code><br/>
-              <code class="ok">✓ notes and coverage ready</code><br/>
-              <code class="ok">✓ exports packaged successfully</code>
+            <div class="outcome-item">
+              <span class="outcome-index">03</span>
+              <span><b>Shareable exports</b><small>Package notes as Markdown, Word, PDF, or LaTeX.</small></span>
             </div>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    return uploaded
 
 def _render_textbook_library() -> None:
     left, right = st.columns([0.36, 0.64], gap="large")
@@ -438,7 +488,6 @@ def _render_notes_workspace(output_dir: Path | None, config: StudioConfig | None
 
     outputs = discover_outputs(output_dir)
     st.markdown(f"<div class='output-path'>Output saved to<br><code>{html.escape(str(output_dir))}</code></div>", unsafe_allow_html=True)
-    _render_workspace_downloads(output_dir, outputs)
 
     notes_path = outputs.get("notes")
     if notes_path:
@@ -447,24 +496,120 @@ def _render_notes_workspace(output_dir: Path | None, config: StudioConfig | None
     else:
         st.info("notes.md was not generated yet.")
 
+
+def _render_review_export_rail(
+    output_dir: Path | None,
+    config: StudioConfig,
+    export_options: list[str],
+) -> None:
+    st.markdown("### Review & export")
+    if not output_dir or not output_dir.exists():
+        requested = ", ".join(option.replace("-", " ") for option in export_options) or "No exports selected"
+        st.markdown(
+            """
+            <div class="review-empty">
+              <div class="empty-kicker">Build checks</div>
+              <h2>Coverage and downloads will appear here.</h2>
+              <p>After generation, review captured source elements before sharing the result.</p>
+              <div class="review-checklist">
+                <span><b>1</b> Coverage report</span>
+                <span><b>2</b> Source map</span>
+                <span><b>3</b> Export package</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.caption(f"Requested: {requested}")
+        st.button("Downloads available after build", disabled=True, use_container_width=True)
+        return
+
+    outputs = discover_outputs(output_dir)
+    coverage = _read_json(output_dir / "coverage.json") or {}
+    run_summary = _read_json(output_dir / "run_summary.json") or {}
+    counts = run_summary.get("counts") if isinstance(run_summary.get("counts"), dict) else {}
+    total = int(coverage.get("total") or 0)
+    covered = int(coverage.get("covered") or 0)
+    missing = int(coverage.get("missing") or 0)
+    score = (covered / total * 100) if total else None
+    score_text = f"{score:.1f}%" if score is not None else "Not recorded"
+    pages_text = str(counts.get("pages", "Not recorded"))
+    build_ready = bool(outputs.get("notes"))
+    export_report = _read_json(output_dir / "export_report.json") or {}
+    export_summary = export_report.get("summary") or {}
+    export_failed = bool(export_summary.get("failed"))
+    review_tone = "good" if build_ready and not missing and not export_failed else "warn"
+    if not build_ready:
+        review_label = "Build output is incomplete"
+    elif export_failed:
+        review_label = "Notes ready; exports need attention"
+    elif missing:
+        review_label = f"{missing} item{'s' if missing != 1 else ''} need review"
+    else:
+        review_label = "Ready to review"
+    summary_kicker = "Notes generated" if build_ready else "Output folder found"
+    st.markdown(
+        f"""
+        <div class="review-summary review-summary-{review_tone}">
+          <div class="review-summary-kicker"><span></span> {html.escape(summary_kicker)}</div>
+          <h2>{html.escape(review_label)}</h2>
+          <div class="review-metrics">
+            <div><small>Coverage</small><b>{html.escape(score_text)}</b></div>
+            <div><small>Pages</small><b>{html.escape(pages_text)}</b></div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if not build_ready:
+        st.warning("notes.md is not available yet. Check the build log before exporting.")
+    elif missing:
+        st.warning("Open Details → Quality to inspect missing source elements.")
+
+    if export_failed:
+        st.warning("Some exports failed. Open Details → Exports to inspect the errors.")
+
+    st.markdown("#### Downloads")
+    _render_workspace_downloads(output_dir, outputs)
     _render_study_pack_compact(output_dir, config)
     with st.expander("Usage & diagnostics", expanded=False):
         _render_usage_snapshot(output_dir)
 
 
 def _render_workspace_downloads(output_dir: Path, outputs: dict[str, Path]) -> None:
-    c1, c2, c3 = st.columns(3)
     notes_zip = outputs.get("notes_zip")
     notes = outputs.get("notes")
+    key_suffix = safe_run_name(output_dir.name)
     if notes_zip:
-        c1.download_button("notes.zip", data=notes_zip.read_bytes(), file_name="notes.zip", mime="application/zip", use_container_width=True)
+        st.download_button(
+            "Download notes.zip",
+            data=notes_zip.read_bytes(),
+            file_name="notes.zip",
+            mime="application/zip",
+            use_container_width=True,
+            key=f"rail_notes_zip_{key_suffix}",
+        )
     else:
-        c1.button("notes.zip", disabled=True, use_container_width=True)
+        st.button("notes.zip not generated", disabled=True, use_container_width=True, key=f"rail_notes_zip_missing_{key_suffix}")
     if notes:
-        c2.download_button("notes.md", data=notes.read_bytes(), file_name="notes.md", mime="text/markdown", use_container_width=True)
+        st.download_button(
+            "Download notes.md",
+            data=notes.read_bytes(),
+            file_name="notes.md",
+            mime="text/markdown",
+            use_container_width=True,
+            key=f"rail_notes_md_{key_suffix}",
+        )
     else:
-        c2.button("notes.md", disabled=True, use_container_width=True)
-    c3.download_button("all results", data=_zip_output_dir(output_dir), file_name=f"{output_dir.name}.zip", mime="application/zip", use_container_width=True)
+        st.button("notes.md not generated", disabled=True, use_container_width=True, key=f"rail_notes_md_missing_{key_suffix}")
+    st.download_button(
+        "Download all results",
+        data=_zip_output_dir(output_dir),
+        file_name=f"{output_dir.name}.zip",
+        mime="application/zip",
+        use_container_width=True,
+        key=f"rail_all_results_{key_suffix}",
+    )
     if notes_zip:
         st.caption("Share Markdown notes with notes.zip; it includes notes.md and notes.assets.")
 
@@ -500,10 +645,10 @@ def _render_usage_snapshot(output_dir: Path) -> None:
     counts = run_summary.get("counts") if isinstance(run_summary.get("counts"), dict) else {}
     cost_summary = cost_report.get("summary") if isinstance(cost_report.get("summary"), dict) else {}
     rows = [
-        {"item": "pages", "value": counts.get("pages", "unknown")},
-        {"item": "sections", "value": counts.get("sections", "unknown")},
-        {"item": "total tokens", "value": cost_summary.get("total_tokens", "not recorded")},
-        {"item": "estimated cost", "value": cost_summary.get("estimated_cost", "not recorded")},
+        {"item": "pages", "value": str(counts.get("pages", "unknown"))},
+        {"item": "sections", "value": str(counts.get("sections", "unknown"))},
+        {"item": "total tokens", "value": str(cost_summary.get("total_tokens", "not recorded"))},
+        {"item": "estimated cost", "value": str(cost_summary.get("estimated_cost", "not recorded"))},
     ]
     st.dataframe(rows, use_container_width=True, hide_index=True)
     for filename in ("progress.json", "run_summary.json", "cost_report.json", "coverage.json"):
@@ -1166,12 +1311,26 @@ def _render_markdown_file(path: Path, label: str) -> None:
         st.info(f"{label} not found.")
         return
     text = path.read_text(encoding="utf-8", errors="replace")
-    st.download_button(f"Download {label}", data=text.encode("utf-8"), file_name=label, mime="text/markdown")
+    key_suffix = str(path.resolve())
+    st.download_button(
+        f"Download {label}",
+        data=text.encode("utf-8"),
+        file_name=label,
+        mime="text/markdown",
+        key=f"markdown_preview_{key_suffix}",
+    )
     st.markdown(text)
 
 
 def _download_file(path: Path) -> None:
-    st.download_button(f"Download {path.name}", data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path))
+    key_suffix = str(path.resolve())
+    st.download_button(
+        f"Download {path.name}",
+        data=path.read_bytes(),
+        file_name=path.name,
+        mime=_mime_for_path(path),
+        key=f"file_browser_{key_suffix}",
+    )
 
 
 def _mime_for_path(path: Path) -> str:
@@ -1223,10 +1382,10 @@ def _style() -> None:
         """
         <style>
         :root {
-          --sn-bg: #f3f6fb;
-          --sn-bg-warm: #fff1e7;
-          --sn-bg-cool: #dcecff;
-          --sn-surface: rgba(255,255,255,.82);
+          --sn-bg: #f5f7fb;
+          --sn-bg-warm: #fff7ed;
+          --sn-bg-cool: #eff6ff;
+          --sn-surface: rgba(255,255,255,.94);
           --sn-surface-solid: #ffffff;
           --sn-surface-soft: rgba(255,255,255,.64);
           --sn-line: rgba(15,23,42,.10);
@@ -1240,35 +1399,30 @@ def _style() -> None:
           --sn-red: #dc2626;
           --sn-amber: #d97706;
           --sn-dark: #121826;
-          --sn-radius-lg: 28px;
-          --sn-radius: 18px;
-          --sn-shadow: 0 24px 70px rgba(42, 69, 112, .14);
-          --sn-shadow-soft: 0 14px 38px rgba(42, 69, 112, .10);
+          --sn-radius-lg: 24px;
+          --sn-radius: 16px;
+          --sn-shadow: 0 20px 50px rgba(42, 69, 112, .09);
+          --sn-shadow-soft: 0 10px 30px rgba(42, 69, 112, .07);
         }
         .stApp {
           color: var(--sn-text) !important;
           background:
-            radial-gradient(circle at 8% 22%, rgba(255, 123, 24, .18), transparent 28%),
-            radial-gradient(circle at 92% 18%, rgba(11, 116, 255, .20), transparent 30%),
-            radial-gradient(circle at 75% 72%, rgba(124, 58, 237, .13), transparent 34%),
-            linear-gradient(135deg, #fff7ef 0%, #f7f8fc 46%, #eaf4ff 100%) !important;
+            radial-gradient(circle at 4% 4%, rgba(255, 123, 24, .09), transparent 25%),
+            radial-gradient(circle at 96% 2%, rgba(11, 116, 255, .09), transparent 27%),
+            #f6f7fb !important;
         }
         .stApp::before {
           content: "";
           position: fixed;
           inset: 0;
           pointer-events: none;
-          background-image:
-            linear-gradient(rgba(15,23,42,.035) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(15,23,42,.035) 1px, transparent 1px);
-          background-size: 56px 56px;
-          mask-image: linear-gradient(to bottom, rgba(0,0,0,.65), transparent 72%);
+          background: linear-gradient(180deg, rgba(255,255,255,.32), transparent 42%);
           z-index: 0;
         }
         header[data-testid="stHeader"] { background: transparent !important; }
         [data-testid="stToolbar"], [data-testid="stDecoration"], #MainMenu, footer { display: none !important; }
         [data-testid="stAppDeployButton"], [data-testid="stAppDeployButton"] button { display: none !important; }
-        .block-container { padding: 1.25rem 3rem 3rem; max-width: 1420px; position: relative; z-index: 1; }
+        .block-container { padding: 1.15rem 3rem 3rem; max-width: 1320px; position: relative; z-index: 1; }
         .stApp h1, .stApp h2, .stApp h3, .stApp h4,
         .stApp [data-testid="stMarkdownContainer"] h1,
         .stApp [data-testid="stMarkdownContainer"] h2,
@@ -1278,115 +1432,107 @@ def _style() -> None:
         .stApp [data-testid="stCaptionContainer"], .stApp small { color: var(--sn-muted) !important; }
 
         .studio-nav {
-          min-height: 62px;
-          margin: 0 0 1.4rem;
-          padding: .75rem 1rem;
+          min-height: 58px;
+          margin: 0 0 1rem;
+          padding: .7rem .85rem;
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 1rem;
-          border: 1px solid rgba(255,255,255,.78);
-          border-radius: 999px;
-          background: rgba(255,255,255,.62);
-          backdrop-filter: blur(20px);
-          box-shadow: 0 18px 44px rgba(30, 41, 59, .08);
+          border: 1px solid var(--sn-line);
+          border-radius: 18px;
+          background: rgba(255,255,255,.88);
+          backdrop-filter: blur(16px);
+          box-shadow: 0 10px 32px rgba(30, 41, 59, .06);
         }
         .studio-brand { display: flex; align-items: center; gap: .75rem; min-width: 0; }
         .studio-logo {
-          width: 38px; height: 38px; border-radius: 14px;
+          width: 36px; height: 36px; border-radius: 11px;
           display: inline-flex; align-items: center; justify-content: center;
           background: linear-gradient(145deg, #0f172a, #1e293b);
           color: #fff; font-weight: 900; font-size: .82rem; letter-spacing: .02em;
-          box-shadow: 0 12px 26px rgba(15, 23, 42, .22);
+          box-shadow: 0 8px 18px rgba(15, 23, 42, .16);
           flex: 0 0 auto;
         }
         .studio-brand-name { color: var(--sn-heading); font-size: 1rem; font-weight: 900; line-height: 1.1; }
         .studio-brand-subtitle { color: var(--sn-muted); font-size: .76rem; margin-top: .12rem; }
-        .studio-nav-links { display: flex; align-items: center; gap: 1.1rem; color: #64748b; font-weight: 760; font-size: .92rem; }
-        .studio-nav-cta { color: var(--sn-heading); background: #fff; padding: .62rem 1rem; border-radius: 999px; box-shadow: 0 12px 26px rgba(15,23,42,.10); }
+        .workspace-status {
+          display: inline-flex; align-items: center; gap: .48rem;
+          padding: .48rem .7rem; border: 1px solid var(--sn-line);
+          border-radius: 999px; background: #fff; color: var(--sn-muted);
+          font-size: .8rem; font-weight: 800;
+        }
+        .workspace-status-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--sn-green); box-shadow: 0 0 0 4px rgba(16,185,129,.12); }
 
-        .hero-shell {
-          display: grid;
-          grid-template-columns: minmax(0, 1.08fr) minmax(360px, .92fr);
-          gap: 2.4rem;
-          align-items: center;
-          min-height: 580px;
-          padding: 3.2rem 3rem;
-          margin: 1rem 0 1.2rem;
-          border: 1px solid rgba(255,255,255,.75);
-          border-radius: 34px;
-          background:
-            radial-gradient(circle at 8% 20%, rgba(255, 111, 0, .18), transparent 32%),
-            radial-gradient(circle at 92% 10%, rgba(11, 116, 255, .20), transparent 30%),
-            linear-gradient(135deg, rgba(255,255,255,.76), rgba(255,255,255,.52));
-          backdrop-filter: blur(18px);
-          box-shadow: var(--sn-shadow);
-          overflow: hidden;
-          position: relative;
+        .workflow-steps {
+          display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: .7rem; margin: .75rem 0 1rem; padding: .7rem;
+          border: 1px solid var(--sn-line); border-radius: 20px;
+          background: rgba(255,255,255,.84); box-shadow: 0 8px 24px rgba(30,41,59,.05);
         }
-        .hero-shell::after {
-          content: ""; position: absolute; inset: 0; pointer-events: none;
-          background-image: linear-gradient(rgba(255,255,255,.18) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.18) 1px, transparent 1px);
-          background-size: 54px 54px;
+        .workflow-step {
+          display: flex; align-items: center; gap: .7rem; min-width: 0;
+          padding: .62rem .72rem; border-radius: 14px; color: var(--sn-muted);
         }
-        .hero-copy, .hero-device { position: relative; z-index: 1; }
-        .hero-badge {
-          display: inline-flex; align-items: center; gap: .55rem;
-          min-height: 34px; padding: .32rem .82rem;
-          color: #41506a; background: rgba(255,255,255,.84);
-          border: 1px solid rgba(15,23,42,.10); border-radius: 999px;
-          font-weight: 850; font-size: .86rem; box-shadow: 0 10px 28px rgba(15,23,42,.08);
-          margin-bottom: 1.45rem;
+        .workflow-marker {
+          width: 30px; height: 30px; flex: 0 0 auto; display: inline-flex;
+          align-items: center; justify-content: center; border-radius: 10px;
+          border: 1px solid var(--sn-line); background: #f8fafc;
+          color: var(--sn-muted); font-size: .78rem; font-weight: 900;
         }
-        .hero-dot { width: 10px; height: 10px; border-radius: 999px; background: #19c996; box-shadow: 0 0 0 7px rgba(25,201,150,.16); }
-        .hero-copy h1 {
-          margin: 0;
-          color: var(--sn-heading);
-          font-size: clamp(3.8rem, 7vw, 6.4rem);
-          line-height: .92;
-          letter-spacing: -.075em;
-          font-weight: 950;
+        .workflow-copy { min-width: 0; display: flex; flex-direction: column; }
+        .workflow-copy b { color: var(--sn-heading); font-size: .84rem; line-height: 1.15; }
+        .workflow-copy small { margin-top: .14rem; font-size: .7rem; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .workflow-step-active { background: #eff6ff; }
+        .workflow-step-active .workflow-marker { border-color: rgba(11,116,255,.22); background: var(--sn-blue); color: #fff; }
+        .workflow-step-complete .workflow-marker { border-color: rgba(16,185,129,.18); background: #ecfdf5; color: #059669; }
+        .workflow-step-ready { background: #fff7ed; }
+        .workflow-step-ready .workflow-marker { border-color: rgba(255,107,0,.18); background: #fff; color: var(--sn-orange); }
+
+        .welcome-shell {
+          display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(340px, .85fr);
+          gap: 2rem; align-items: center; min-height: 270px;
+          padding: 2.1rem 2.3rem; margin: 1.4rem 0 1.2rem;
+          border: 1px solid var(--sn-line); border-radius: var(--sn-radius-lg);
+          background: rgba(255,255,255,.94); box-shadow: var(--sn-shadow);
         }
-        .hero-copy h1 span { background: linear-gradient(90deg, #7c2d12 0%, #ff6b00 42%, #0b74ff 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
-        .hero-copy p {
-          max-width: 650px; margin: 1.25rem 0 0;
-          color: #475569 !important; font-size: 1.13rem; line-height: 1.78;
-          font-weight: 560;
+        .welcome-kicker {
+          display: inline-flex; align-items: center; gap: .48rem;
+          color: var(--sn-blue); font-size: .76rem; font-weight: 900;
+          letter-spacing: .06em; text-transform: uppercase;
         }
-        .hero-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .9rem; margin-top: 2.2rem; }
-        .hero-button { display: inline-flex; align-items: center; justify-content: center; min-height: 52px; padding: 0 1.35rem; border-radius: 999px; font-weight: 900; box-shadow: 0 18px 34px rgba(15,23,42,.10); }
-        .hero-button-dark { color: #fff; background: #111827; }
-        .hero-button-orange { color: #fff; background: linear-gradient(135deg, #ff6b00, #ff8a1f); }
-        .hero-button-light { color: var(--sn-heading); background: rgba(255,255,255,.86); }
-        .hero-device {
-          padding: 1.35rem; border-radius: 32px;
-          background: linear-gradient(145deg, #111827, #1e293b 58%, #12365d);
-          border: 16px solid rgba(255,255,255,.82);
-          box-shadow: 0 30px 64px rgba(15,23,42,.28);
+        .welcome-kicker span { width: 8px; height: 8px; border-radius: 999px; background: var(--sn-blue); box-shadow: 0 0 0 4px rgba(11,116,255,.10); }
+        .welcome-copy h1 {
+          max-width: 690px; margin: .85rem 0 0; color: var(--sn-heading);
+          font-size: clamp(2.25rem, 4vw, 3.55rem); line-height: 1.03;
+          letter-spacing: -.055em; font-weight: 950;
         }
-        .device-top { display: flex; align-items: center; gap: .45rem; color: #94a3b8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; font-size: .78rem; margin-bottom: 1rem; }
-        .device-title { margin-left: auto; letter-spacing: .02em; }
-        .win-dot { width: 11px; height: 11px; border-radius: 999px; display: inline-block; }
-        .win-dot.red { background:#ff5f57; } .win-dot.yellow { background:#ffbd2e; } .win-dot.green { background:#28c840; }
-        .device-card, .device-metric, .device-ring, .device-log {
-          border: 1px solid rgba(148,163,184,.18); background: rgba(255,255,255,.06); border-radius: 20px;
+        .welcome-copy p {
+          max-width: 690px; margin: 1rem 0 0; color: var(--sn-muted) !important;
+          font-size: 1rem; line-height: 1.65;
         }
-        .device-card { padding: 1rem; position: relative; }
-        .device-card-title { color:#f8fafc; font-weight:900; font-size:1.02rem; }
-        .device-status { position:absolute; top:1rem; right:1rem; color:#93c5fd; font-size:.78rem; font-weight:800; }
-        .device-progress { height: 9px; background: rgba(148,163,184,.20); border-radius:999px; overflow:hidden; margin:1rem 0; }
-        .device-progress span { display:block; width:67%; height:100%; background: linear-gradient(90deg,#ff6b00,#0b74ff); border-radius:999px; }
-        .device-tabs { display:grid; grid-template-columns:repeat(4,1fr); gap:.55rem; }
-        .device-tabs span { text-align:center; color:#cbd5e1; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:.6rem .35rem; font-weight:760; }
-        .device-grid { display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin:1rem 0; }
-        .device-metric { padding:1rem; color:#fff; min-height:92px; }
-        .device-metric small { color:#9ca3af !important; display:block; }
-        .device-metric b { font-size:2.4rem; color:#fff; }
-        .device-ring { display:flex; align-items:center; justify-content:center; min-height:92px; }
-        .device-ring span { display:flex; align-items:center; justify-content:center; width:72px; height:72px; border-radius:999px; color:#fff; font-weight:950; background: conic-gradient(#19c996 0 76%, rgba(255,255,255,.16) 76% 100%); box-shadow: inset 0 0 0 14px #111827; }
-        .device-log { padding:1rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; line-height:1.75; }
-        .device-log code { color:#cbd5e1; background:transparent; }
-        .device-log code.ok { color:#86efac; }
+        .outcome-list { display: grid; gap: .65rem; }
+        .outcome-item {
+          display: flex; align-items: center; gap: .85rem; padding: .85rem .95rem;
+          border: 1px solid var(--sn-line); border-radius: 16px; background: #f8fafc;
+        }
+        .outcome-index {
+          width: 38px; height: 38px; flex: 0 0 auto; display: inline-flex;
+          align-items: center; justify-content: center; border-radius: 12px;
+          background: #fff; border: 1px solid var(--sn-line);
+          color: var(--sn-blue); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: .72rem; font-weight: 900;
+        }
+        .outcome-item > span:last-child { min-width: 0; display: flex; flex-direction: column; }
+        .outcome-item b { color: var(--sn-heading); font-size: .88rem; }
+        .outcome-item small { margin-top: .18rem; color: var(--sn-muted) !important; font-size: .74rem; line-height: 1.35; }
+        .upload-heading {
+          display: flex; align-items: end; justify-content: space-between; gap: 1rem;
+          max-width: 960px; margin: 1.1rem auto .55rem;
+        }
+        .upload-eyebrow { color: var(--sn-blue); font-size: .72rem; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; }
+        .upload-heading h2 { margin: .2rem 0 0; color: var(--sn-heading); font-size: 1.35rem; letter-spacing: -.025em; }
+        .upload-heading p { max-width: 430px; margin: 0; color: var(--sn-muted) !important; font-size: .82rem; text-align: right; }
 
         .topbar {
           display: none;
@@ -1404,7 +1550,7 @@ def _style() -> None:
         .chip-muted { color: var(--sn-muted); }
         .chip-neutral { color: var(--sn-text); }
 
-        .empty-state, .notes-empty,
+        .empty-state, .notes-empty, .review-empty, .review-summary,
         div[data-testid="stExpander"] details,
         div[data-testid="stFileUploader"],
         .source-file,
@@ -1417,11 +1563,24 @@ def _style() -> None:
           box-shadow: var(--sn-shadow-soft);
           backdrop-filter: blur(18px);
         }
-        .empty-state, .notes-empty { padding: 2rem; }
-        .notes-empty { min-height: 360px; display: flex; flex-direction: column; justify-content: center; }
+        .empty-state, .notes-empty, .review-empty { padding: 1.35rem; }
+        .notes-empty { min-height: 430px; display: flex; flex-direction: column; justify-content: center; }
         .empty-kicker { color: var(--sn-blue); text-transform: uppercase; font-size: .72rem; font-weight: 850; letter-spacing: .08em; margin-bottom: .45rem; }
         .empty-state h2, .notes-empty h2 { font-size: 1.5rem; line-height: 1.2; margin: 0 0 .6rem; letter-spacing: -.03em; }
         .empty-state p, .notes-empty p { color: var(--sn-muted) !important; font-size: .98rem; line-height: 1.58; margin: 0; max-width: 640px; }
+        .review-empty h2, .review-summary h2 { color: var(--sn-heading); font-size: 1.18rem; line-height: 1.25; letter-spacing: -.025em; margin: .4rem 0 .55rem; }
+        .review-empty p { color: var(--sn-muted) !important; font-size: .84rem; line-height: 1.5; margin: 0; }
+        .review-checklist { display: grid; gap: .5rem; margin-top: 1rem; }
+        .review-checklist span { display: flex; align-items: center; gap: .55rem; color: var(--sn-text); font-size: .8rem; font-weight: 750; }
+        .review-checklist b { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: #eff6ff; color: var(--sn-blue); font-size: .7rem; }
+        .review-summary { padding: 1.15rem; }
+        .review-summary-kicker { display: flex; align-items: center; gap: .45rem; color: var(--sn-muted); font-size: .72rem; font-weight: 900; text-transform: uppercase; letter-spacing: .055em; }
+        .review-summary-kicker span { width: 8px; height: 8px; border-radius: 999px; background: var(--sn-green); box-shadow: 0 0 0 4px rgba(16,185,129,.10); }
+        .review-summary-warn .review-summary-kicker span { background: var(--sn-amber); box-shadow: 0 0 0 4px rgba(217,119,6,.10); }
+        .review-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: .55rem; margin-top: .9rem; }
+        .review-metrics div { padding: .7rem; border: 1px solid var(--sn-line); border-radius: 13px; background: #f8fafc; }
+        .review-metrics small { display: block; color: var(--sn-muted) !important; font-size: .68rem; }
+        .review-metrics b { display: block; margin-top: .15rem; color: var(--sn-heading); font-size: 1.08rem; overflow: hidden; text-overflow: ellipsis; }
 
         div[data-testid="stFileUploader"] { max-width: 960px; margin: .85rem auto 0; padding: .9rem; }
         div[data-testid="stFileUploaderDropzone"] {
@@ -1488,18 +1647,20 @@ def _style() -> None:
         pre, code { border-radius: 14px !important; }
 
         @media (max-width: 1100px) {
-          .hero-shell { grid-template-columns: 1fr; padding: 2rem; }
-          .hero-device { max-width: 620px; }
-          .studio-nav-links { display: none; }
+          .welcome-shell { grid-template-columns: 1fr; padding: 2rem; }
+          .outcome-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+          .outcome-item { align-items: flex-start; }
         }
         @media (max-width: 760px) {
           .block-container { padding: .85rem 1rem 2rem; }
-          .hero-shell { padding: 1.35rem; border-radius: 26px; min-height: unset; }
-          .hero-copy h1 { font-size: 3.2rem; }
-          .hero-actions { gap: .6rem; }
-          .hero-button { min-height: 44px; padding: 0 1rem; }
-          .hero-device { border-width: 8px; padding: .85rem; border-radius: 24px; }
-          .device-grid { grid-template-columns: 1fr; }
+          .studio-brand-subtitle, .workspace-status { display: none; }
+          .workflow-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .workflow-copy small { display: none; }
+          .welcome-shell { padding: 1.4rem; border-radius: 20px; min-height: unset; }
+          .welcome-copy h1 { font-size: 2.55rem; }
+          .outcome-list { grid-template-columns: 1fr; }
+          .upload-heading { align-items: flex-start; flex-direction: column; }
+          .upload-heading p { text-align: left; }
         }
         </style>
         """,
