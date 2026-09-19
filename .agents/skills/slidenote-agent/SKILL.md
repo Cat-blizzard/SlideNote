@@ -1,6 +1,6 @@
 ---
 name: slidenote-agent
-description: Use when asked to generate, repair, or evaluate SlideNote agent-backend study notes from PPT/PDF course slides in the SlideNote repo — runs the agent-pack -> agent-run/agent-build (dsh backend) -> agent-eval pipeline and verifies coverage reports instead of hand-writing notes.
+description: Use when asked to generate, repair, or evaluate SlideNote agent-backend study notes from PPT/PDF course slides in the SlideNote repo — runs the agent-pack -> agent-run/agent-build (Harness or API backend) -> agent-eval pipeline and verifies coverage reports instead of hand-writing notes.
 whenToUse: Triggered by requests like "把 X.pptx 做成讲义", "run the agent pipeline", "agent-build", "用 agent 后端生成笔记" or any SlideNote agent workflow.
 ---
 
@@ -9,8 +9,10 @@ whenToUse: Triggered by requests like "把 X.pptx 做成讲义", "run the agent 
 This skill drives the experimental agent pipeline in the SlideNote repository
 (`experiment/dsh-backend` branch). SlideNote keeps every deterministic step
 (parse, assets, coverage, source map, merge); the writing step is delegated to
-the DeepSeek backend and validated afterward. The pipeline never trusts the
-model's self-reported coverage — SlideNote always reruns `analyze_coverage`.
+the DeepSeek backend and validated afterward. SlideNote reruns `analyze_coverage`.
+Trace markers can be completed from the
+model's reported source IDs, so trace coverage alone does not prove that the
+visible prose covers the material; inspect visible/required-visible coverage too.
 
 ## Commands
 
@@ -19,13 +21,13 @@ model's self-reported coverage — SlideNote always reruns `analyze_coverage`.
 python -m slidenote agent-pack <input> --out <dir> [--vision off] [--ocr off]
 
 # 2. Run the DeepSeek backend over the pack, then validate/merge/repair
-python -m slidenote agent-run <pack_dir> --out <dir> --backend dsh
+python -m slidenote agent-run <pack_dir> --out <dir> --backend harness
 
 # 3. Pack + run in one step
-python -m slidenote agent-build <input> --out <dir> --backend dsh
+python -m slidenote agent-build <input> --out <dir> --backend harness
 
 # 4. Compare baseline build vs agent build
-python -m slidenote agent-eval <input> --out <dir> --backend dsh
+python -m slidenote agent-eval <input> --out <dir> --backend harness
 ```
 
 `agent-pack` defaults to offline parsing (`--vision off --ocr off`); enable
@@ -34,7 +36,19 @@ figure context in the pack (needs provider keys).
 
 ## Backend
 
-`--backend dsh` — DeepSeek API through `slidenote.llm` (OpenAI-compatible;
+`--backend harness` runs DeepSeek Harness **0.1.6-alpha.2** through Headless stdin
+and NDJSON. Configure model/credentials/permissions in Harness itself; use
+`--harness-command node D:/deepseek-harness/apps/cli/lib/bin.js` for an existing
+built checkout, or omit it when `dsh` is on PATH. `--harness-profile`, repeatable
+`--harness-patch`, and `--harness-home` select its configuration. Each section
+and repair uses a fresh session; concurrency defaults to 1, and
+`--harness-timeout` bounds each process including tools. Only the successful
+terminal `final.text` is parsed; tool output and thinking are excluded.
+
+If already inside a SlideNote section-writing Harness task, follow its JSON
+contract directly. Do not invoke agent-run/build/eval recursively.
+
+`--backend api` (legacy alias: `dsh`, still the CLI default) — DeepSeek API through `slidenote.llm` (OpenAI-compatible;
 keys via `DEEPSEEK_API_KEY` or `--dsh-api-key`). Local cache is on by default
 at `<out>/.dsh_cache`; override with `--dsh-cache-dir`, disable with
 `--dsh-cache off`. The first generation pass runs sections in parallel

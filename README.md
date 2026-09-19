@@ -46,6 +46,8 @@
 - [Future Outlook](#future-outlook)
 - [License And Acknowledgements](#license)
 
+Experimental agent backend: [DeepSeek Harness 0.1.6-alpha.2 and direct API setup](DSH_BACKEND.zh-CN.md). Use `--backend harness` to run Harness; `dsh` remains the legacy direct API alias.
+
 ## Quick Start
 
 ```powershell

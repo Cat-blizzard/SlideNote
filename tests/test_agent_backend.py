@@ -246,6 +246,58 @@ def test_agent_run_dsh_repairs_missing_trace_coverage(tmp_path, monkeypatch):
     assert report["repair"]["failed_repairs"] == 0
 
 
+def test_api_backend_forwards_timeout_and_retains_notes_after_transport_failure(tmp_path, monkeypatch):
+    source = tmp_path / "lecture.pdf"
+    build_out = tmp_path / "build"
+    run_out = tmp_path / "run"
+    write_pdf(source, [["Consensus", "Quorum reads and writes must overlap."]])
+    assert main(["agent-pack", str(source), "--out", str(build_out), "--quiet"]) == 0
+    manifest = json.loads((build_out / "agent_pack" / "manifest.json").read_text(encoding="utf-8"))
+    source_ids = manifest["sections"][0]["source_ids"]
+    timeouts = []
+    calls = []
+
+    def make_client(**kwargs):
+        timeouts.append(kwargs["timeout_seconds"])
+        client = _FakeDSHClient(**kwargs)
+
+        def generate(prompt, system_prompt=None):
+            calls.append(prompt)
+            if len(calls) > 1:
+                raise RuntimeError("credentials-must-not-appear-in-diagnostics")
+
+            class Result:
+                text = json.dumps({
+                    "markdown": _dsh_result_markdown(source_ids),
+                    "used_asset_paths": [],
+                    "covered_source_ids": source_ids[:1],
+                    "warnings": [],
+                })
+                usage = {}
+
+            return Result()
+
+        client.generate_with_usage = generate
+        return client
+
+    monkeypatch.setattr("slidenote.agent_backend.LLMClient", make_client)
+    assert main([
+        "agent-run", str(build_out / "agent_pack"), "--out", str(run_out),
+        "--backend", "api", "--dsh-timeout", "17", "--dsh-cache", "off", "--quiet",
+    ]) == 0
+    report = json.loads((run_out / "agent_run.json").read_text(encoding="utf-8"))
+    assert timeouts == [17, 17]
+    assert report["backend"] == "api"
+    assert report["repair"]["failed_repairs"] == 1
+    assert "Quorum reads and writes overlap" in (run_out / "notes.md").read_text(encoding="utf-8")
+    assert "credentials-must-not-appear" not in json.dumps(report)
+
+
+def test_parse_dsh_output_reports_malformed_json_as_backend_error():
+    with pytest.raises(AgentBackendError, match="malformed JSON"):
+        parse_dsh_output('Answer: {"markdown": broken}')
+
+
 def test_agent_run_dsh_uses_local_cache(tmp_path, monkeypatch):
     source = tmp_path / "lecture.pdf"
     build_out = tmp_path / "build"
@@ -565,3 +617,112 @@ def test_clip_agent_text_truncates_long_values():
     clipped = _clip_agent_text("x" * 300, 200)
     assert clipped is not None and clipped.endswith("…") and len(clipped) == 200
     assert _clip_agent_text("a  b\nc", 100) == "a b c"
+
+
+@pytest.mark.parametrize("command", ["agent-run", "agent-build", "agent-eval"])
+def test_harness_pipeline_routes_config_and_repairs_coverage(tmp_path, monkeypatch, command):
+    source = tmp_path / "lecture.pdf"
+    out = tmp_path / "result"
+    write_pdf(source, [["Consensus", "Quorum reads and writes must overlap."]])
+    calls = []
+    configs = []
+
+    class FakeHarness:
+        def __init__(self, config, pack_dir):
+            configs.append(config)
+            self.manifest = json.loads((pack_dir / "manifest.json").read_text(encoding="utf-8"))
+
+        def run(self, prompt):
+            calls.append(prompt)
+            source_ids = self.manifest["sections"][0]["source_ids"]
+            repaired = "Repair one SlideNote section" in prompt
+            payload = {
+                "markdown": _dsh_result_markdown(source_ids, repaired=repaired),
+                "used_asset_paths": [],
+                "covered_source_ids": source_ids if repaired else [source_ids[0]],
+                "warnings": [],
+            }
+            return json.dumps(payload), {"harness_version": "0.1.6-alpha.2", "session_id": f"session-{len(calls)}"}
+
+    monkeypatch.setattr("slidenote.agent_backend.HarnessRunner", FakeHarness)
+    if command == "agent-run":
+        assert main(["agent-pack", str(source), "--out", str(out), "--quiet"]) == 0
+        input_path = out / "agent_pack"
+        # A successful rerun must not leave an earlier error visible.
+        (out / "agent_diagnostics.json").write_text('{}', encoding="utf-8")
+    else:
+        input_path = source
+    patch = tmp_path / "harness.yml"
+    home = tmp_path / "harness-home"
+    result = main([
+        command, str(input_path), "--out", str(out), "--backend", "harness",
+        "--harness-command", "node", "--harness-arg=--max-old-space-size=4096",
+        "--harness-arg=D:/Harness Space/bin.js",
+        "--harness-profile", "study", "--harness-patch", str(patch),
+        "--harness-home", str(home), "--harness-timeout", "37", "--quiet",
+    ])
+    assert result == 0
+    build_out = out / "agent_build" if command == "agent-eval" else out
+    report = json.loads((build_out / "agent_run.json").read_text(encoding="utf-8"))
+    coverage = json.loads((build_out / "coverage.json").read_text(encoding="utf-8"))
+    assert report["backend"] == "harness"
+    assert report["sections"][0]["harness"]["harness_version"] == "0.1.6-alpha.2"
+    assert report["repair"]["attempted_sections"] == 1
+    assert coverage["missing"] == 0
+    assert (build_out / "source_map.json").is_file()
+    assert "Repaired coverage" in (build_out / "notes.md").read_text(encoding="utf-8")
+    assert not (build_out / "agent_diagnostics.json").exists()
+    assert len(calls) == 2
+    assert all("Do not invoke agent-build" in prompt for prompt in calls)
+    config = configs[0]
+    assert config.command == ("node", "--max-old-space-size=4096", "D:/Harness Space/bin.js")
+    assert config.profile == "study"
+    assert config.patches == (patch.resolve(),)
+    assert config.home == home.resolve()
+    assert config.timeout_seconds == 37
+
+
+def test_harness_repair_failure_keeps_first_section(tmp_path, monkeypatch):
+    from slidenote.harness_backend import HarnessError
+
+    source = tmp_path / "lecture.pdf"
+    out = tmp_path / "result"
+    write_pdf(source, [["Consensus", "Quorum reads and writes must overlap."]])
+
+    class FakeHarness:
+        def __init__(self, config, pack_dir):
+            self.source_ids = json.loads((pack_dir / "manifest.json").read_text(encoding="utf-8"))["sections"][0]["source_ids"]
+
+        def run(self, prompt):
+            if "Repair one SlideNote section" in prompt:
+                raise HarnessError("Harness process timed out.")
+            return json.dumps({
+                "markdown": _dsh_result_markdown(self.source_ids),
+                "used_asset_paths": [],
+                "covered_source_ids": self.source_ids[:1],
+                "warnings": [],
+            }), {"harness_version": "0.1.6-alpha.2"}
+
+    monkeypatch.setattr("slidenote.agent_backend.HarnessRunner", FakeHarness)
+    assert main(["agent-build", str(source), "--out", str(out), "--backend", "harness", "--quiet"]) == 0
+    report = json.loads((out / "agent_run.json").read_text(encoding="utf-8"))
+    assert report["repair"]["failed_repairs"] == 1
+    assert "Quorum reads and writes overlap" in (out / "notes.md").read_text(encoding="utf-8")
+
+
+def test_harness_startup_failure_writes_diagnostics(tmp_path, monkeypatch):
+    from slidenote.harness_backend import HarnessError
+
+    source = tmp_path / "lecture.pdf"
+    out = tmp_path / "result"
+    write_pdf(source, [["Consensus", "Quorum reads and writes must overlap."]])
+
+    class UnavailableHarness:
+        def __init__(self, config, pack_dir):
+            raise HarnessError("Expected DeepSeek Harness 0.1.6-alpha.2.")
+
+    monkeypatch.setattr("slidenote.agent_backend.HarnessRunner", UnavailableHarness)
+    assert main(["agent-build", str(source), "--out", str(out), "--backend", "harness", "--quiet"]) == 1
+    diagnostics = json.loads((out / "agent_diagnostics.json").read_text(encoding="utf-8"))
+    assert "0.1.6-alpha.2" in diagnostics["message"]
+    assert not (out / "notes.md").exists()

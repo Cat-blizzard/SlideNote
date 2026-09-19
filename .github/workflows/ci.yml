@@ -53,7 +53,7 @@ jobs:
           python -m pip install -e ".[dev,llm]"
 
       - name: Run agent backend tests
-        run: python -m pytest tests/test_agent_backend.py -q
+        run: python -m pytest tests/test_agent_backend.py tests/test_harness_backend.py tests/test_llm_timeout.py -q
 
       - name: Smoke agent-pack end to end
         run: |

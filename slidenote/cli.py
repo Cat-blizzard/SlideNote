@@ -195,9 +195,9 @@ def _add_agent_pack_options(command: argparse.ArgumentParser) -> None:
 def _add_agent_run_options(command: argparse.ArgumentParser, include_out: bool = True, include_quiet: bool = True) -> None:
     command.add_argument(
         "--backend",
-        choices=["dsh"],
+        choices=["dsh", "api", "harness"],
         default="dsh",
-        help="Agent backend. dsh writes sections through the DeepSeek API (slidenote.llm).",
+        help="api calls the model API directly; dsh is its legacy alias. harness runs DeepSeek Harness Headless.",
     )
     if include_out:
         command.add_argument("--out", type=Path, default=None, help="Output directory. Defaults to the agent pack parent directory.")
@@ -216,7 +216,17 @@ def _add_agent_run_options(command: argparse.ArgumentParser, include_out: bool =
     command.add_argument("--dsh-cache", choices=["on", "off", "refresh"], default="on", help="DeepSeek backend local cache mode.")
     command.add_argument("--dsh-cache-dir", type=Path, default=None, help="DeepSeek backend cache directory. Defaults to <out>/.dsh_cache when --dsh-cache is on.")
     command.add_argument("--dsh-concurrency", type=int, default=3, help="Parallel section calls for the first generation pass. Repair stays sequential.")
-    command.add_argument("--dsh-timeout", type=int, default=600, help="Per-section DeepSeek backend timeout in seconds.")
+    command.add_argument("--dsh-timeout", type=int, default=600, help="Direct API timeout per HTTP request in seconds; retries may take longer.")
+    command.add_argument(
+        "--harness-command", nargs="+", default=["dsh"], metavar="ARG",
+        help="Harness executable and fixed arguments, e.g. node D:/deepseek-harness/apps/cli/lib/bin.js. No shell evaluation.",
+    )
+    command.add_argument("--harness-profile", default="headless", help="DSH profile with the Headless app enabled.")
+    command.add_argument("--harness-arg", action="append", default=[], help="Append a fixed launcher argument; use --harness-arg=--flag for arguments beginning with a dash.")
+    command.add_argument("--harness-patch", type=Path, action="append", default=[], help="DSH configuration patch; repeat for multiple patches.")
+    command.add_argument("--harness-home", type=Path, default=None, help="Optional isolated DSH_HOME; otherwise use the existing Harness configuration.")
+    command.add_argument("--harness-timeout", type=int, default=600, help="Total timeout in seconds for each Harness section process, including tool calls.")
+    command.add_argument("--harness-concurrency", type=int, default=1, help="Concurrent independent Harness sessions; repair remains sequential.")
     if include_quiet:
         command.add_argument("--quiet", action="store_true", help="Suppress progress output.")
 

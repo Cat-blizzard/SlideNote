@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import base64
 import mimetypes
+import math
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -145,6 +146,13 @@ SYSTEM_PROMPT = (
 
 
 class LLMClient:
+    """Provider client with an optional per-request transport timeout.
+
+    Retries can make a generation exceed ``timeout_seconds``; this is not an
+    overall wall-clock budget. ``None`` preserves each transport's default
+    (the OpenAI SDK default or 120 seconds for Gemini/Claude).
+    """
+
     def __init__(
         self,
         provider: str,
@@ -153,13 +161,17 @@ class LLMClient:
         base_url: str | None = None,
         max_output_tokens: int = 4096,
         temperature: float | None = None,
+        timeout_seconds: float | None = None,
     ) -> None:
+        if timeout_seconds is not None and (not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
+            raise ValueError("timeout_seconds must be a positive finite number")
         self.spec = get_provider_spec(provider)
         self.model = _resolve_model(self.spec, model)
         self.api_key = _resolve_api_key(self.spec, api_key)
         self.base_url = _resolve_base_url(self.spec, base_url)
         self.max_output_tokens = max_output_tokens
         self.temperature = temperature
+        self.timeout_seconds = timeout_seconds
 
     @property
     def provider_name(self) -> str:
@@ -217,6 +229,8 @@ class LLMClient:
         client_kwargs: dict[str, Any] = {"api_key": self.api_key}
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
+        if self.timeout_seconds is not None:
+            client_kwargs["timeout"] = self.timeout_seconds
         client = OpenAI(**client_kwargs)
 
         request: dict[str, Any] = {
@@ -251,6 +265,8 @@ class LLMClient:
         client_kwargs: dict[str, Any] = {"api_key": self.api_key}
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
+        if self.timeout_seconds is not None:
+            client_kwargs["timeout"] = self.timeout_seconds
         client = OpenAI(**client_kwargs)
         data_url = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
         request: dict[str, Any] = {
@@ -289,7 +305,9 @@ class LLMClient:
         if generation_config:
             payload["generationConfig"] = generation_config
 
-        data = _post_json(endpoint, payload, {"x-goog-api-key": self.api_key})
+        data = _post_json(
+            endpoint, payload, {"x-goog-api-key": self.api_key}, timeout_seconds=self.timeout_seconds
+        )
         candidates = data.get("candidates") or []
         if not candidates:
             raise RuntimeError(f"Gemini returned no candidates: {data}")
@@ -326,7 +344,9 @@ class LLMClient:
             generation_config["temperature"] = self.temperature
         if generation_config:
             payload["generationConfig"] = generation_config
-        data = _post_json(endpoint, payload, {"x-goog-api-key": self.api_key})
+        data = _post_json(
+            endpoint, payload, {"x-goog-api-key": self.api_key}, timeout_seconds=self.timeout_seconds
+        )
         candidates = data.get("candidates") or []
         if not candidates:
             raise RuntimeError(f"Gemini returned no candidates: {data}")
@@ -354,6 +374,7 @@ class LLMClient:
                 "x-api-key": self.api_key,
                 "anthropic-version": "2023-06-01",
             },
+            timeout_seconds=self.timeout_seconds,
         )
         blocks = data.get("content") or []
         return LLMResult(
@@ -393,6 +414,7 @@ class LLMClient:
                 "x-api-key": self.api_key,
                 "anthropic-version": "2023-06-01",
             },
+            timeout_seconds=self.timeout_seconds,
         )
         blocks = data.get("content") or []
         return LLMResult(
@@ -459,7 +481,13 @@ def _resolve_base_url(spec: ProviderSpec, explicit_base_url: str | None) -> str 
     return explicit_base_url or first_env(("SLIDENOTE_BASE_URL",) + spec.base_url_envs) or spec.base_url
 
 
-def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+def _post_json(
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    *,
+    timeout_seconds: float | None = None,
+) -> dict[str, Any]:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         url,
@@ -471,7 +499,7 @@ def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str]) -> di
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with urllib.request.urlopen(request, timeout=120 if timeout_seconds is None else timeout_seconds) as response:
             response_body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")

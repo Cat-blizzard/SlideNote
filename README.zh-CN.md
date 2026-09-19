@@ -46,6 +46,8 @@
 - [未来展望](#未来展望)
 - [许可证与致谢](#许可证)
 
+实验分支支持 [DeepSeek Harness 0.1.6-alpha.2 与 API 后端](DSH_BACKEND.zh-CN.md)。`--backend harness` 启动真实 Harness；`dsh` 保留为原有直连 API 的兼容名称。
+
 ## 快速开始
 
 ```powershell
