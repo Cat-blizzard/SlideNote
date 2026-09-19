@@ -233,7 +233,13 @@ class LLMClient:
 
         response = client.chat.completions.create(**request)
         content = response.choices[0].message.content
-        return LLMResult(text=content.strip() if content else "", usage=_normalize_openai_usage(getattr(response, "usage", None)))
+        return LLMResult(
+            text=content.strip() if content else "",
+            usage=_with_finish_reason(
+                _normalize_openai_usage(getattr(response, "usage", None)),
+                getattr(response.choices[0], "finish_reason", None),
+            ),
+        )
 
     def _generate_openai_image(
         self,
@@ -272,7 +278,13 @@ class LLMClient:
             request["temperature"] = self.temperature
         response = client.chat.completions.create(**request)
         content = response.choices[0].message.content
-        return LLMResult(text=content.strip() if content else "", usage=_normalize_openai_usage(getattr(response, "usage", None)))
+        return LLMResult(
+            text=content.strip() if content else "",
+            usage=_with_finish_reason(
+                _normalize_openai_usage(getattr(response, "usage", None)),
+                getattr(response.choices[0], "finish_reason", None),
+            ),
+        )
 
     def _generate_gemini(self, system_prompt: str, user_prompt: str) -> LLMResult:
         model = self.model.removeprefix("models/")
@@ -296,7 +308,9 @@ class LLMClient:
         parts = candidates[0].get("content", {}).get("parts", [])
         return LLMResult(
             text="".join(part.get("text", "") for part in parts).strip(),
-            usage=_normalize_gemini_usage(data.get("usageMetadata")),
+            usage=_with_finish_reason(
+                _normalize_gemini_usage(data.get("usageMetadata")), candidates[0].get("finishReason")
+            ),
         )
 
     def _generate_gemini_image(self, system_prompt: str, user_prompt: str, image_bytes: bytes, mime_type: str) -> LLMResult:
@@ -333,7 +347,9 @@ class LLMClient:
         parts = candidates[0].get("content", {}).get("parts", [])
         return LLMResult(
             text="".join(part.get("text", "") for part in parts).strip(),
-            usage=_normalize_gemini_usage(data.get("usageMetadata")),
+            usage=_with_finish_reason(
+                _normalize_gemini_usage(data.get("usageMetadata")), candidates[0].get("finishReason")
+            ),
         )
 
     def _generate_claude(self, system_prompt: str, user_prompt: str) -> LLMResult:
@@ -358,7 +374,7 @@ class LLMClient:
         blocks = data.get("content") or []
         return LLMResult(
             text="".join(block.get("text", "") for block in blocks if block.get("type") == "text").strip(),
-            usage=_normalize_claude_usage(data.get("usage")),
+            usage=_with_finish_reason(_normalize_claude_usage(data.get("usage")), data.get("stop_reason")),
         )
 
     def _generate_claude_image(self, system_prompt: str, user_prompt: str, image_bytes: bytes, mime_type: str) -> LLMResult:
@@ -397,7 +413,7 @@ class LLMClient:
         blocks = data.get("content") or []
         return LLMResult(
             text="".join(block.get("text", "") for block in blocks if block.get("type") == "text").strip(),
-            usage=_normalize_claude_usage(data.get("usage")),
+            usage=_with_finish_reason(_normalize_claude_usage(data.get("usage")), data.get("stop_reason")),
         )
 
 
@@ -412,6 +428,12 @@ def get_provider_spec(provider: str) -> ProviderSpec:
 
 def supported_provider_names() -> list[str]:
     return sorted(PROVIDERS)
+
+
+def _with_finish_reason(usage: dict[str, Any], finish_reason: Any) -> dict[str, Any]:
+    if finish_reason:
+        usage["finish_reason"] = finish_reason
+    return usage
 
 
 def _with_retry_usage(result: LLMResult, retries: int) -> LLMResult:

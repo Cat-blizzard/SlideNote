@@ -424,6 +424,7 @@ def _llm_repair_prompt(
         "只输出修订后的完整 Markdown，不要解释你的修改，不要输出 JSON，不要追加“遗漏列表”。\n"
         "保持学习笔记风格：把缺失内容融入已有段落或相邻段落，必要时可增加一小段自然讲解；不要改成逐字段清单。\n"
         "必须保留已有的 Markdown 图片链接和 HTML source marker；新增讲解时也要保留或补上对应 source marker。\n"
+        "这是补漏修订：保留已有正文、章节结构和解释细节，只修改补漏所需的段落；不要压缩、删除或用省略号替代已有内容。\n"
         f"{source_rule}\n"
         f"{language_rule}\n"
         f"{term_rule}\n"

@@ -1,3 +1,6 @@
+import sys
+from types import SimpleNamespace
+
 import pytest
 
 from slidenote.llm import LLMClient, LLMResult, get_provider_spec, resolve_provider_runtime
@@ -80,7 +83,7 @@ def test_llm_client_retries_transient_errors(monkeypatch):
         calls["count"] += 1
         if calls["count"] == 1:
             raise RuntimeError("HTTP 429 rate limit")
-        return LLMResult(text="ok", usage={"total_tokens": 3})
+        return LLMResult(text="ok", usage={"total_tokens": 3, "finish_reason": "stop"})
 
     monkeypatch.setattr("slidenote.llm.LLMClient._generate_openai_compatible", flaky_call)
 
@@ -88,6 +91,7 @@ def test_llm_client_retries_transient_errors(monkeypatch):
 
     assert result.text == "ok"
     assert result.usage["retries"] == 1
+    assert result.usage["finish_reason"] == "stop"
     assert calls["count"] == 2
 
 
@@ -106,3 +110,68 @@ def test_llm_client_raises_after_retry_budget(monkeypatch):
         LLMClient(provider="openai", model="gpt-test").generate_with_usage("system", "user")
 
     assert calls["count"] == 3
+
+
+@pytest.mark.parametrize(
+    ("provider", "finish_reason"),
+    [
+        ("openai", "length"),
+        ("openai", "stop"),
+        ("openai", None),
+        ("openai", ""),
+        ("gemini", "MAX_TOKENS"),
+        ("gemini", "STOP"),
+        ("gemini", None),
+        ("claude", "max_tokens"),
+        ("claude", "end_turn"),
+        ("claude", None),
+    ],
+)
+@pytest.mark.parametrize("with_image", [False, True])
+def test_provider_completion_reason_survives_usage_normalization(
+    tmp_path, monkeypatch, provider, finish_reason, with_image
+):
+    if provider == "openai":
+        choice = SimpleNamespace(message=SimpleNamespace(content=" result "))
+        if finish_reason is not None:
+            choice.finish_reason = finish_reason
+        response = SimpleNamespace(
+            choices=[choice], usage={"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
+        )
+        fake_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: response))
+        )
+        monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=lambda **kwargs: fake_client))
+    elif provider == "gemini":
+        candidate = {"content": {"parts": [{"text": " result "}]}}
+        if finish_reason is not None:
+            candidate["finishReason"] = finish_reason
+        response = {
+            "candidates": [candidate],
+            "usageMetadata": {"promptTokenCount": 2, "candidatesTokenCount": 3, "totalTokenCount": 5},
+        }
+        monkeypatch.setattr("slidenote.llm._post_json", lambda *args, **kwargs: response)
+    else:
+        response = {
+            "content": [{"type": "text", "text": " result "}],
+            "usage": {"input_tokens": 2, "output_tokens": 3},
+        }
+        if finish_reason is not None:
+            response["stop_reason"] = finish_reason
+        monkeypatch.setattr("slidenote.llm._post_json", lambda *args, **kwargs: response)
+
+    client = LLMClient(provider=provider, model="test-model", api_key="test-key")
+    if with_image:
+        image_path = tmp_path / "slide.png"
+        image_path.write_bytes(b"mock image")
+        result = client.generate_image_with_usage(image_path, "describe")
+    else:
+        result = client.generate_with_usage("repair")
+
+    assert result.text == "result"
+    assert result.usage["total_tokens"] == 5
+    assert result.usage["retries"] == 0
+    if finish_reason:
+        assert result.usage["finish_reason"] == finish_reason
+    else:
+        assert "finish_reason" not in result.usage

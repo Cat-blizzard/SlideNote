@@ -44,6 +44,10 @@ content_guard.json
 
 启用 LLM 时，Content Guard 可以结合模型判断页面角色和元素学习价值；未启用 LLM 时，也会保留本地启发式检查。
 
+自动补漏会先检查候选修订，再决定是否替换原稿。候选必须至少补上一项缺失的必讲内容，同时保留原有元素的溯源与正文覆盖和已有 Markdown 图片链接。候选正文字符数不得低于原稿的 80%（不计来源注释、图片链接、标题和空白等），该下限用于发现明显缩短，并不代表保留了相同比例的原文。空结果、覆盖退化、明显缩短、模型明确报告截断或修补调用失败时，均保留修补前的原稿；缓存命中的修补结果也执行这些检查。
+
+`content_guard.json` 的 `repairs` 会记录 `accepted`、`rejection_reasons` 和候选稿检查结果。`resolved_items` / `unresolved_items` 始终对应最终采用的正文；被拒绝的候选稿不会计为修补成功。运行摘要会提示 `content_guard_repair_rejected`。这些保护用于防止修补退化，不代替语义准确性审查，也不提供历史版本管理。
+
 ## Quality Report
 
 `quality_report.json` 是学习质量报告。第一版主要使用本地启发式指标，避免额外增加 LLM 成本。

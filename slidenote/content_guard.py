@@ -19,7 +19,7 @@ from slidenote.utils import (
 
 CONTENT_GUARD_MODES = {"auto", "off"}
 CONTENT_GUARD_PROMPT_VERSION = "content-guard-v1"
-CONTENT_REPAIR_PROMPT_VERSION = "content-repair-v1"
+CONTENT_REPAIR_PROMPT_VERSION = "content-repair-v2"
 REQUIRED_CONFIDENCE_THRESHOLD = 0.7
 
 
@@ -244,7 +244,9 @@ def record_required_coverage(report: dict[str, Any], coverage: dict[str, Any], s
 def record_repair(report: dict[str, Any], record: dict[str, Any]) -> None:
     repairs = report.setdefault("repairs", [])
     repairs.append(record)
-    report["summary"]["repair_attempts"] = len(repairs)
+    summary = report.setdefault("summary", {})
+    summary["repair_attempts"] = len(repairs)
+    summary["repair_rejections"] = sum(repair.get("accepted") is False for repair in repairs)
     if record.get("unresolved_items"):
         report["summary"]["residual_risks"] = int(report["summary"].get("residual_risks", 0)) + len(record["unresolved_items"])
 
@@ -259,6 +261,9 @@ def content_guard_warnings(report: dict[str, Any] | None) -> list[str]:
         warnings.append(f"content_guard_required_missing:{required_missing}")
     if residual:
         warnings.append(f"content_guard_residual_risks:{residual}")
+    rejected = int(report.get("summary", {}).get("repair_rejections") or 0)
+    if rejected:
+        warnings.append(f"content_guard_repair_rejected:{rejected}")
     return warnings
 
 
