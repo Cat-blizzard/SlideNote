@@ -1,45 +1,45 @@
-from argparse import Namespace
+from types import SimpleNamespace
 
-from slidenote.models import Deck
-from slidenote.pipeline import ArtifactRegistry, BuildContext, FunctionStage, StageResult, run_stage
+from slidenote.pipeline import ArtifactRegistry, BuildPhase, BuildStep, run_build_plan
+from slidenote.progress import ProgressReporter
 
 
-def test_function_stage_records_result_and_registered_artifact(tmp_path):
-    deck = Deck(source_path="demo.pdf", source_type="pdf", pages=[])
-    registry = ArtifactRegistry(tmp_path)
-    context = BuildContext(
-        args=Namespace(),
-        input_path=tmp_path / "demo.pdf",
-        output_root=tmp_path,
-        progress=None,
-        artifacts=registry,
+def test_build_plan_runs_enabled_steps_in_phase_order(tmp_path):
+    progress = ProgressReporter(tmp_path / "progress.json", quiet=True)
+    state = SimpleNamespace(progress=progress, calls=[])
+
+    def step(name, phase):
+        def run(current_state):
+            assert current_state.progress.current_phase == phase
+            current_state.progress.start_stage(name)
+            current_state.calls.append(name)
+            current_state.progress.finish_stage()
+        return run
+
+    phases = (
+        BuildPhase("ingest", (BuildStep("parse", step("parse", "ingest")),)),
+        BuildPhase("understand", (
+            BuildStep("ocr", step("ocr", "understand"), enabled=lambda _: False),
+            BuildStep("layout", step("layout", "understand")),
+        )),
+        BuildPhase("write", (
+            BuildStep("notes", step("notes", "write")),
+            BuildStep("summary", lambda current_state: current_state.calls.append("summary"), tracks_progress=False),
+        )),
     )
 
-    def runner(stage_deck, stage_context):
-        stage_context.artifacts.write_json("demo", "demo.json", {"source_type": stage_deck.source_type})
-        return StageResult(name="demo_stage", report={"ok": True}, artifacts={"demo": "demo.json"})
+    run_build_plan(state, phases)
 
-    result = run_stage(deck, context, FunctionStage(name="demo_stage", runner=runner, artifacts=["demo"]))
+    assert state.calls == ["parse", "layout", "notes", "summary"]
+    snapshot = progress.snapshot()
+    assert snapshot["planned_stages"] == state.calls[:-1]
+    assert [stage["name"] for stage in snapshot["stages"]] == state.calls[:-1]
+    assert snapshot["current_phase"] is None
 
-    assert result.report == {"ok": True}
-    assert context.reports["demo_stage"] is result
+
+def test_artifact_registry_records_written_file(tmp_path):
+    registry = ArtifactRegistry(tmp_path)
+    registry.write_json("demo", "demo.json", {"ok": True})
+
     assert registry.as_summary()["demo"] == "demo.json"
     assert (tmp_path / "demo.json").exists()
-
-
-def test_stage_dependencies_are_checked(tmp_path):
-    deck = Deck(source_path="demo.pdf", source_type="pdf", pages=[])
-    context = BuildContext(
-        args=Namespace(),
-        input_path=tmp_path / "demo.pdf",
-        output_root=tmp_path,
-        progress=None,
-    )
-    stage = FunctionStage(name="needs_parse", dependencies=["parse"], runner=lambda *_: {})
-
-    try:
-        run_stage(deck, context, stage)
-    except RuntimeError as exc:
-        assert "depends on missing stage" in str(exc)
-    else:
-        raise AssertionError("missing dependency should fail")

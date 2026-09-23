@@ -22,7 +22,7 @@ from .assembly import (
     _select_note_contexts,
 )
 from .llm_calls import _generate_page_lecture_context, _generate_teaching_enrichment_context, _generate_weave_context
-from .options import should_run_teaching_enrichment
+from .options import needs_teaching_enrichment, should_run_teaching_enrichment
 from .prompt_payload import _section_title_by_slide
 from .repair import _repair_required_markdown_once
 from .usage import _build_usage_report
@@ -184,7 +184,18 @@ def _generate_notes_with_lecture_weave(
 
     teaching_records: list[dict[str, Any]] = []
     teaching_report: dict[str, Any] | None = None
-    if should_run_teaching_enrichment(note_profile, teaching_enrichment, "lecture-weave"):
+    teaching_contexts = (
+        [
+            context for context in weave_contexts
+            if teaching_enrichment == "force"
+            or needs_teaching_enrichment(final_chunks.get(context.id, ""), len(context.pages))
+        ]
+        if should_run_teaching_enrichment(note_profile, teaching_enrichment, "lecture-weave")
+        else []
+    )
+    if progress_callback and teaching_enrichment == "auto":
+        progress_callback({"event": "total", "total": len(page_contexts) + len(weave_contexts) + len(teaching_contexts)})
+    if teaching_contexts:
         teaching_results: dict[str, tuple[str, dict[str, Any]]] = {}
 
         def process_teaching(context: NoteContext) -> tuple[str, str, dict[str, Any]]:
@@ -205,21 +216,21 @@ def _generate_notes_with_lecture_weave(
             return context.id, _postprocess_llm_markdown(content, source_display=source_display), record
 
         if workers == 1:
-            for context in weave_contexts:
+            for context in teaching_contexts:
                 context_id, content, record = process_teaching(context)
                 teaching_results[context_id] = (content, record)
                 if progress_callback:
                     progress_callback(record)
         else:
             with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = {executor.submit(process_teaching, context): context for context in weave_contexts}
+                futures = {executor.submit(process_teaching, context): context for context in teaching_contexts}
                 for future in as_completed(futures):
                     context_id, content, record = future.result()
                     teaching_results[context_id] = (content, record)
                     if progress_callback:
                         progress_callback(record)
 
-        for context in weave_contexts:
+        for context in teaching_contexts:
             content, record = teaching_results[context.id]
             final_chunks[context.id] = content
             teaching_records.append(record)
@@ -300,7 +311,7 @@ def _generate_notes_with_lecture_weave(
             note_depth=note_depth,
             note_language=note_language,
             term_policy=term_policy,
-            contexts=weave_contexts,
+            contexts=teaching_contexts,
             final_chunks=final_chunks,
             page_markdown_by_slide=page_markdown_by_slide,
             teaching_records=teaching_records,

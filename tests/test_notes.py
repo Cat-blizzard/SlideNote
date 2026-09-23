@@ -997,6 +997,58 @@ def test_lecture_notes_profile_runs_teaching_enrichment_after_weave(tmp_path, mo
     assert analyze_coverage(deck, result.markdown)["missing"] == 0
 
 
+def test_lecture_auto_skips_teaching_pass_when_weave_already_has_teaching_content(tmp_path, monkeypatch):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[SlidePage(slide_id=1, title="Quorum", text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="Read and write quorums overlap.")])],
+    )
+    tasks = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt):
+            class Result:
+                usage = {"input_tokens": 3, "output_tokens": 4, "total_tokens": 7}
+
+            result = Result()
+            if '"task": "page_lecture"' in prompt:
+                tasks.append("page")
+                result.text = "Read and write quorums overlap. <!-- slidenote-source: p1:s1_t1 -->"
+            elif '"task": "weave_page_lectures"' in prompt:
+                tasks.append("weave")
+                result.text = (
+                    "A read quorum intersects a write quorum, so a read can observe the latest write. "
+                    "For example, three replicas can use overlapping sets to preserve visibility. "
+                    "A common mistake is assuming that any two sets of replicas will intersect. "
+                    "Review question: what happens when a read set misses the last write set? "
+                    "<!-- slidenote-source: p1:s1_t1 -->"
+                )
+            else:
+                raise AssertionError("The complete weave should not trigger another model call")
+            return result
+
+    monkeypatch.setattr("slidenote.notes.llm_calls.LLMClient", FakeClient)
+
+    result = generate_notes_result(
+        deck,
+        tmp_path,
+        use_llm=True,
+        provider="openai",
+        api_key="test",
+        note_strategy="lecture-weave",
+        note_profile="lecture-notes",
+        note_context="document",
+    )
+
+    assert tasks == ["page", "weave"]
+    assert result.teaching_report is None
+    assert result.llm_usage["summary"]["teaching_enrichment_calls"] == 0
+    assert "Review question" in result.markdown
+
+
 def test_lecture_weave_prompt_uses_deck_brief_as_guarded_navigation(tmp_path, monkeypatch):
     deck = Deck(
         source_path="lecture.pdf",

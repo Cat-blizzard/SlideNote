@@ -13,6 +13,7 @@ SlideNote Studio 是一个基于 Streamlit 的图形界面。它包装 `python -
 - 在页面里临时填写 Text / Vision / OCR API key；key 只通过本次子进程环境变量传入，不写进命令行。
 - 选择是否导出 `notes.zip`、目录 Markdown、Word、PDF 或 LaTeX。
 - 进度、ETA、Doctor、用量和成本信息收在紧凑的诊断区里。
+- 在页面里保存的模态修正会用于同一源文件的下一次构建；更换文件后不会沿用旧修正。
 - 在 Notes workspace 基于已有输出目录生成复习包：`review.md`、`exam.md`、`exam.json`、`exam.html` 等。
 - 下载 `notes.zip`、`notes.md`、`coverage.md`、导出文件或完整结果 ZIP。
 - 切换到 **Textbook library**，上传 PDF 教材，构建 RAG-ready 教材库；该库当前不会自动参与笔记生成。

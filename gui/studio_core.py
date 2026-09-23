@@ -224,7 +224,8 @@ def progress_percent(progress: dict[str, Any]) -> float:
     current = progress.get("current_stage") or {}
     stages = progress.get("stages") or []
     completed = len(stages)
-    total_known_stages = 13
+    planned = progress.get("planned_stages")
+    total_known_stages = len(planned) if isinstance(planned, list) and planned else 13
     base = min(completed / total_known_stages, 0.95)
     stage_total = current.get("total") or 0
     stage_current = current.get("current") or 0

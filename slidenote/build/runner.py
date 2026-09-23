@@ -8,9 +8,10 @@ from slidenote.build.config import (
     _friendly_build_error,
 )
 from slidenote.build.errors import UserFacingConfigError
-from slidenote.build.stages import BUILD_STAGES, _print_build_outputs
+from slidenote.build.stages import BUILD_PHASES, _print_build_outputs
 from slidenote.build.state import create_build_state
 from slidenote.exporting import parse_export_formats
+from slidenote.pipeline import run_build_plan
 
 
 def run_build(args: argparse.Namespace) -> int:
@@ -23,8 +24,7 @@ def run_build(args: argparse.Namespace) -> int:
 
     state = create_build_state(args, export_formats)
     try:
-        for stage in BUILD_STAGES:
-            stage(state)
+        run_build_plan(state, BUILD_PHASES)
     except Exception as exc:
         friendly_message = _friendly_build_error(exc, args)
         if friendly_message:

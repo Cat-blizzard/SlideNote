@@ -21,6 +21,7 @@ from slidenote.extractors import extract_deck
 from slidenote.image_ranking import rank_deck_images
 from slidenote.ir import build_deck_ir
 from slidenote.models import Deck
+from slidenote.pipeline import BuildPhase, BuildStep
 from slidenote.notes import NoteGenerationResult, NoteOptions, estimate_note_generation_steps, generate_notes_result
 from slidenote.notes.quality import build_note_quality_report
 from slidenote.ocr import enrich_deck_with_ocr
@@ -31,7 +32,7 @@ from slidenote.understanding import build_understanding_reports
 from slidenote.composite_figures import enrich_deck_with_composite_figures
 from slidenote.figure_grounding import enrich_deck_with_figure_grounding
 from slidenote.figures import enrich_deck_with_figures
-from slidenote.modality import enrich_deck_with_modalities
+from slidenote.modality import apply_modality_overrides, enrich_deck_with_modalities
 from slidenote.semantic_layout import enrich_deck_with_semantic_layout
 from slidenote.vision import enrich_deck_with_vision
 
@@ -46,13 +47,17 @@ def _stage_modality(state: BuildState) -> None:
     deck = _require_deck(state)
     state.modality_report = _run_json_stage(
         deck,
-        state.build_context,
+        state,
         name="modality",
         artifact_name="page_modalities",
         artifact_path="page_modalities.json",
         message="Classifying page modalities",
         complete_message="Page modality classification complete",
-        runner=lambda stage_deck: enrich_deck_with_modalities(stage_deck),
+        runner=lambda stage_deck: apply_modality_overrides(
+            stage_deck,
+            enrich_deck_with_modalities(stage_deck),
+            state.output_root / "page_modalities.overrides.json",
+        ),
     )
 
 
@@ -60,9 +65,8 @@ def _stage_table_understanding(state: BuildState) -> None:
     deck = _require_deck(state)
     state.table_understanding_report = _run_json_stage(
         deck,
-        state.build_context,
+        state,
         name="table_understanding",
-        dependencies=["modality"],
         artifact_name="table_understanding",
         artifact_path="table_understanding.json",
         message="Summarizing table conclusions",
@@ -76,9 +80,8 @@ def _stage_semantic_layout(state: BuildState) -> None:
     deck = _require_deck(state)
     state.semantic_layout_report = _run_json_stage(
         deck,
-        state.build_context,
+        state,
         name="semantic_layout",
-        dependencies=["table_understanding"],
         artifact_name="semantic_layout",
         artifact_path="semantic_layout.json",
         message="Building semantic page blocks",
@@ -105,8 +108,6 @@ def _stage_semantic_layout(state: BuildState) -> None:
 
 def _stage_composite_figures(state: BuildState) -> None:
     args = state.args
-    if args.composite_figures == "off":
-        return
     deck = _require_deck(state)
     state.progress.start_stage("composite_figures", message="Detecting composite figures")
     state.composite_figure_report = enrich_deck_with_composite_figures(
@@ -120,9 +121,6 @@ def _stage_composite_figures(state: BuildState) -> None:
 
 def _stage_figure_crop(state: BuildState) -> None:
     args = state.args
-    should_run_figure_crop = args.figure_crop == "vision" or (args.figure_crop == "auto" and args.vision != "off")
-    if not should_run_figure_crop:
-        return
     deck = _require_deck(state)
     state.progress.start_stage("figure_crop", message="Cropping local figures")
     state.figure_report = enrich_deck_with_figures(
@@ -152,8 +150,6 @@ def _stage_figure_crop(state: BuildState) -> None:
 
 def _stage_image_importance(state: BuildState) -> None:
     args = state.args
-    if args.image_ranking == "off":
-        return
     deck = _require_deck(state)
     state.progress.start_stage("image_importance", message="Ranking image importance")
     state.image_importance_report = rank_deck_images(deck, state.output_root, mode=args.image_ranking, stage="pre_vision")
@@ -162,8 +158,6 @@ def _stage_image_importance(state: BuildState) -> None:
 
 def _stage_ocr(state: BuildState) -> None:
     args = state.args
-    if args.ocr == "off":
-        return
     deck = _require_deck(state)
     state.progress.start_stage("ocr", message="Running OCR")
     state.ocr_report = enrich_deck_with_ocr(
@@ -190,9 +184,6 @@ def _stage_ocr(state: BuildState) -> None:
 
 def _stage_vision(state: BuildState) -> None:
     args = state.args
-    should_run_vision = args.vision != "off" or args.figure_grounding == "vision"
-    if not should_run_vision:
-        return
     deck = _require_deck(state)
     vision_mode = args.vision if args.vision != "off" else "auto"
     state.progress.start_stage("vision", message="Running vision analysis")
@@ -223,8 +214,6 @@ def _stage_vision(state: BuildState) -> None:
 
 def _stage_figure_grounding(state: BuildState) -> None:
     args = state.args
-    if args.figure_grounding == "off":
-        return
     deck = _require_deck(state)
     state.progress.start_stage("figure_grounding", message="Grounding figures to page text")
     state.figure_grounding_report = enrich_deck_with_figure_grounding(
@@ -274,8 +263,6 @@ def _stage_sections(state: BuildState) -> None:
 
 def _stage_deck_brief(state: BuildState) -> None:
     args = state.args
-    if not _should_build_deck_brief(args):
-        return
     deck = _require_deck(state)
     state.progress.start_stage("deck_brief", message="Building deck brief")
     state.deck_brief_report = build_deck_brief(
@@ -298,8 +285,6 @@ def _stage_deck_brief(state: BuildState) -> None:
 
 def _stage_content_guard(state: BuildState) -> None:
     args = state.args
-    if args.content_guard == "off":
-        return
     deck = _require_deck(state)
     state.progress.start_stage("content_guard", message="Classifying required learning content")
     state.content_guard_report = build_content_guard(
@@ -341,7 +326,6 @@ def _stage_export_content(state: BuildState) -> None:
     deck = _require_deck(state)
     state.progress.start_stage("export_content", message="Writing structured content")
     state.artifacts.write_json("content", "content.json", deck.to_dict())
-    state.artifacts.write_json("element_ir", "element_ir.json", build_deck_ir(deck, content_guard=state.content_guard_report))
     if state.image_importance_report is not None:
         state.artifacts.write_json("image_importance", "image_importance.json", state.image_importance_report)
     if state.figure_report is not None:
@@ -465,8 +449,6 @@ def _stage_quality_report(state: BuildState) -> None:
 
 def _stage_export(state: BuildState) -> None:
     args = state.args
-    if not state.export_formats:
-        return
     state.progress.start_stage("export", message="Exporting requested note formats")
     state.export_report = build_export_artifacts(state.notes_markdown, state.output_root, state.export_formats, export_toc=args.export_toc)
     if state.export_report is not None:
@@ -482,6 +464,7 @@ def _stage_run_summary(state: BuildState) -> None:
     notes_result = _require_notes_result(state)
     coverage_report = _require_report(state.coverage_report, "coverage")
     source_map = _require_report(state.source_map, "source_map")
+    state.progress.set_phase(None)
     state.progress.complete("Build complete")
     state.artifacts.register("run_summary", state.output_root / "run_summary.json")
     run_summary = _build_run_summary(
@@ -596,25 +579,35 @@ def _require_report(report: dict[str, Any] | None, name: str) -> dict[str, Any]:
     return report
 
 
-BUILD_STAGES = (
-    _stage_parse,
-    _stage_modality,
-    _stage_table_understanding,
-    _stage_semantic_layout,
-    _stage_composite_figures,
-    _stage_figure_crop,
-    _stage_image_importance,
-    _stage_ocr,
-    _stage_vision,
-    _stage_figure_grounding,
-    _stage_sections,
-    _stage_deck_brief,
-    _stage_content_guard,
-    _stage_understanding,
-    _stage_export_content,
-    _stage_notes,
-    _stage_coverage,
-    _stage_quality_report,
-    _stage_export,
-    _stage_run_summary,
+BUILD_PHASES = (
+    BuildPhase("ingest", (
+        BuildStep("parse", _stage_parse),
+    )),
+    BuildPhase("understand", (
+        BuildStep("modality", _stage_modality),
+        BuildStep("table_understanding", _stage_table_understanding),
+        BuildStep("semantic_layout", _stage_semantic_layout),
+        BuildStep("composite_figures", _stage_composite_figures, lambda state: state.args.composite_figures != "off"),
+        BuildStep("figure_crop", _stage_figure_crop, lambda state: state.args.figure_crop == "vision" or (state.args.figure_crop == "auto" and state.args.vision != "off")),
+        BuildStep("image_importance", _stage_image_importance, lambda state: state.args.image_ranking != "off"),
+        BuildStep("ocr", _stage_ocr, lambda state: state.args.ocr != "off"),
+        BuildStep("vision", _stage_vision, lambda state: state.args.vision != "off" or state.args.figure_grounding == "vision"),
+        BuildStep("figure_grounding", _stage_figure_grounding, lambda state: state.args.figure_grounding != "off"),
+        BuildStep("sections", _stage_sections),
+        BuildStep("deck_brief", _stage_deck_brief, lambda state: _should_build_deck_brief(state.args)),
+        BuildStep("content_guard", _stage_content_guard, lambda state: state.args.content_guard != "off"),
+        BuildStep("understanding", _stage_understanding),
+        BuildStep("export_content", _stage_export_content),
+    )),
+    BuildPhase("write", (
+        BuildStep("notes", _stage_notes),
+    )),
+    BuildPhase("guard", (
+        BuildStep("coverage", _stage_coverage),
+        BuildStep("quality_report", _stage_quality_report),
+    )),
+    BuildPhase("export", (
+        BuildStep("export", _stage_export, lambda state: bool(state.export_formats)),
+        BuildStep("run_summary", _stage_run_summary, tracks_progress=False),
+    )),
 )

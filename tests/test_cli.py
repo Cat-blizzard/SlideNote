@@ -1,3 +1,4 @@
+import hashlib
 import json
 import zipfile
 from argparse import Namespace
@@ -72,6 +73,9 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     composite_figures = json.loads((out / "composite_figures.json").read_text(encoding="utf-8"))
     figure_grounding = json.loads((out / "figure_grounding.json").read_text(encoding="utf-8"))
     assert progress["status"] == "complete"
+    assert progress["planned_stages"][0] == "parse"
+    assert "ocr" not in progress["planned_stages"]
+    assert "vision" not in progress["planned_stages"]
     assert run_summary["counts"]["pages"] == 1
     assert run_summary["artifacts"]["progress"] == "progress.json"
     assert run_summary["artifacts"]["source_map"] == "source_map.json"
@@ -136,6 +140,30 @@ def test_build_writes_progress_and_run_summary(tmp_path):
     assert run_summary["run"]["api_concurrency"] == {"llm": 1, "vision": 1, "ocr": 1, "figure": 1}
     assert "slowest_stages" in run_summary["stage_timings"]
     assert not (out / "export_report.json").exists()
+
+
+def test_build_applies_saved_page_modality_correction(tmp_path):
+    source = tmp_path / "lecture.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "A short native-text page")
+    doc.save(source)
+    doc.close()
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "page_modalities.overrides.json").write_text(json.dumps({
+        "schema_version": 1,
+        "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "pages": {"1": {"modality": "image_only", "note": "Check screenshot"}},
+    }), encoding="utf-8")
+
+    assert main(["build", str(source), "--out", str(out), "--quiet", "--preset", "local"]) == 0
+
+    modalities = json.loads((out / "page_modalities.json").read_text(encoding="utf-8"))
+    content = json.loads((out / "content.json").read_text(encoding="utf-8"))
+    assert modalities["summary"]["override_pages"] == 1
+    assert modalities["pages"][0]["modality"] == "image_only"
+    assert content["pages"][0]["page_modality"] == "image_only"
 
 
 def test_internal_quality_concurrency_is_wired_to_build_stages(tmp_path, monkeypatch):

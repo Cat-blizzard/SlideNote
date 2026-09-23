@@ -27,6 +27,9 @@ def _target_progress(progress: ProgressReporter, name: str):
 
 def _llm_progress(progress: ProgressReporter):
     def callback(record: dict[str, Any]) -> None:
+        if record.get("event") == "total":
+            progress.set_total(record.get("total"))
+            return
         label = record.get("context_id") or record.get("slide_id")
         progress.advance(
             message=f"LLM context {label}",

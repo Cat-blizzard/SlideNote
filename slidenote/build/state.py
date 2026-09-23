@@ -8,7 +8,7 @@ from typing import Any
 from slidenote.build.config import _parse_slide_ranges, _resolve_api_concurrency, _resolve_cache_dirs
 from slidenote.models import Deck
 from slidenote.notes import NoteGenerationResult
-from slidenote.pipeline import ArtifactRegistry, BuildContext
+from slidenote.pipeline import ArtifactRegistry
 from slidenote.progress import ProgressReporter
 from slidenote.utils import ensure_clean_dir
 
@@ -24,7 +24,6 @@ class BuildState:
     api_concurrency: dict[str, int]
     cache_dirs: dict[str, Path | None]
     artifacts: ArtifactRegistry
-    build_context: BuildContext
     export_formats: list[str]
     deck: Deck | None = None
     modality_report: dict[str, Any] | None = None
@@ -64,16 +63,6 @@ def create_build_state(args: argparse.Namespace, export_formats: list[str]) -> B
     cache_dirs = _resolve_cache_dirs(args, output_root)
     artifacts = ArtifactRegistry(output_root)
     artifacts.register("progress", progress.path)
-    build_context = BuildContext(
-        args=args,
-        input_path=input_path,
-        output_root=output_root,
-        progress=progress,
-        cache_dirs=cache_dirs,
-        refresh_slide_ids=refresh_slide_ids,
-        concurrency=concurrency,
-        artifacts=artifacts,
-    )
     return BuildState(
         args=args,
         input_path=input_path,
@@ -84,6 +73,5 @@ def create_build_state(args: argparse.Namespace, export_formats: list[str]) -> B
         api_concurrency=api_concurrency,
         cache_dirs=cache_dirs,
         artifacts=artifacts,
-        build_context=build_context,
         export_formats=export_formats,
     )

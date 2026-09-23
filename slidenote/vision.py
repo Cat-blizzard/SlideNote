@@ -9,7 +9,7 @@ from typing import Any, Callable
 from slidenote.image_ranking import sorted_images_by_importance
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, utc_now_iso
-from slidenote.modality import page_has_hint
+from slidenote.modality import page_has_hint, page_has_manual_modality
 from slidenote.models import Deck, SlidePage
 from slidenote.table_understanding import table_preview
 from slidenote.utils import (
@@ -251,6 +251,12 @@ def select_vision_targets(
     targets: list[VisionTarget] = []
     for page in deck.pages:
         if mode == "auto":
+            if page_has_manual_modality(page):
+                if page.page_screenshot and page_has_hint(page, "vision_page_screenshot"):
+                    targets.append(VisionTarget(page.slide_id, "page_screenshot", page.page_screenshot, reason="manual_modality"))
+                elif page_has_hint(page, "vision_large_images"):
+                    targets.extend(_large_image_targets(page, output_root, min_area=min_area, first_only=True))
+                continue
             figure_targets = _role_image_targets(page, output_root, role="figure_crop", min_area=0, first_only=False)
             if figure_targets:
                 targets.extend(figure_targets)

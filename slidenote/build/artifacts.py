@@ -3,12 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from slidenote.pipeline import ArtifactRegistry, BuildContext, FunctionStage, StageResult, run_stage
+from slidenote.pipeline import ArtifactRegistry
 
 
 def _run_json_stage(
     deck,
-    context: BuildContext,
+    state,
     *,
     name: str,
     artifact_name: str,
@@ -16,30 +16,13 @@ def _run_json_stage(
     message: str,
     complete_message: str,
     runner,
-    dependencies: list[str] | None = None,
 ) -> dict[str, Any]:
-    progress = context.progress
+    progress = state.progress
     progress.start_stage(name, message=message)
-
-    def stage_runner(stage_deck, stage_context: BuildContext) -> StageResult:
-        report = runner(stage_deck)
-        artifacts: dict[str, str] = {}
-        if stage_context.artifacts is not None:
-            stage_context.artifacts.write_json(artifact_name, artifact_path, report)
-            registered = stage_context.artifacts.relative_path(artifact_name)
-            if registered:
-                artifacts[artifact_name] = registered
-        return StageResult(name=name, report=report, artifacts=artifacts)
-
-    stage = FunctionStage(
-        name=name,
-        dependencies=dependencies or [],
-        artifacts=[artifact_name],
-        runner=stage_runner,
-    )
-    result = run_stage(deck, context, stage)
+    report = runner(deck)
+    state.artifacts.write_json(artifact_name, artifact_path, report)
     progress.finish_stage(complete_message)
-    return result.report or {}
+    return report or {}
 
 
 def _register_export_artifacts(artifacts: ArtifactRegistry, export_report: dict[str, Any]) -> None:

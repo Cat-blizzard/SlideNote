@@ -11,7 +11,7 @@ from PIL import Image
 from slidenote.image_assets import image_metadata
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, utc_now_iso
-from slidenote.modality import page_has_hint
+from slidenote.modality import page_has_hint, page_has_manual_modality
 from slidenote.models import Deck, ImageAsset, SlidePage, normalize_rel_path
 from slidenote.utils import (
     as_float,
@@ -160,6 +160,8 @@ def select_figure_targets(deck: Deck, max_targets: int = 80) -> list[FigureTarge
     targets: list[FigureTarget] = []
     for page in deck.pages:
         if not page.page_screenshot:
+            continue
+        if page_has_manual_modality(page) and not page_has_hint(page, "crop_figures_from_screenshot"):
             continue
         if _page_has_content_images(page):
             continue

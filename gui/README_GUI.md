@@ -13,6 +13,7 @@ SlideNote Studio is a Streamlit interface for `python -m slidenote build` and `p
 - Enter Text / Vision / OCR API keys on the page. Keys are passed only through the child-process environment, not command-line flags.
 - Select extra exports: Markdown ZIP, TOC Markdown, Word, PDF, or LaTeX.
 - Keep progress, ETA, Doctor readiness, usage, and cost details in compact diagnostics panels.
+- Saved page modality corrections apply to the next build of the same source file; a different file does not inherit them.
 - Generate a study pack from the Notes workspace: `review.md`, `exam.md`, `exam.json`, `exam.html`, and related files.
 - Download `notes.zip`, `notes.md`, `coverage.md`, export files, or the complete output ZIP.
 - Switch to **Textbook library**, upload a PDF textbook, and build a RAG-ready corpus. The corpus is not connected to note generation yet.

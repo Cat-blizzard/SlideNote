@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import os
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -18,6 +21,7 @@ from gui.studio_core import (
     discover_outputs,
     discover_textbook_outputs,
     performance_tips,
+    progress_percent,
     safe_run_name,
 )
 
@@ -173,6 +177,15 @@ def test_env_and_speed_tips(tmp_path: Path):
     assert safe_run_name("我的 课件!!.pdf")
 
 
+def test_progress_percent_uses_planned_stage_count():
+    progress = {
+        "status": "running",
+        "planned_stages": ["parse", "understand", "notes", "export"],
+        "stages": [{"stage": "parse"}],
+    }
+    assert progress_percent(progress) == pytest.approx(0.25)
+
+
 def test_gui_api_status_accepts_provider_alias_env(monkeypatch):
     pytest.importorskip("streamlit")
     from gui.app import _api_status
@@ -226,3 +239,135 @@ def test_gui_workbench_file_size_helper():
     assert _format_file_size(512) == "512 B"
     assert _format_file_size(1536) == "1.5 KB"
     assert _format_file_size(None) == "unknown size"
+
+
+def test_gui_carries_modality_corrections_for_identical_source_only(tmp_path: Path):
+    pytest.importorskip("streamlit")
+    from gui.app import _carry_modality_overrides
+
+    previous_source = tmp_path / "previous.pdf"
+    previous_source.write_bytes(b"same input bytes")
+    current_source = tmp_path / "current.pdf"
+    current_source.write_bytes(previous_source.read_bytes())
+    changed_source = tmp_path / "changed.pdf"
+    changed_source.write_bytes(b"same input byteX")
+    previous_output = tmp_path / "previous-output"
+    previous_output.mkdir()
+    (previous_output / "content.json").write_text(json.dumps({"source_path": str(previous_source)}), encoding="utf-8")
+    manifest = {"schema_version": 1, "pages": {"1": {"modality": "image_only", "note": "scan"}}}
+    (previous_output / "page_modalities.overrides.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    matching_output = tmp_path / "matching-output"
+    matching_output.mkdir()
+    assert _carry_modality_overrides(previous_output, current_source, matching_output)
+    assert json.loads((matching_output / "page_modalities.overrides.json").read_text(encoding="utf-8")) == manifest
+
+    changed_output = tmp_path / "changed-output"
+    changed_output.mkdir()
+    assert not _carry_modality_overrides(previous_output, changed_source, changed_output)
+    assert not (changed_output / "page_modalities.overrides.json").exists()
+
+
+def test_gui_carries_hashed_corrections_after_original_upload_is_removed(tmp_path: Path):
+    pytest.importorskip("streamlit")
+    from gui.app import _carry_modality_overrides
+
+    current_source = tmp_path / "current.pdf"
+    current_source.write_bytes(b"same input bytes")
+    previous_output = tmp_path / "previous-output"
+    previous_output.mkdir()
+    manifest = {
+        "schema_version": 1,
+        "source_sha256": hashlib.sha256(current_source.read_bytes()).hexdigest(),
+        "pages": {"1": {"modality": "image_only"}},
+    }
+    (previous_output / "page_modalities.overrides.json").write_text(json.dumps(manifest), encoding="utf-8")
+    next_output = tmp_path / "next-output"
+    next_output.mkdir()
+
+    assert _carry_modality_overrides(previous_output, current_source, next_output)
+    assert json.loads((next_output / "page_modalities.overrides.json").read_text(encoding="utf-8")) == manifest
+
+
+def test_gui_preserves_stale_corrections_in_reused_output_dir(tmp_path: Path):
+    pytest.importorskip("streamlit")
+    from gui.app import _carry_modality_overrides
+
+    old_source = tmp_path / "old.pdf"
+    old_source.write_bytes(b"old")
+    new_source = tmp_path / "new.pdf"
+    new_source.write_bytes(b"new")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    (output_dir / "content.json").write_text(json.dumps({"source_path": str(old_source)}), encoding="utf-8")
+    manifest_path = output_dir / "page_modalities.overrides.json"
+    manifest_path.write_text('{"pages":{"1":{"modality":"image_only"}}}', encoding="utf-8")
+
+    assert not _carry_modality_overrides(None, new_source, output_dir)
+    assert not manifest_path.exists()
+    backups = list(output_dir.glob("page_modalities.overrides.stale-*.json"))
+    assert len(backups) == 1
+    assert 'image_only' in backups[0].read_text(encoding="utf-8")
+
+
+def test_gui_saved_correction_records_source_hash(tmp_path: Path):
+    pytest.importorskip("streamlit")
+    from gui.app import _save_modality_override
+
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"source bytes")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    (output_dir / "content.json").write_text(json.dumps({"source_path": str(source)}), encoding="utf-8")
+
+    _save_modality_override(output_dir, 2, "image_only", "scan")
+    manifest = json.loads((output_dir / "page_modalities.overrides.json").read_text(encoding="utf-8"))
+    assert manifest["source_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert manifest["pages"]["2"]["modality"] == "image_only"
+
+
+def test_gui_quiet_build_polls_progress_before_stdout(tmp_path: Path, monkeypatch):
+    pytest.importorskip("streamlit")
+    import gui.app as app
+
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    marker = tmp_path / "finished.txt"
+    script = tmp_path / "quiet_build.py"
+    script.write_text(
+        "import json, sys, time\n"
+        "from pathlib import Path\n"
+        "progress = Path(sys.argv[1])\n"
+        "marker = Path(sys.argv[2])\n"
+        "progress.write_text(json.dumps({'status': 'running', 'message': 'working'}), encoding='utf-8')\n"
+        "time.sleep(1.0)\n"
+        "marker.write_text('done', encoding='utf-8')\n"
+        "print('finished', flush=True)\n",
+        encoding="utf-8",
+    )
+    config = StudioConfig(
+        input_path=tmp_path / "source.pdf",
+        output_dir=output_dir,
+        progress_json=output_dir / "progress.json",
+        preset="local",
+    )
+    monkeypatch.setattr(app, "build_slidenote_command", lambda cfg: [sys.executable, str(script), str(cfg.progress_json), str(marker)])
+    monkeypatch.setattr(app, "_generate_cost_report", lambda _: None)
+    fake_st = MagicMock()
+    slots = [MagicMock() for _ in range(3)]
+    fake_st.empty.side_effect = slots
+    monkeypatch.setattr(app, "st", fake_st)
+    original_update = app._update_progress_ui
+    observed: list[tuple[dict | None, bool]] = []
+
+    def record_update(progress_path, progress_bar, status_box, stage_box):
+        original_update(progress_path, progress_bar, status_box, stage_box)
+        observed.append((app._read_json(progress_path), marker.exists()))
+
+    monkeypatch.setattr(app, "_update_progress_ui", record_update)
+    app._run_build(config)
+
+    assert sum(bool(progress and progress.get("status") == "running" and not finished) for progress, finished in observed) >= 2
+    assert "finished" in slots[2].code.call_args.args[0]
+    fake_st.success.assert_called_once()
+    fake_st.error.assert_not_called()

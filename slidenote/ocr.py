@@ -15,7 +15,7 @@ from PIL import Image
 
 from slidenote.api_retry import with_api_retries
 from slidenote.llm_cache import LLMCache, make_cache_key, utc_now_iso
-from slidenote.modality import page_has_hint
+from slidenote.modality import page_has_hint, page_has_manual_modality
 from slidenote.models import Deck, SlidePage
 from slidenote.utils import (
     cleanup_temp_image,
@@ -319,7 +319,9 @@ def select_ocr_targets(
     targets: list[OCRTarget] = []
     for page in deck.pages:
         text_len = sum(len(block.content.strip()) for block in page.text_blocks)
-        needs_page_ocr = page_has_hint(page, "ocr_page_screenshot") or text_len < min_text_chars or bool(page.warnings)
+        needs_page_ocr = page_has_hint(page, "ocr_page_screenshot")
+        if not page_has_manual_modality(page):
+            needs_page_ocr = needs_page_ocr or text_len < min_text_chars or bool(page.warnings)
         if mode == "all" or needs_page_ocr:
             if page.page_screenshot:
                 reason = "all_page_screenshot" if mode == "all" else page.page_modality or "low_extracted_text"
