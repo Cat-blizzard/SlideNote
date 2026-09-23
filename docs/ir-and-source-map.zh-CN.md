@@ -46,12 +46,7 @@ content.json -> element_ir.json -> source_map.json -> notes.md / GUI / coverage
 
 ## 构建时机
 
-IR 会在两个阶段写入：
-
-1. `export_content` 阶段写基础 IR，供后续 prompt、source map 和 coverage 使用。
-2. coverage 阶段结束后刷新最终 IR，合入 `covered`、`missing`、`marker-only` 等实际状态。
-
-这样最终 `element_ir.json` 不是只停留在前置状态，而是反映生成后的覆盖结果。
+构建过程中，prompt、coverage 和 source map 会直接从当前 `Deck` 构造需要的元素视图。coverage 阶段结束后写入一次最终 `element_ir.json`，合入 `covered`、`missing`、`marker-only` 等实际状态，避免重复生成中间文件。
 
 ## source_map.json
 

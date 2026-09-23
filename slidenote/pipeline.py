@@ -1,56 +1,43 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable
 
-from slidenote.models import Deck
 from slidenote.utils import display_path, write_json, write_text
 
 
-@dataclass(slots=True)
-class StageResult:
+@dataclass(frozen=True, slots=True)
+class BuildStep:
     name: str
-    status: str = "ok"
-    report: dict[str, Any] | None = None
-    artifacts: dict[str, str] = field(default_factory=dict)
-    warnings: list[str] = field(default_factory=list)
+    runner: Callable[[Any], None]
+    enabled: Callable[[Any], bool] | None = None
+    tracks_progress: bool = True
 
 
-@dataclass(slots=True)
-class BuildContext:
-    args: Any
-    input_path: Path
-    output_root: Path
-    progress: Any
-    cache_dirs: dict[str, Path | None] = field(default_factory=dict)
-    refresh_slide_ids: set[int] = field(default_factory=set)
-    concurrency: int = 1
-    artifacts: "ArtifactRegistry" | None = None
-    reports: dict[str, StageResult] = field(default_factory=dict)
-
-
-class Stage(Protocol):
+@dataclass(frozen=True, slots=True)
+class BuildPhase:
     name: str
-    dependencies: list[str]
-    artifacts: list[str]
-
-    def run(self, deck: Deck, context: BuildContext) -> StageResult:
-        ...
+    steps: tuple[BuildStep, ...]
 
 
-@dataclass(slots=True)
-class FunctionStage:
-    name: str
-    runner: Callable[[Deck, BuildContext], StageResult | dict[str, Any] | None]
-    dependencies: list[str] = field(default_factory=list)
-    artifacts: list[str] = field(default_factory=list)
-
-    def run(self, deck: Deck, context: BuildContext) -> StageResult:
-        result = self.runner(deck, context)
-        if isinstance(result, StageResult):
-            return result
-        return StageResult(name=self.name, report=result)
+def run_build_plan(state: Any, phases: tuple[BuildPhase, ...]) -> None:
+    """Run one explicit plan; disabled steps never enter progress accounting."""
+    planned = [
+        (phase.name, step)
+        for phase in phases
+        for step in phase.steps
+        if step.enabled is None or step.enabled(state)
+    ]
+    state.progress.set_plan([step.name for _, step in planned if step.tracks_progress])
+    for phase in phases:
+        phase_steps = [step for phase_name, step in planned if phase_name == phase.name]
+        if not phase_steps:
+            continue
+        state.progress.set_phase(phase.name)
+        for step in phase_steps:
+            step.runner(state)
+    state.progress.set_phase(None)
 
 
 class ArtifactRegistry:
@@ -84,12 +71,3 @@ class ArtifactRegistry:
 
     def as_summary(self) -> dict[str, str]:
         return dict(sorted(self._artifacts.items()))
-
-
-def run_stage(deck: Deck, context: BuildContext, stage: Stage) -> StageResult:
-    for dependency in stage.dependencies:
-        if dependency not in context.reports:
-            raise RuntimeError(f"Stage `{stage.name}` depends on missing stage `{dependency}`.")
-    result = stage.run(deck, context)
-    context.reports[stage.name] = result
-    return result

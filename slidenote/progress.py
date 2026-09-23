@@ -31,8 +31,18 @@ class ProgressReporter:
         self._stage_started = self._run_started
         self.current_stage: StageRecord | None = None
         self.stages: list[StageRecord] = []
+        self.current_phase: str | None = None
+        self.planned_stages: list[str] = []
         self.status = "running"
         self.message = ""
+        self.write()
+
+    def set_plan(self, stage_names: list[str]) -> None:
+        self.planned_stages = list(stage_names)
+        self.write()
+
+    def set_phase(self, phase: str | None) -> None:
+        self.current_phase = phase
         self.write()
 
     def start_stage(self, name: str, total: int | None = None, message: str | None = None) -> None:
@@ -104,6 +114,8 @@ class ProgressReporter:
             "updated_at": utc_now_iso(),
             "elapsed_seconds": round(elapsed, 3),
             "current_stage": current,
+            "current_phase": self.current_phase,
+            "planned_stages": list(self.planned_stages),
             "stages": [_stage_to_dict(stage) for stage in self.stages],
         }
 

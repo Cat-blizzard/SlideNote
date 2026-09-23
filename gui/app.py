@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-import io
+import hashlib
 import html
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 import zipfile
-from datetime import datetime
+from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
+from queue import Empty, Queue
 from typing import Any
 
 import streamlit as st
@@ -180,6 +184,12 @@ def _run_simplified_app() -> None:
             st.error(f"Could not prepare output folder: {exc}")
             return
         config = _clone_config_for_run(preview_config, input_path=input_path, output_dir=output_dir, progress_json=progress_json)
+        if _carry_modality_overrides(
+            Path(st.session_state["last_output_dir"]) if st.session_state.get("last_output_dir") else None,
+            input_path,
+            output_dir,
+        ):
+            st.caption("Saved page modality corrections will be used for this build.")
         _run_build(config)
         st.session_state["last_output_dir"] = str(output_dir)
 
@@ -662,7 +672,8 @@ def _clone_config_for_run(config: StudioConfig, input_path: Path, output_dir: Pa
 
 
 def _prepare_run_paths(uploaded, output_base: Path, timestamped_subfolder: bool) -> tuple[Path, Path, Path]:
-    run_name = f"{safe_run_name(uploaded.name)}_{int(time.time())}"
+    # Keep each uploaded source immutable so corrections can be checked against its bytes.
+    run_name = f"{safe_run_name(uploaded.name)}_{time.time_ns()}"
     input_path = UPLOADS_DIR / f"{run_name}{Path(uploaded.name).suffix.lower()}"
     input_path.write_bytes(uploaded.getbuffer())
     output_base.mkdir(parents=True, exist_ok=True)
@@ -670,6 +681,65 @@ def _prepare_run_paths(uploaded, output_base: Path, timestamped_subfolder: bool)
     output_dir.mkdir(parents=True, exist_ok=True)
     progress_json = output_dir / "progress.json"
     return input_path, output_dir, progress_json
+
+
+def _output_source_path(output_dir: Path) -> Path | None:
+    content = _read_json(output_dir / "content.json") or {}
+    if not isinstance(content, dict):
+        return None
+    source_name = content.get("source_path")
+    if not isinstance(source_name, str) or not source_name:
+        return None
+    source_path = Path(source_name)
+    if not source_path.is_absolute():
+        source_path = ROOT / source_path
+    return source_path
+
+
+def _output_source_matches(output_dir: Path, input_path: Path) -> bool:
+    manifest = _read_json(output_dir / "page_modalities.overrides.json") or {}
+    source_hash = manifest.get("source_sha256") if isinstance(manifest, dict) else None
+    if source_hash is not None:
+        if not isinstance(source_hash, str) or len(source_hash) != 64 or any(char not in "0123456789abcdefABCDEF" for char in source_hash):
+            return False
+        try:
+            digest = hashlib.sha256()
+            with input_path.open("rb") as current_file:
+                while chunk := current_file.read(1024 * 1024):
+                    digest.update(chunk)
+            return digest.hexdigest() == source_hash.lower()
+        except OSError:
+            return False
+    source_path = _output_source_path(output_dir)
+    if source_path is None:
+        return False
+    try:
+        if source_path.stat().st_size != input_path.stat().st_size:
+            return False
+        with source_path.open("rb") as old_file, input_path.open("rb") as new_file:
+            while old_chunk := old_file.read(1024 * 1024):
+                if old_chunk != new_file.read(len(old_chunk)):
+                    return False
+            return not new_file.read(1)
+    except OSError:
+        return False
+
+
+def _carry_modality_overrides(previous_output_dir: Path | None, input_path: Path, output_dir: Path) -> bool:
+    manifest_name = "page_modalities.overrides.json"
+    target = output_dir / manifest_name
+    if target.is_file():
+        if _output_source_matches(output_dir, input_path):
+            return True
+        # Preserve corrections for the old source without applying them to a different upload.
+        target.replace(output_dir / f"page_modalities.overrides.stale-{time.time_ns()}.json")
+    if previous_output_dir is None or previous_output_dir == output_dir:
+        return False
+    source = previous_output_dir / manifest_name
+    if not source.is_file() or not _output_source_matches(previous_output_dir, input_path):
+        return False
+    shutil.copy2(source, target)
+    return True
 
 
 def _prepare_textbook_paths(uploaded) -> tuple[Path, Path]:
@@ -691,7 +761,7 @@ def _run_build(config: StudioConfig) -> None:
     status_box = st.empty()
     stage_box = st.empty()
     log_box = st.empty()
-    logs: list[str] = []
+    logs: deque[str] = deque(maxlen=120)
 
     process = subprocess.Popen(
         cmd,
@@ -704,21 +774,38 @@ def _run_build(config: StudioConfig) -> None:
         errors="replace",
         bufsize=1,
     )
-    while process.poll() is None:
+    output_queue: Queue[str] = Queue()
+
+    def read_output() -> None:
         if process.stdout is not None:
-            line = process.stdout.readline()
-            if line:
-                logs.append(line.rstrip())
+            with process.stdout:
+                for line in process.stdout:
+                    output_queue.put(line.rstrip("\r\n"))
+
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
+
+    while True:
+        for _ in range(200):
+            try:
+                logs.append(output_queue.get_nowait())
+            except Empty:
+                break
         _update_progress_ui(config.progress_json, progress_bar, status_box, stage_box)
-        log_box.code("\n".join(logs[-80:]) or "Running...", language="text")
+        log_box.code("\n".join(list(logs)[-80:]) or "Running...", language="text")
+        if process.poll() is not None:
+            break
         time.sleep(0.25)
 
-    if process.stdout is not None:
-        rest = process.stdout.read()
-        if rest:
-            logs.extend(rest.splitlines())
+    reader.join(timeout=2.0)
+    while True:
+        try:
+            logs.append(output_queue.get_nowait())
+        except Empty:
+            break
+    process.wait()
     _update_progress_ui(config.progress_json, progress_bar, status_box, stage_box)
-    log_box.code("\n".join(logs[-120:]) or "No console output.", language="text")
+    log_box.code("\n".join(logs) or "No console output.", language="text")
 
     if process.returncode == 0:
         _generate_cost_report(config.output_dir)
@@ -1121,7 +1208,21 @@ def _save_modality_override(output_dir: Path, slide_id: int, modality: str, note
     path = output_dir / "page_modalities.overrides.json"
     data = _read_json(path) or {"schema_version": 1, "pages": {}}
     pages = data.setdefault("pages", {})
-    pages[str(slide_id)] = {"modality": modality, "note": note, "updated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z"}
+    pages[str(slide_id)] = {
+        "modality": modality,
+        "note": note,
+        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    }
+    source_path = _output_source_path(output_dir)
+    if source_path is not None:
+        try:
+            digest = hashlib.sha256()
+            with source_path.open("rb") as source_file:
+                while chunk := source_file.read(1024 * 1024):
+                    digest.update(chunk)
+            data["source_sha256"] = digest.hexdigest()
+        except OSError:
+            pass
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 

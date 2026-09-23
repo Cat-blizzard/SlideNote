@@ -8,15 +8,19 @@ Ingest -> Understand -> Write -> Guard -> Export
 
 底层模块可以保持细粒度，方便缓存、调试和局部刷新；用户侧和 LLM 工作流应该看到清楚的阶段边界。
 
+实现中由 `BUILD_PHASES` 按这五个阶段组织步骤。构建开始时会根据 preset 和选项排除未启用的 OCR、Vision、图裁剪等步骤，并把实际计划写入 `progress.json` 的 `planned_stages`；`current_phase` 表示当前产品阶段。逐步耗时仍保留在 `run_summary.json`，方便定位慢点。
+
 ## 阶段总览
 
 | 阶段 | 目标 | 典型产物 |
 | --- | --- | --- |
-| Ingest | 把 PPT/PDF 变成稳定、可追溯、可复现的结构化材料。 | `content.json`、`element_ir.json`、`source_map.json`、截图、图片资产、parser adapter |
-| Understand | 理解课件主题、章节结构、页面角色、图表含义和关键元素。 | `deck_understanding.json`、`page_understanding.json`、`sections.json`、`deck_brief.json`、`semantic_layout.json`、`table_understanding.json`、`figure_grounding.json` |
+| Ingest | 解析 PPT/PDF，提取页面元素和资源。 | 内存中的 `Deck`、截图、图片资产 |
+| Understand | 理解课件主题、章节结构、页面角色、图表含义和关键元素。 | `content.json`、`page_modalities.json`、`deck_understanding.json`、`page_understanding.json`、`sections.json`、`deck_brief.json`、`semantic_layout.json`、`table_understanding.json`、`figure_grounding.json`、`content_guard.json` |
 | Write | 生成可读学习笔记，而不是机械逐页搬运。 | `notes.md`、`page_notes.json`、`weave_report.json`、`teaching_enrichment.json` |
-| Guard | 检查是否漏掉关键内容、是否有来源、是否像讲义。 | `coverage.json`、`coverage.md`、`content_guard.json`、`quality_report.json` |
-| Export | 输出阅读和复习材料。 | `notes.toc.md`、`notes.docx`、`notes.pdf`、`notes.tex`、`review.md`、`exam.html` |
+| Guard | 检查是否漏掉关键内容、是否有来源、是否像讲义。 | `coverage.json`、`coverage.md`、`element_ir.json`、`source_map.json`、`quality_report.json` |
+| Export | 输出阅读材料和构建摘要。 | `notes.toc.md`、`notes.docx`、`notes.pdf`、`notes.tex`、`run_summary.json` |
+
+`lecture` 的教学补充采用按章节判断：整合后的章节稿已有足够正文，并包含例子、易错点和自测线索时，跳过额外模型调用；`force` 仍会执行补充。
 
 ## 什么不交给 LLM
 

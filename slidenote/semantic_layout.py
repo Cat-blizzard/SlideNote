@@ -8,7 +8,7 @@ from typing import Any
 
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, utc_now_iso
-from slidenote.modality import page_has_hint
+from slidenote.modality import page_has_hint, page_has_manual_modality
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_preview
 from slidenote.utils import (
@@ -583,6 +583,8 @@ def _validated_vision_layout(
 
 def _page_needs_vision_enhancement(page: SlidePage, local_result: dict[str, Any]) -> bool:
     if not page.page_screenshot:
+        return False
+    if page_has_manual_modality(page) and page.page_modality in {"native_text", "decorative"}:
         return False
     if page_has_hint(page, "vision_page_screenshot") or page_has_hint(page, "crop_figures_from_screenshot"):
         return True
