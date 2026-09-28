@@ -8,6 +8,7 @@ from typing import Any
 
 from PIL import Image
 
+from slidenote.figures import next_figure_index
 from slidenote.figure_grounding import normalized_element_bbox, normalized_image_bbox
 from slidenote.image_assets import image_metadata
 from slidenote.llm_cache import utc_now_iso
@@ -130,7 +131,7 @@ def _process_page(
         return base_record
 
     used_child_ids: set[str] = set()
-    next_index = _next_figure_index(page)
+    next_index = next_figure_index(page)
     try:
         with Image.open(screenshot_path) as source_image:
             width, height = source_image.width, source_image.height
@@ -345,18 +346,6 @@ def _nearby_text_table_ids(deck: Deck, page: SlidePage, bbox: list[float]) -> li
 
 def _element_bbox(deck: Deck, page: SlidePage, element: TextBlock | TableBlock) -> list[float] | None:
     return normalized_element_bbox(deck, page, element)
-
-
-def _next_figure_index(page: SlidePage) -> int:
-    next_index = 1
-    prefix = f"s{page.slide_id}_fig"
-    for image in page.images:
-        if not image.id.startswith(prefix):
-            continue
-        suffix = image.id[len(prefix) :]
-        if suffix.isdigit():
-            next_index = max(next_index, int(suffix) + 1)
-    return next_index
 
 
 def _expand_bbox(bbox: list[float], margin: float) -> list[float]:

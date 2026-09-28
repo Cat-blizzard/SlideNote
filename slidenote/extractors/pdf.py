@@ -6,7 +6,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from slidenote.image_assets import image_metadata, refine_image_role_for_placement
+from slidenote.geometry import placement_metrics
+from slidenote.image_assets import image_metadata, refine_image_role_for_placement, tiny_image_reason
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock, normalize_rel_path
 from slidenote.utils import unique_path
 
@@ -159,8 +160,8 @@ def _extract_images(doc: object, page: object, page_index: int, images_dir: Path
             continue
         seen.add(xref)
         bbox = _image_bbox(page, xref)
-        page_size = _page_size(page)
-        page_like = _is_page_like_bbox(bbox, page_size)
+        page_size = _page_size(page) or (None, None)
+        area_ratio, near_edge, page_like = placement_metrics("pdf", bbox, *page_size)
         # get_images(full=True) carries the embedded pixel size, so tiny
         # decorations can be classified without decoding or writing them.
         prescreen = _prescreen_tiny_image(int(image[2] or 0), int(image[3] or 0))
@@ -192,8 +193,8 @@ def _extract_images(doc: object, page: object, page_index: int, images_dir: Path
             role,
             ignored,
             ignore_reason,
-            _bbox_area_ratio_xyxy(bbox, page_size),
-            _bbox_near_page_edge_xyxy(bbox, page_size),
+            area_ratio,
+            near_edge,
         )
         images.append(
             ImageAsset(
@@ -220,19 +221,8 @@ def _prescreen_tiny_image(width: int, height: int) -> tuple[str, str] | None:
     rules; tiny_file (byte size) still requires decoding and is handled by
     image_metadata afterwards.
     """
-    if width <= 0 or height <= 0:
-        return None
-    area = width * height
-    min_dim = min(width, height)
-    max_dim = max(width, height)
-    aspect_ratio = max_dim / max(1, min_dim)
-    if area < 10_000:
-        return "decorative", "tiny_area"
-    if min_dim < 24:
-        return "decorative", "tiny_dimension"
-    if aspect_ratio >= 8 and area < 150_000:
-        return "decorative", "thin_decoration"
-    return None
+    reason = tiny_image_reason(width, height)
+    return ("decorative", reason) if reason else None
 
 
 def _image_bbox(page: object, xref: int) -> list[float] | None:
@@ -251,39 +241,6 @@ def _page_size(page: object) -> tuple[float, float] | None:
         return float(page.rect.width), float(page.rect.height)
     except Exception:
         return None
-
-
-def _is_page_like_bbox(bbox: list[float] | None, page_size: tuple[float, float] | None) -> bool:
-    if not bbox or not page_size:
-        return False
-    width, height = page_size
-    if width <= 0 or height <= 0:
-        return False
-    x1, y1, x2, y2 = bbox
-    area_ratio = max(0.0, x2 - x1) * max(0.0, y2 - y1) / (width * height)
-    return area_ratio >= 0.85
-
-
-def _bbox_area_ratio_xyxy(bbox: list[float] | None, page_size: tuple[float, float] | None) -> float | None:
-    if not bbox or not page_size:
-        return None
-    width, height = page_size
-    if width <= 0 or height <= 0:
-        return None
-    x1, y1, x2, y2 = bbox
-    return max(0.0, x2 - x1) * max(0.0, y2 - y1) / (width * height)
-
-
-def _bbox_near_page_edge_xyxy(bbox: list[float] | None, page_size: tuple[float, float] | None) -> bool:
-    if not bbox or not page_size:
-        return False
-    width, height = page_size
-    if width <= 0 or height <= 0:
-        return False
-    x1, y1, x2, y2 = bbox
-    margin_x = width * 0.08
-    margin_y = height * 0.08
-    return x1 <= margin_x or y1 <= margin_y or x2 >= width - margin_x or y2 >= height - margin_y
 
 
 def _render_page(page: object, page_index: int, screenshots_dir: Path, output_root: Path) -> str:

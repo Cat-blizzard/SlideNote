@@ -9,14 +9,19 @@ from slidenote.coverage import analyze_coverage
 from slidenote.llm_cache import LLMCache
 from slidenote.models import Deck
 
-from .assembly import NoteContext, _postprocess_llm_markdown
+from .contexts import NoteContext
+from .postprocess import _postprocess_llm_markdown
 from .llm_calls import _generate_cached_llm_text
 from .prompt_templates import _llm_repair_prompt
 
 
 _IMAGE_LINK = re.compile(r"!\[[^\]]*]\(([^)]+)\)")
 # Repair adds missing explanations; substantial compression is unsafe here.
-_MIN_BODY_RETENTION = 0.8
+MIN_BODY_RETENTION = 0.8
+# A repair must re-emit the whole input, so skip inputs whose estimated output
+# would not fit the output-token budget (CJK text is roughly 0.5-1 token/char).
+REPAIR_ESTIMATED_TOKENS_PER_CHAR = 0.7
+REPAIR_OUTPUT_BUDGET_HEADROOM = 0.85
 _INCOMPLETE_FINISH_REASONS = {
     "length", "max_tokens", "content_filter", "safety", "recitation",
     "blocklist", "prohibited_content", "spii", "malformed_function_call",
@@ -55,14 +60,8 @@ def _repair_required_markdown_once(
     options: "NoteOptions",
     *,
     stage: str,
+    force_refresh: bool = False,
 ) -> tuple[str, dict[str, Any] | None]:
-    cache_mode = options.cache_mode
-    provider = options.provider
-    model = options.model
-    api_key = options.api_key
-    base_url = options.base_url
-    max_output_tokens = options.max_output_tokens
-    temperature = options.temperature
     source_display = options.source_display
     note_language = options.note_language
     term_policy = options.term_policy
@@ -85,6 +84,11 @@ def _repair_required_markdown_once(
         "unresolved_items": missing_before,
         "llm": None,
     }
+    if not _fits_output_budget(markdown, options.max_output_tokens):
+        # Sending an over-long draft would truncate the rewrite; keep the draft.
+        record["rejection_reasons"] = ["input_too_long_for_output_budget"]
+        record["input_chars"] = len(markdown)
+        return markdown, record
     prompt = _llm_repair_prompt(
         markdown=markdown,
         missing_items=missing_before,
@@ -103,13 +107,13 @@ def _repair_required_markdown_once(
             ),
             output_root=output_root,
             cache=cache,
-            cache_mode=cache_mode,
-            provider=provider,
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
+            cache_mode=options.cache_mode,
+            provider=options.provider,
+            model=options.model,
+            api_key=options.api_key,
+            base_url=options.base_url,
+            max_output_tokens=options.max_output_tokens,
+            temperature=options.temperature,
             user_prompt=prompt,
             prompt_version=CONTENT_REPAIR_PROMPT_VERSION,
             generation_stage=f"content_repair_{stage}",
@@ -119,7 +123,7 @@ def _repair_required_markdown_once(
                 "term_policy": term_policy,
                 "missing_item_ids": [str(item.get("element_id")) for item in missing_before],
             },
-            force_refresh=False,
+            force_refresh=force_refresh,
         )
     except Exception as exc:
         # This optional repair must not discard an already generated draft.
@@ -145,7 +149,7 @@ def _repair_required_markdown_once(
         reasons.append("coverage_regression")
     if lost_images:
         reasons.append("missing_images")
-    if candidate_chars < original_chars * _MIN_BODY_RETENTION:
+    if candidate_chars < original_chars * MIN_BODY_RETENTION:
         reasons.append("body_truncated")
     if not before_ids - unresolved_ids:
         reasons.append("no_coverage_improvement")
@@ -172,3 +176,10 @@ def _repair_required_markdown_once(
     record["resolved_items"] = sorted(before_ids - unresolved_ids)
     record["unresolved_items"] = unresolved
     return repaired, record
+
+
+def _fits_output_budget(markdown: str, max_output_tokens: int | None) -> bool:
+    if not max_output_tokens:
+        return True
+    estimated_tokens = len(markdown) * REPAIR_ESTIMATED_TOKENS_PER_CHAR
+    return estimated_tokens <= max_output_tokens * REPAIR_OUTPUT_BUDGET_HEADROOM

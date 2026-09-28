@@ -5,19 +5,27 @@ import re
 from pathlib import Path
 from typing import Any
 
-from slidenote.ir import build_page_ir, element_index_from_ir
+from slidenote.ir import build_deck_ir, element_index_from_ir
 from slidenote.llm_cache import utc_now_iso
-from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
-from slidenote.table_understanding import table_preview
+from slidenote.models import Deck, SlidePage
 from slidenote.utils import preview
 
 
 ELEMENT_PATTERN = re.compile(r"\bs\d+_(?:t|tbl|img|fig)\d+\b")
 
 
-def build_source_map(deck: Deck, notes_markdown: str, output_root: Path) -> dict[str, Any]:
+def build_source_map(
+    deck: Deck,
+    notes_markdown: str,
+    output_root: Path,
+    *,
+    content_guard: dict[str, Any] | None = None,
+    coverage_report: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     blocks = _note_blocks(notes_markdown)
-    element_index = _element_index(deck)
+    deck_ir = build_deck_ir(deck, content_guard=content_guard, coverage_report=coverage_report)
+    page_irs = {int(page_ir["slide_id"]): page_ir for page_ir in deck_ir["pages"]}
+    element_index = element_index_from_ir(deck, deck_ir)
     image_path_index = _image_path_index(deck)
     note_blocks: list[dict[str, Any]] = []
     used_block_ids: dict[str, int] = {}
@@ -56,7 +64,7 @@ def build_source_map(deck: Deck, notes_markdown: str, output_root: Path) -> dict
         "source_type": deck.source_type,
         "display_modes": ["hidden", "footnote", "inline"],
         "default_display_mode": "hidden",
-        "pages": [_page_sources(page) for page in deck.pages],
+        "pages": [_page_sources(page, page_irs.get(page.slide_id)) for page in deck.pages],
         "note_blocks": note_blocks,
         "artifacts": {
             "notes": "notes.md",
@@ -207,11 +215,7 @@ def _strip_html_comments(text: str) -> str:
     return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
 
 
-def _element_index(deck: Deck) -> dict[str, dict[str, Any]]:
-    return element_index_from_ir(deck)
-
-
-def _page_sources(page: SlidePage) -> dict[str, Any]:
+def _page_sources(page: SlidePage, page_ir: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "slide_id": page.slide_id,
         "title": page.title,
@@ -249,60 +253,5 @@ def _page_sources(page: SlidePage) -> dict[str, Any]:
         ],
         "semantic_groups": page.semantic_groups,
         "semantic_relations": page.semantic_relations,
-        "element_ir": build_page_ir(Deck(source_path="", source_type="", pages=[page]), page),
-    }
-
-
-def _text_ref(deck: Deck, page: SlidePage, block: TextBlock) -> dict[str, Any]:
-    return {
-        "type": "text",
-        "source_path": deck.source_path,
-        "slide_id": page.slide_id,
-        "element_id": block.id,
-        "element_type": block.type,
-        "preview": preview(block.content),
-    }
-
-
-def _table_ref(deck: Deck, page: SlidePage, table: TableBlock) -> dict[str, Any]:
-    return {
-        "type": "table",
-        "source_path": deck.source_path,
-        "slide_id": page.slide_id,
-        "element_id": table.id,
-        "preview": table_preview(table),
-        "table_summary": table.table_summary,
-        "table_conclusion": table.table_conclusion,
-        "key_rows": table.key_rows,
-    }
-
-
-def _image_ref(deck: Deck, page: SlidePage, image: ImageAsset) -> dict[str, Any]:
-    return {
-        "type": "image",
-        "source_path": deck.source_path,
-        "slide_id": page.slide_id,
-        "element_id": image.id,
-        "path": image.path,
-        "role": image.role,
-        "width": image.width,
-        "height": image.height,
-        "crop_source_path": image.crop_source_path,
-        "crop_bbox": image.crop_bbox,
-        "crop_method": image.crop_method,
-        "crop_quality": image.crop_quality,
-        "crop_warnings": list(image.crop_warnings),
-        "confidence": image.confidence,
-        "importance_score": image.importance_score,
-        "importance_rank": image.importance_rank,
-        "importance_reason": image.importance_reason,
-        "layout_order": image.layout_order,
-        "source_element_ids": list(image.source_element_ids),
-        "anchor_element_ids": image.anchor_element_ids,
-        "anchor_reason": image.anchor_reason,
-        "grounding_confidence": image.grounding_confidence,
-        "figure_explanation": image.figure_explanation,
-        "figure_explanation_status": image.figure_explanation_status,
-        "figure_audit_status": image.figure_audit_status,
-        "preview": image.caption or image.path,
+        "element_ir": page_ir,
     }

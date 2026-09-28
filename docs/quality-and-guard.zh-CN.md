@@ -1,11 +1,11 @@
 # Coverage、Content Guard 与学习质量
 
-SlideNote 的质量控制分两层：
+SlideNote 的质量诊断分两层：
 
-1. 硬检查：关键元素有没有进入笔记，来源是否可追溯。
-2. 软检查：笔记是否像讲义，是否有解释深度、图表整合、例子、自测和易错点。
+1. 结构检查：关键元素是否在可见正文中出现，来源标记能否关联到原始元素。
+2. 启发式检查：笔记的章节、解释、图表引用、例子、自测和易错点是否具备讲义特征。
 
-Coverage 不应该决定正文结构。它更适合作为最后的质检器，发现遗漏后只做局部修补，避免把正文改回逐页清单。
+Coverage 在 Write 之后运行，适合作为漏项提示和人工复核入口。覆盖率高只能说明结构上的来源关联较完整，不能证明讲解正确或没有编造事实。针对缺失项进行局部修补是后续目标；当前自动补漏仍需校验候选稿，不能把它视为独立的逐项语义验证。
 
 ## Coverage
 
@@ -26,7 +26,7 @@ coverage.md
 
 ## Content Guard
 
-Content Guard 负责先找出“必须解释”的学习内容，再把它们交给写作和修复阶段。
+Content Guard 在 Understand 阶段先找出“必须解释”的学习内容，再把它们交给写作和修复阶段；Guard 阶段会把最终覆盖状态写回 `content_guard.json`。未启用时不会生成该文件。
 
 它会优先关注：
 
@@ -50,20 +50,21 @@ content_guard.json
 
 ## Quality Report
 
-`quality_report.json` 是学习质量报告。第一版主要使用本地启发式指标，避免额外增加 LLM 成本。
+`quality_report.json` 是笔记质量诊断报告，当前主要使用本地启发式指标，避免额外增加 LLM 成本。分数来自段落长度、标题、关键词、图片引用和来源标记等信号，应结合课件与笔记人工判断。
 
 重点指标包括：
 
 | 字段 | 含义 |
 | --- | --- |
-| `coherence_score` | 章节是否连贯。 |
-| `explanation_depth_score` | 是否解释“是什么、为什么、怎么运作”。 |
-| `example_score` | 是否包含例子、类比或直观说明。 |
-| `figure_integration_score` | 图表是否融入正文，而不是只附在页尾。 |
-| `mechanical_page_listing_score` | 是否像“第 1 页讲 A，第 2 页讲 B”的机械复述。 |
-| `self_check_coverage_score` | 是否包含自测题。 |
-| `misconception_coverage_score` | 是否覆盖易错点或常见误解。 |
-| `question_quality_score` | 复习/考试题是否有明确答案、来源和解析。 |
+| `coherence_score` | 段落和标题结构的启发式分数，不验证逻辑连贯性。 |
+| `explanation_depth_score` | 段落长度及“为什么”“如何”等词的启发式分数。 |
+| `example_score` | 例子、类比等词的出现情况。 |
+| `figure_integration_score` | 图片引用与原图数量等结构信号。 |
+| `mechanical_page_listing_score` | 机械逐页复述的文本模式信号。 |
+| `self_test_score` | 自测相关词的出现情况。 |
+| `pitfall_score` | 易错点、误解等词的出现情况。 |
+| `hallucination_risk` | 由来源标记密度和覆盖缺失推断的复核优先级；不做事实核查。 |
+| `question_quality_score` | 当前 `build` 没有接入独立学习包，值为 `null`；`study-pack` 的题目质量另行计算。 |
 
 未来可以增加轻量 LLM 审阅 pass，但不应该让同一个写作模型无约束地自己审自己。
 
@@ -87,7 +88,7 @@ content_guard.json
 
 ## Review / Exam 学习包
 
-`slidenote study-pack` 把最终 `notes.md` 延伸成复习材料：
+`slidenote study-pack` 是构建后的独立命令，读取已有的 `notes.md` 和 `content.json`，生成复习材料：
 
 ```text
 review.md
@@ -103,7 +104,7 @@ wrong_answer_review_prompt.md
 
 设计目标：
 
-- 让复习从“看一份笔记”变成“做题、批改、复盘、定位知识漏洞”的闭环。
+- 逐步让复习从“看一份笔记”延伸到做题、批改和复盘；目前错题复盘以提示词文件为主，尚无持久化答题历史。
 - 题目要有来源页和解析，不只是随机问答。
 - 涉及图表的题目应尽量把相关图文就地放在题目附近。
 - 错题复盘 prompt 应帮助学生追问：到底漏掉了哪个知识点。
@@ -114,13 +115,13 @@ wrong_answer_review_prompt.md
 
 ```text
 parse content
-  -> deck/page understanding
+  -> deck/page understanding 与必讲项识别（Understand）
   -> section lecture writing
   -> teaching enrichment
-  -> content guard repair
-  -> coverage check
-  -> quality report
-  -> review/exam pack
+  -> 候选补漏与校验（Write，启用时）
+  -> coverage check、最终 element IR 与 source map（Guard）
+  -> quality report（Guard）
+  -> review/exam pack（单独运行 study-pack）
 ```
 
-核心思想是：Write 负责把内容讲清楚，Guard 负责不漏和不乱编。
+核心思想是：Write 负责生成可读正文，Guard 负责提示漏项和结构风险；准确性仍要对照课件复核。

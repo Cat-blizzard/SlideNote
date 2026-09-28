@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -234,13 +235,30 @@ def _run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _run_shell_template(command_template: str, input_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
-    command = command_template.format(
-        input=str(input_path),
-        out=str(out_dir),
-        output=str(out_dir),
-        stem=input_path.stem,
-    )
-    return subprocess.run(command, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    return _run_command(_command_from_template(command_template, input_path, out_dir))
+
+
+def _command_from_template(command_template: str, input_path: Path, out_dir: Path) -> list[str]:
+    """Split a user command template into argv without invoking a shell.
+
+    Placeholders are substituted per argument, so paths with spaces stay one
+    argument and other braces in the template (e.g. JSON options) are left alone.
+    """
+    placeholders = {
+        "{input}": str(input_path),
+        "{out}": str(out_dir),
+        "{output}": str(out_dir),
+        "{stem}": input_path.stem,
+    }
+    posix = os.name != "nt"
+    command: list[str] = []
+    for token in shlex.split(command_template, posix=posix):
+        if not posix and len(token) >= 2 and token[0] == token[-1] and token[0] in "'" + '"':
+            token = token[1:-1]
+        for placeholder, value in placeholders.items():
+            token = token.replace(placeholder, value)
+        command.append(token)
+    return command
 
 
 def _external_parser_error(
@@ -440,13 +458,11 @@ def _find_pages(data: dict[str, Any] | list[Any]) -> list[Any]:
 def _generic_text_blocks(raw_page: dict[str, Any], slide_id: int) -> list[TextBlock]:
     explicit_blocks = raw_page.get("text_blocks") or raw_page.get("blocks") or raw_page.get("children") or []
     blocks: list[TextBlock] = []
-    for item in _iter_dicts(explicit_blocks):
+    for item in _iter_dicts(explicit_blocks, stop=_is_text_leaf):
         text = _text_from_node(item)
-        if not text:
+        if not text or _is_table_node(item) or _is_image_node(item):
             continue
-        kind = str(item.get("type") or item.get("label") or item.get("block_type") or "paragraph").lower()
-        if "table" in kind or _table_rows(item):
-            continue
+        kind = _node_kind(item) or "paragraph"
         blocks.append(TextBlock(id=str(item.get("id") or f"s{slide_id}_t{len(blocks) + 1}"), type=_text_type(kind, text), content=text, bbox=_bbox_or_none(item.get("bbox"))))
     if blocks:
         return blocks
@@ -458,11 +474,10 @@ def _generic_text_blocks(raw_page: dict[str, Any], slide_id: int) -> list[TextBl
 
 def _generic_tables(raw_page: dict[str, Any], slide_id: int) -> list[TableBlock]:
     tables: list[TableBlock] = []
-    for item in _iter_dicts(raw_page.get("tables") or raw_page.get("blocks") or raw_page.get("children") or []):
-        kind = str(item.get("type") or item.get("label") or item.get("block_type") or "").lower()
-        rows = _table_rows(item)
-        if not rows and "table" not in kind:
+    for item in _iter_dicts(raw_page.get("tables") or raw_page.get("blocks") or raw_page.get("children") or [], stop=_is_table_node):
+        if not _is_table_node(item):
             continue
+        rows = _table_rows(item)
         tables.append(
             TableBlock(
                 id=str(item.get("id") or f"s{slide_id}_tbl{len(tables) + 1}"),
@@ -475,11 +490,10 @@ def _generic_tables(raw_page: dict[str, Any], slide_id: int) -> list[TableBlock]
 
 def _generic_images(raw_page: dict[str, Any], slide_id: int, output_root: Path, asset_root: Path) -> list[ImageAsset]:
     images: list[ImageAsset] = []
-    for item in _iter_dicts(raw_page.get("images") or raw_page.get("pictures") or raw_page.get("blocks") or raw_page.get("children") or []):
-        path = str_or_none(item.get("path") or item.get("image_path") or item.get("uri") or item.get("src"))
-        kind = str(item.get("type") or item.get("label") or item.get("block_type") or "").lower()
-        if not path and "image" not in kind and "picture" not in kind:
+    for item in _iter_dicts(raw_page.get("images") or raw_page.get("pictures") or raw_page.get("blocks") or raw_page.get("children") or [], stop=_is_image_node):
+        if not _is_image_node(item):
             continue
+        path = str_or_none(item.get("path") or item.get("image_path") or item.get("uri") or item.get("src"))
         images.append(
             ImageAsset(
                 id=str(item.get("id") or item.get("image_id") or f"s{slide_id}_img{len(images) + 1}"),
@@ -523,16 +537,38 @@ def _markdown_title(markdown: str) -> str | None:
     return preview(first, 140) if first else None
 
 
-def _iter_dicts(value: object) -> list[dict[str, Any]]:
+def _iter_dicts(value: object, stop: Callable[[dict[str, Any]], bool] | None = None) -> list[dict[str, Any]]:
+    """Flatten nested nodes; children of nodes matching ``stop`` are not visited."""
     result: list[dict[str, Any]] = []
     if isinstance(value, dict):
         result.append(value)
-        for child in value.values():
-            result.extend(_iter_dicts(child))
+        if stop is None or not stop(value):
+            for child in value.values():
+                result.extend(_iter_dicts(child, stop))
     elif isinstance(value, list):
         for item in value:
-            result.extend(_iter_dicts(item))
+            result.extend(_iter_dicts(item, stop))
     return result
+
+
+def _node_kind(node: dict[str, Any]) -> str:
+    return str(node.get("type") or node.get("label") or node.get("block_type") or "").lower()
+
+
+def _is_table_node(node: dict[str, Any]) -> bool:
+    return "table" in _node_kind(node) or bool(_table_rows(node))
+
+
+def _is_image_node(node: dict[str, Any]) -> bool:
+    kind = _node_kind(node)
+    if "image" in kind or "picture" in kind or "figure" in kind:
+        return True
+    return bool(node.get("path") or node.get("image_path") or node.get("uri") or node.get("src"))
+
+
+def _is_text_leaf(node: dict[str, Any]) -> bool:
+    # A node with its own text already contains its children's text.
+    return bool(_text_from_node(node)) or _is_table_node(node) or _is_image_node(node)
 
 
 def _text_from_node(node: dict[str, Any]) -> str:

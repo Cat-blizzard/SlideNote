@@ -3,9 +3,45 @@ from pathlib import Path
 from slidenote.coverage import analyze_coverage
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.notes import generate_notes, generate_notes_result
-from slidenote.notes.assembly import _postprocess_llm_markdown
+from slidenote.notes.contexts import NoteContext
+from slidenote.notes.postprocess import _postprocess_llm_markdown
+from slidenote.notes.prompt_templates import _llm_context_prompt
 from slidenote.semantic_layout import enrich_deck_with_semantic_layout
 from slidenote.table_understanding import enrich_deck_with_table_understanding
+
+
+def _llm_page_prompt(page: SlidePage, supports_image_input: bool = False) -> str:
+    """Single-page note prompt with default options (test convenience)."""
+    context = NoteContext(id=f"p{page.slide_id}", kind="page", title=page.title or f"第 {page.slide_id} 页", pages=[page])
+    return _llm_context_prompt(
+        context,
+        supports_image_input=supports_image_input,
+        asset_map={},
+        source_display="hidden",
+        note_context="page",
+        note_style="article",
+        note_profile="auto",
+        note_depth="detailed",
+        note_language="zh",
+        term_policy="bilingual",
+        screenshot_policy="fallback",
+        figure_placement="inline",
+        source_type="pdf",
+    )
+
+
+def test_legacy_generate_notes_returns_markdown(tmp_path):
+    deck = Deck(
+        source_path="lecture.pptx",
+        source_type="pptx",
+        pages=[SlidePage(slide_id=1, text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="TCP")])],
+    )
+
+    markdown = generate_notes(deck, tmp_path, False, "openai", source_display="inline")
+
+    assert isinstance(markdown, str)
+    assert "TCP" in markdown
+    assert "【对应 PPT" in markdown
 
 
 def test_local_notes_include_all_element_ids():
@@ -26,7 +62,7 @@ def test_local_notes_include_all_element_ids():
         ],
     )
 
-    notes = generate_notes(deck, Path("out"))
+    notes = generate_notes_result(deck, Path("out")).markdown
     report = analyze_coverage(deck, notes)
 
     assert "本页主题是“Transport”。" in notes
@@ -58,7 +94,7 @@ def test_local_notes_use_table_conclusion_before_raw_cells():
     )
     enrich_deck_with_table_understanding(deck)
 
-    notes = generate_notes(deck, Path("out"))
+    notes = generate_notes_result(deck, Path("out")).markdown
 
     assert "表格结论" in notes
     assert "关键行" in notes
@@ -95,7 +131,7 @@ def test_composite_figure_source_marker_covers_child_images(tmp_path):
         ],
     )
 
-    notes = generate_notes(deck, tmp_path)
+    notes = generate_notes_result(deck, tmp_path).markdown
     source_map_report = analyze_coverage(deck, notes)
 
     assert "<!-- slidenote-source: p1:s1_fig1,s1_img1,s1_img2 -->" in notes
@@ -125,7 +161,7 @@ def test_local_notes_include_ocr_and_visual_fields():
         ],
     )
 
-    notes = generate_notes(deck, Path("out"))
+    notes = generate_notes_result(deck, Path("out")).markdown
 
     assert "页截图视觉解析" in notes
     assert "截图展示了客户端与服务端之间的握手流程" in notes
@@ -150,7 +186,7 @@ def test_local_notes_show_image_ocr_when_no_visual_explanation():
         ],
     )
 
-    notes = generate_notes(deck, Path("out"))
+    notes = generate_notes_result(deck, Path("out")).markdown
 
     assert "图片 OCR 文字" in notes
     assert "cout << value;" in notes
@@ -171,7 +207,7 @@ def test_local_notes_skip_ignored_images_in_coverage():
         ],
     )
 
-    notes = generate_notes(deck, Path("out"))
+    notes = generate_notes_result(deck, Path("out")).markdown
     report = analyze_coverage(deck, notes)
 
     assert "s1_img1" not in notes
@@ -465,7 +501,7 @@ def test_source_display_footnote_keeps_clean_page_reference():
         pages=[SlidePage(slide_id=4, text_blocks=[TextBlock(id="s4_t1", type="paragraph", content="复制提高可靠性")])],
     )
 
-    notes = generate_notes(deck, Path("out"), source_display="footnote")
+    notes = generate_notes_result(deck, Path("out"), source_display="footnote").markdown
 
     assert "（PPT 第 4 页）" in notes
     assert "<!-- slidenote-source: p4:s4_t1 -->" in notes
@@ -511,7 +547,7 @@ def test_llm_generation_uses_local_cache(tmp_path, monkeypatch):
         cache_dir=tmp_path / "cache",
         note_strategy="direct",
     )
-    assert first.llm_usage["pages"][0]["cache_status"] == "miss"
+    assert first.llm_usage["contexts"][0]["cache_status"] == "miss"
     assert first.llm_usage["summary"]["llm_calls"] == 1
     assert "详细讲义式学习笔记" in prompts[0]
     assert "好的，这是" not in first.markdown
@@ -534,12 +570,11 @@ def test_llm_generation_uses_local_cache(tmp_path, monkeypatch):
         cache_dir=tmp_path / "cache",
         note_strategy="direct",
     )
-    assert second.llm_usage["pages"][0]["cache_status"] == "local_hit"
+    assert second.llm_usage["contexts"][0]["cache_status"] == "local_hit"
     assert second.llm_usage["summary"]["llm_calls"] == 0
 
 
 def test_llm_prompt_uses_page_visual_summary():
-    from slidenote.notes.prompts import _llm_page_prompt
 
     page = SlidePage(slide_id=3, page_visual_summary="图中展示 TCP 三次握手流程。")
 
@@ -550,7 +585,6 @@ def test_llm_prompt_uses_page_visual_summary():
 
 
 def test_llm_prompt_includes_table_understanding_fields():
-    from slidenote.notes.prompts import _llm_page_prompt
 
     table = TableBlock(
         id="s1_tbl1",
@@ -568,7 +602,6 @@ def test_llm_prompt_includes_table_understanding_fields():
 
 
 def test_llm_prompt_includes_semantic_layout_groups():
-    from slidenote.notes.prompts import _llm_page_prompt
 
     page = SlidePage(
         slide_id=1,
@@ -589,8 +622,8 @@ def test_llm_prompt_includes_semantic_layout_groups():
 
 
 def test_article_prompt_prefers_study_notes_over_slide_translation():
-    from slidenote.notes.assembly import NoteContext
-    from slidenote.notes.prompts import _llm_page_lecture_prompt
+    from slidenote.notes.contexts import NoteContext
+    from slidenote.notes.prompt_templates import _llm_page_lecture_prompt
 
     deck = Deck(
         source_path="lecture.pdf",
@@ -640,8 +673,8 @@ def test_article_prompt_prefers_study_notes_over_slide_translation():
 
 
 def test_lecture_notes_profile_prompt_requests_teaching_reconstruction():
-    from slidenote.notes.assembly import NoteContext
-    from slidenote.notes.prompts import _llm_page_lecture_prompt
+    from slidenote.notes.contexts import NoteContext
+    from slidenote.notes.prompt_templates import _llm_page_lecture_prompt
 
     deck = Deck(
         source_path="lecture.pdf",

@@ -18,7 +18,7 @@ SlideNote Studio 是一个基于 Streamlit 的图形界面。它包装 `python -
 - 下载 `notes.zip`、`notes.md`、`coverage.md`、导出文件或完整结果 ZIP。
 - 切换到 **Textbook library**，上传 PDF 教材，构建 RAG-ready 教材库；该库当前不会自动参与笔记生成。
 
-分享 Markdown 时优先下载 `notes.zip`。压缩包里包含 `notes.md` 和 `notes.assets/`，别人解压后图片才能正常显示。
+分享 Markdown 时优先下载 `notes.zip`。压缩包包含 `notes.md`；笔记引用图片时还包含 `notes.assets/`，别人解压后即可查看图片。
 
 ## 安装
 
@@ -76,7 +76,7 @@ python -m slidenote study-pack <输出目录> --question-count 12
 
 左侧 **Run** 面板里的 **Exports** 可以勾选：
 
-- `notes.zip`：Markdown 笔记包，包含图片资源，不需要 Pandoc。
+- `notes.zip`：Markdown 笔记包；有图片时包含相关资源，不需要 Pandoc。
 - `notes.toc.md`：带目录 Markdown，不需要 Pandoc。
 - `notes.docx`：Word 文档，需要 Pandoc。
 - `notes.pdf`：PDF 讲义，需要 Pandoc + LibreOffice。

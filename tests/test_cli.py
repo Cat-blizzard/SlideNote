@@ -2,7 +2,6 @@ import hashlib
 import json
 import zipfile
 from argparse import Namespace
-from pathlib import Path
 
 import fitz
 import pytest
@@ -633,7 +632,7 @@ def test_study_pack_command_generates_local_review_and_exam_pack(tmp_path):
     assert (out / "final_exam.answers.md").exists()
     assert (out / "wrong_answer_review_prompt.md").exists()
     assert "review_mode" not in run_summary["run"]
-    assert run_summary["artifacts"]["study_pack"] is None
+    assert run_summary["artifacts"].get("study_pack") is None
     assert study_pack["summary"]["questions_total"] == 4
     assert study_pack["question_quality"]["overall_score"] >= 0
 

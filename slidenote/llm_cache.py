@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 LLM_CACHE_SCHEMA_VERSION = 1
+_REPLACE_RETRY_DELAYS = (0.05, 0.1, 0.2, 0.4)
 
 
 def utc_now_iso() -> str:
@@ -23,6 +27,34 @@ def sha256_text(text: str) -> str:
 
 def make_cache_key(data: Any) -> str:
     return sha256_text(stable_json(data))
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    """Write via a temp file in the same directory, then ``os.replace``.
+
+    Readers (GUI pollers, concurrent cache lookups) never observe a partially
+    written file. On Windows ``os.replace`` fails with PermissionError while
+    another process holds the target open, so it is retried briefly.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        for delay in (*_REPLACE_RETRY_DELAYS, None):
+            try:
+                os.replace(tmp_name, path)
+                return
+            except PermissionError:
+                if delay is None:
+                    raise
+                time.sleep(delay)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 class LLMCache:
@@ -69,6 +101,6 @@ class LLMCache:
             "created_at": utc_now_iso(),
             **entry,
         }
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2))
         return path
 

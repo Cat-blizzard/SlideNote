@@ -7,6 +7,7 @@ from typing import Any
 from PIL import Image
 
 from slidenote.llm_cache import utc_now_iso
+from slidenote.geometry import normalize_asset_bbox
 from slidenote.models import Deck, ImageAsset, SlidePage
 
 
@@ -26,8 +27,9 @@ def rank_deck_images(deck: Deck, output_root: Path, mode: str = "local", stage: 
             key=lambda record: (-record["importance_score"], record["image_id"]),
         )
         rank_by_id = {record["image_id"]: index + 1 for index, record in enumerate(ranked)}
+        images_by_id = {image.id: image for image in page.images}
         for record in records:
-            image = next((item for item in page.images if item.id == record["image_id"]), None)
+            image = images_by_id.get(record["image_id"])
             if image is None:
                 continue
             rank = rank_by_id.get(record["image_id"])
@@ -222,29 +224,7 @@ def _template_like_image(image: ImageAsset, bbox: list[float] | None, output_roo
 
 
 def _normalized_image_bbox(page: SlidePage, image: ImageAsset, source_type: str) -> list[float] | None:
-    bbox = image.crop_bbox or image.bbox
-    if not bbox or len(bbox) != 4:
-        return None
-    try:
-        values = [float(value) for value in bbox]
-    except (TypeError, ValueError):
-        return None
-    if all(-0.001 <= value <= 1.001 for value in values):
-        x1, y1, x2, y2 = values
-        return [max(0.0, min(1.0, value)) for value in [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]]
-    if not page.page_width or not page.page_height:
-        return None
-    x1, y1, third, fourth = values
-    if source_type == "pptx":
-        x2, y2 = x1 + third, y1 + fourth
-    else:
-        x2, y2 = third, fourth
-    return [
-        max(0.0, min(1.0, x1 / page.page_width)),
-        max(0.0, min(1.0, y1 / page.page_height)),
-        max(0.0, min(1.0, x2 / page.page_width)),
-        max(0.0, min(1.0, y2 / page.page_height)),
-    ]
+    return normalize_asset_bbox(source_type, page, image)
 
 
 def _record(page: SlidePage, image: ImageAsset, score: float, reasons: list[str], output_root: Path) -> dict[str, Any]:
@@ -270,6 +250,8 @@ def _image_dimensions(image: ImageAsset, output_root: Path) -> tuple[int | None,
     path = output_root / image.path
     try:
         with Image.open(path) as opened:
-            return opened.width, opened.height
+            # Remember the size so later scoring steps do not reopen the file.
+            image.width, image.height = opened.width, opened.height
     except Exception:
-        return image.width, image.height
+        pass
+    return image.width, image.height

@@ -9,6 +9,8 @@ from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.models import Deck, SlidePage
 from slidenote.utils import (
+    int_or_none,
+    error_summary,
     context_title,
     display_path,
     looks_like_section_title_page,
@@ -82,7 +84,22 @@ def build_section_plan(
             max_output_tokens=max_output_tokens,
             temperature=temperature,
         )
-        result = client.generate_with_usage(prompt, system_prompt=SECTION_SYSTEM_PROMPT)
+        try:
+            result = client.generate_with_usage(prompt, system_prompt=SECTION_SYSTEM_PROMPT)
+        except Exception as exc:  # noqa: BLE001 - section planning must not abort the build
+            plan = dict(local_plan)
+            plan["warnings"] = [*local_plan.get("warnings", []), "llm_section_call_failed"]
+            plan["method"] = "local_fallback"
+            plan["requested_mode"] = mode
+            plan["prompt_version"] = SECTION_PROMPT_VERSION
+            plan["llm"] = {
+                "provider": runtime["provider"],
+                "model": runtime["model"],
+                "base_url": runtime["base_url"],
+                "llm_call": True,
+                "error": error_summary(exc),
+            }
+            return plan
         result_text = result.text
         usage = result.usage or {}
         cache_status = "disabled" if cache_mode == "off" else "refresh" if cache_mode == "refresh" else "miss"
@@ -236,8 +253,8 @@ def _normalize_model_plan(deck: Deck, parsed: dict[str, Any] | None, local_plan:
     for raw in raw_sections:
         if not isinstance(raw, dict):
             continue
-        start = raw.get("start_slide_id")
-        if not isinstance(start, int) or start not in valid_ids:
+        start = int_or_none(raw.get("start_slide_id"))
+        if start is None or start not in valid_ids:
             continue
         if start in starts:
             continue
@@ -336,16 +353,12 @@ def _section_boundaries(deck: Deck) -> tuple[list[int], dict[int, str]]:
     return sorted(set(boundaries)), reasons
 
 
-def _outline_titles(deck: Deck) -> set[str]:
-    return {item["normalized_title"] for item in _extract_outline_items(deck)}
-
-
 def _extract_outline_items(deck: Deck) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
     for page in deck.pages:
         page_text = "\n".join(block.content for block in page.text_blocks)
-        if "目录" not in page_text and "Contents" not in page_text:
+        if "目录" not in page_text and "contents" not in page_text.lower():
             continue
         pending_number: str | None = None
         for line in page_text.splitlines():

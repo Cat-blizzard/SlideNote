@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
-import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -362,7 +361,7 @@ def test_gui_quiet_build_polls_progress_before_stdout(tmp_path: Path, monkeypatc
 
     def record_update(progress_path, progress_bar, status_box, stage_box):
         original_update(progress_path, progress_bar, status_box, stage_box)
-        observed.append((app._read_json(progress_path), marker.exists()))
+        observed.append((app.read_json(progress_path), marker.exists()))
 
     monkeypatch.setattr(app, "_update_progress_ui", record_update)
     app._run_build(config)
@@ -371,3 +370,56 @@ def test_gui_quiet_build_polls_progress_before_stdout(tmp_path: Path, monkeypatc
     assert "finished" in slots[2].code.call_args.args[0]
     fake_st.success.assert_called_once()
     fake_st.error.assert_not_called()
+
+
+def test_coverage_helpers_report_visible_coverage_and_unexplained_items():
+    from gui.studio_core import coverage_missing_items, coverage_summary
+
+    coverage = {
+        "total": 4,
+        "covered": 4,
+        "coverage_ratio": 1.0,
+        "visible_coverage": {"total": 3, "covered": 1, "missing": 2, "coverage_ratio": 0.3333},
+        "required_visible_coverage": {"total": 1, "missing": 1},
+        "items": [
+            {"id": "s1_t1", "slide_id": 1, "kind": "text", "trace_covered": True, "visible_covered": True},
+            {"id": "s2_t1", "slide_id": 2, "kind": "text", "trace_covered": True, "visible_covered": False, "marker_only": True},
+            {"id": "s3_t1", "slide_id": 3, "kind": "text", "trace_covered": False, "visible_covered": False, "required": True},
+            {"id": "s4_t1", "slide_id": 4, "kind": "text", "trace_covered": False, "visible_covered": False, "structural": True},
+        ],
+    }
+
+    summary = coverage_summary(coverage)
+    rows = coverage_missing_items(coverage)
+
+    assert summary["visible"] is True
+    assert summary["missing"] == 2
+    assert summary["required_missing"] == 1
+    assert [row["element_id"] for row in rows] == ["s3_t1", "s2_t1"]
+    assert rows[0]["reason"] == "required, not explained in prose"
+    assert rows[1]["reason"] == "source marker only, no prose explanation"
+
+
+def test_format_cost_tolerates_missing_or_invalid_values():
+    from gui.studio_core import format_cost, format_count
+
+    assert format_cost(0.0123, "CNY") == "0.012300 CNY"
+    assert format_cost(None) == "not recorded"
+    assert format_cost("n/a") == "not recorded"
+    assert format_count("12345") == "12,345"
+    assert format_count(None) == "—"
+
+
+def test_output_zip_excludes_cache(tmp_path):
+    import io
+    import zipfile
+
+    from gui.studio_core import zip_output_dir
+
+    (tmp_path / "notes.md").write_text("notes", encoding="utf-8")
+    (tmp_path / ".cache" / "llm").mkdir(parents=True)
+    (tmp_path / ".cache" / "llm" / "entry.json").write_text("{}", encoding="utf-8")
+
+    names = zipfile.ZipFile(io.BytesIO(zip_output_dir(tmp_path))).namelist()
+
+    assert names == ["notes.md"]

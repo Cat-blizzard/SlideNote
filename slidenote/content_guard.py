@@ -13,6 +13,8 @@ from slidenote.table_understanding import table_preview
 from slidenote.utils import (
     as_float,
     display_path,
+    looks_like_outline_page,
+    parse_json_object,
     preview,
 )
 
@@ -21,6 +23,20 @@ CONTENT_GUARD_MODES = {"auto", "off"}
 CONTENT_GUARD_PROMPT_VERSION = "content-guard-v1"
 CONTENT_REPAIR_PROMPT_VERSION = "content-repair-v2"
 REQUIRED_CONFIDENCE_THRESHOLD = 0.7
+
+_STRUCTURAL_TITLES = {"目录", "课程目录", "本章目录", "章节导航", "contents", "outline", "agenda"}
+_STRUCTURAL_LABELS = {"目录", "课程目录", "本章目录", "章节导航", "contents", "outline"}
+_COVER_MARKERS = {"讲师", "教师", "教授", "联系邮箱", "邮箱", "主页", "email", "homepage", "http", "www"}
+_DEFINITION_SIGNALS = ["定义", "称为", "是指", "definition", "means", "called"]
+_CONDITION_SIGNALS = ["如果", "只有", "必须", "条件", "当且仅当", "because", "if ", "when ", "only if", "must"]
+# "当" alone matches 当前/相当/应当; require the conditional "当……时" shape.
+_CONDITION_PATTERNS = [re.compile(r"(?:^|[，,。；;：:\s])当(?![前今下中年天地然作做成即场])[^，,。；;]{1,40}?时")]
+_URL_RE = re.compile(r"(?:https?://|www\.)\S+", flags=re.IGNORECASE)
+_HTML_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][\w:.-]*\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s\"'<>]+))*\s*/?>")
+_FORMULA_OPERAND = r"(?:\b[A-Za-z]\w{0,2}(?:\([^()]{0,20}\))?|\b\d+(?:\.\d+)?|\))"
+_FORMULA_RELATION_RE = re.compile(
+    rf"{_FORMULA_OPERAND}\s*(?:==|<=|>=|!=|=|<|>)\s*[-+]?(?:[A-Za-z]\w{{0,2}}\b|\d|\()"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,14 +183,15 @@ def structural_slide_ids(report: dict[str, Any] | None) -> set[int] | None:
     }
 
 
+def is_required_item(item: dict[str, Any], confidence_threshold: float = REQUIRED_CONFIDENCE_THRESHOLD) -> bool:
+    """Single rule for "must be explained": flagged must_explain AND confident enough."""
+    return bool(item.get("must_explain")) and as_float(item.get("confidence"), 0.0) >= confidence_threshold
+
+
 def required_item_ids(report: dict[str, Any] | None, confidence_threshold: float = REQUIRED_CONFIDENCE_THRESHOLD) -> set[str]:
     if not report:
         return set()
-    ids: set[str] = set()
-    for item in report.get("items", []):
-        if item.get("must_explain") and as_float(item.get("confidence"), 0.0) >= confidence_threshold:
-            ids.add(str(item.get("element_id")))
-    return ids
+    return {str(item.get("element_id")) for item in report.get("items", []) if is_required_item(item, confidence_threshold)}
 
 
 def required_items_for_slides(
@@ -189,7 +206,7 @@ def required_items_for_slides(
         slide_id = int(item.get("slide_id") or 0)
         if slide_ids is not None and slide_id not in slide_ids:
             continue
-        if item.get("must_explain") and as_float(item.get("confidence"), 0.0) >= confidence_threshold:
+        if is_required_item(item, confidence_threshold):
             result.append(item)
     return result
 
@@ -289,7 +306,8 @@ def _text_candidate(page: SlidePage, block: TextBlock) -> GuardCandidate | None:
     text = " ".join(block.content.split())
     if not text:
         return None
-    lowered = text.lower()
+    # Keyword signals ignore URLs ("example.com", "?if=") so links are not learning content.
+    signal_text = _URL_RE.sub(" ", text)
     role = "concept"
     confidence = 0.45
     must = False
@@ -302,17 +320,17 @@ def _text_candidate(page: SlidePage, block: TextBlock) -> GuardCandidate | None:
         confidence = 0.84
         must = True
         reasons.append("formula_like")
-    elif _contains_any(text, ["定义", "称为", "是指", "consistency", "definition", "means", "called"]):
+    elif _contains_any(signal_text, _DEFINITION_SIGNALS):
         role = "definition"
         confidence = 0.78
         must = True
         reasons.append("definition_signal")
-    elif _contains_any(text, ["如果", "当", "只有", "必须", "条件", "because", "if ", "when ", "only if", "must"]):
+    elif _contains_any(signal_text, _CONDITION_SIGNALS) or any(pattern.search(signal_text) for pattern in _CONDITION_PATTERNS):
         role = "condition"
         confidence = 0.74
         must = True
         reasons.append("condition_signal")
-    elif _contains_any(text, ["例如", "案例", "example", "e.g."]):
+    elif _contains_any(signal_text, ["例如", "案例", "example", "e.g."]):
         role = "example"
         confidence = 0.68
         must = True
@@ -372,7 +390,7 @@ def _build_local_report(deck: Deck, candidates: list[GuardCandidate], mode: str)
     pages = []
     for index, page in enumerate(deck.pages):
         page_items = by_slide.get(page.slide_id, [])
-        structural = _looks_like_structural_page(page, index)
+        structural = looks_like_structural_page(page, index)
         has_required = any(item.get("must_explain") for item in page_items)
         page_role = "mixed" if structural and has_required else "structural" if structural else "content"
         pages.append(
@@ -437,8 +455,8 @@ def _merge_llm_report(deck: Deck, candidates: list[GuardCandidate], parsed: dict
     pages = []
     for index, page in enumerate(deck.pages):
         page_items = by_slide.get(page.slide_id, [])
-        local_structural = _looks_like_structural_page(page, index)
-        has_required = any(item.get("must_explain") and as_float(item.get("confidence"), 0.0) >= REQUIRED_CONFIDENCE_THRESHOLD for item in page_items)
+        local_structural = looks_like_structural_page(page, index)
+        has_required = any(is_required_item(item) for item in page_items)
         role = page_role_by_slide.get(page.slide_id)
         if role not in {"structural", "content", "mixed"}:
             role = "mixed" if local_structural and has_required else "structural" if local_structural else "content"
@@ -484,16 +502,8 @@ def _classification_prompt(deck: Deck, candidates: list[GuardCandidate]) -> str:
 
 
 def _parse_guard_json(text: str) -> dict[str, Any] | None:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("pages"), list):
+    parsed = parse_json_object(text)
+    if parsed is None or not isinstance(parsed.get("pages"), list):
         return None
     return parsed
 
@@ -525,7 +535,7 @@ def _item_record(candidate: GuardCandidate) -> dict[str, Any]:
 
 
 def _summary(pages: list[dict[str, Any]], items: list[dict[str, Any]]) -> dict[str, Any]:
-    required = [item for item in items if item.get("must_explain") and as_float(item.get("confidence"), 0.0) >= REQUIRED_CONFIDENCE_THRESHOLD]
+    required = [item for item in items if is_required_item(item)]
     return {
         "pages_total": len(pages),
         "structural_pages": sum(1 for page in pages if page.get("page_role") == "structural"),
@@ -556,38 +566,38 @@ def _llm_record(
         "cache_key": cache_key,
         "cache_file": display_path(cache_path, output_root),
         "llm_call": llm_call,
-        "input_tokens": usage.get("input_tokens"),
-        "output_tokens": usage.get("output_tokens"),
-        "total_tokens": usage.get("total_tokens"),
-        "provider_cached_input_tokens": usage.get("provider_cached_input_tokens"),
+        # Cache hits cost nothing this run; report zero like deck_brief/study_pack.
+        "input_tokens": usage.get("input_tokens") if llm_call else 0,
+        "output_tokens": usage.get("output_tokens") if llm_call else 0,
+        "total_tokens": usage.get("total_tokens") if llm_call else 0,
+        "provider_cached_input_tokens": usage.get("provider_cached_input_tokens") if llm_call else 0,
     }
 
 
-def _looks_like_structural_page(page: SlidePage, index: int) -> bool:
+def looks_like_structural_page(page: SlidePage, index: int) -> bool:
+    """Shared structural-page heuristic (cover, TOC, navigation); also used by coverage."""
     title = page.title or ""
     text = "\n".join([title, *(block.content for block in page.text_blocks)])
-    normalized_title = _normalize_text_key(title)
-    normalized_text = _normalize_text_key(text)
-    if normalized_title in {"目录", "课程目录", "本章目录", "章节导航", "contents", "outline", "agenda"}:
+    if normalize_text_key(title) in _STRUCTURAL_TITLES:
         return True
-    if index == 0 and any(marker in normalized_text for marker in {"讲师", "教师", "教授", "邮箱", "email", "homepage", "www", "http"}):
+    if index == 0 and any(marker in normalize_text_key(text) for marker in _COVER_MARKERS):
         return True
-    return _looks_like_structural_text(text)
+    if any(normalize_text_key(line) in _STRUCTURAL_LABELS for line in text.splitlines()[:4]):
+        return True
+    return looks_like_outline_page(text)
 
 
 def _looks_like_structural_text(text: str) -> bool:
-    normalized = _normalize_text_key(text)
-    if normalized in {"目录", "课程目录", "本章目录", "章节导航", "contents", "outline", "agenda"}:
-        return True
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    numbered = [line for line in lines if re.match(r"^\s*(?:\d+|[一二三四五六七八九十])\s*[.、．]", line)]
-    return len(numbered) >= 3 and sum(len(line) for line in numbered) <= 260
+    return normalize_text_key(text) in _STRUCTURAL_TITLES or looks_like_outline_page(text)
 
 
 def _looks_like_formula(text: str) -> bool:
-    if re.search(r"[=<>≤≥∑∀∃]|\\frac|\\sum|\\forall|O\([^)]+\)", text):
+    # URLs carry "=" in query strings and HTML tags carry "<>"; neither is math.
+    text = _HTML_TAG_RE.sub(" ", _URL_RE.sub(" ", text))
+    if re.search(r"[≤≥≠≈∑∫∀∃]|\\frac|\\sum|\\forall|\\int|\bO\([^)]+\)", text):
         return True
-    return bool(re.search(r"\b[A-Za-z]\w*\s*(?:=|<=|>=|<|>)\s*[\w\d]", text))
+    # A relational operator between short math-like operands: "x = 3", "a+b<c", "f(x) >= 0".
+    return bool(_FORMULA_RELATION_RE.search(text))
 
 
 def _contains_any(text: str, needles: list[str]) -> bool:
@@ -595,7 +605,7 @@ def _contains_any(text: str, needles: list[str]) -> bool:
     return any(needle.lower() in lowered for needle in needles)
 
 
-def _normalize_text_key(value: str) -> str:
+def normalize_text_key(value: str) -> str:
     return re.sub(r"[\s:：,，.。;；、\-_（）()<>]+", "", value).lower()
 
 

@@ -66,8 +66,5 @@ class ArtifactRegistry:
     def get(self, name: str) -> str | None:
         return self._artifacts.get(name)
 
-    def relative_path(self, name: str) -> str | None:
-        return self.get(name)
-
     def as_summary(self) -> dict[str, str]:
         return dict(sorted(self._artifacts.items()))

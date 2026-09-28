@@ -323,10 +323,14 @@ def test_figure_enrichment_uses_vision_model_and_cache(tmp_path, monkeypatch):
     screenshot = tmp_path / "screenshots" / "slide1.png"
     screenshot.parent.mkdir()
     Image.new("RGB", (1000, 600), "white").save(screenshot)
+    monkeypatch.setenv("SLIDENOTE_BASE_URL", "https://text-only.example/v1")
+    monkeypatch.delenv("SLIDENOTE_VISION_BASE_URL", raising=False)
 
     class FakeFigureClient:
         def __init__(self, **kwargs):
-            pass
+            from slidenote.llm import LLMClient
+
+            assert LLMClient(**kwargs).base_url is None
 
         def generate_image_with_usage(self, image_path: Path, prompt: str, system_prompt: str, image_detail: str):
             class Result:
@@ -421,3 +425,17 @@ def test_composite_figures_crop_cluster_and_absorb_children(tmp_path):
     children = [image for image in page.images if image.role == "composite_child"]
     assert len(children) == 4
     assert all(image.ignored for image in children)
+
+
+def test_foreground_mask_matches_per_pixel_rule():
+    import random
+
+    from slidenote.figures import _foreground_mask, _is_foreground_pixel
+
+    rng = random.Random(7)
+    image = Image.new("RGB", (41, 19))
+    pixels = [tuple(rng.choice([rng.randint(0, 255), rng.randint(215, 255)]) for _ in range(3)) for _ in range(41 * 19)]
+    image.putdata(pixels)
+    for background in [(255, 255, 255), (236, 236, 236), (20, 30, 40)]:
+        expected = bytes(255 if _is_foreground_pixel(pixel, background) else 0 for pixel in pixels)
+        assert _foreground_mask(image, background) == expected

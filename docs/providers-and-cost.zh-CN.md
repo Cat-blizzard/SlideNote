@@ -6,8 +6,8 @@
 
 - Python `3.10+`。
 - 简单入口：在仓库根目录运行 `.\install.ps1`，然后运行 `.\run_gui.ps1`。
-- 本地解析：`python -m pip install -e ".[dev]"`。
-- LLM / GUI：`python -m pip install -e ".[dev,llm,gui]"`。
+- 本地解析：`python -m pip install -e .`。
+- LLM / GUI：`python -m pip install -e ".[llm,gui]"`；开发测试另装 `.[dev]`。
 
 可选外部软件：
 
@@ -79,15 +79,16 @@ Vision 负责解释图、流程、趋势、布局和视觉关系。公开参数�
 $env:DASHSCOPE_API_KEY="..."
 ```
 
-相关输出只在实际运行 Vision 时出现：
+下列输出与视觉调用或图裁剪有关，按实际运行的步骤生成：
 
 ```text
 visuals.json
 vision_usage.json
 figures.json
 figure_usage.json
-figure_grounding.json
 ```
+
+`figure_grounding.json` 也可能由本地规则生成；例如 `local` preset 关闭视觉 API 后仍会执行本地图示定位。它不能单独作为 Vision API 是否调用的依据。
 
 ## 缓存、并发和成本
 
@@ -97,7 +98,7 @@ figure_grounding.json
 - API 并发使用保守内部默认值。
 - 视觉/OCR/figure target 上限使用质量优先默认值。
 
-构建完成后仍会保留统计文件，供 GUI 和后续诊断使用：
+`build` 会写出 `run_summary.json`；各类 API 使用量文件只在对应步骤实际运行时出现：
 
 ```text
 llm_usage.json
@@ -105,9 +106,22 @@ vision_usage.json
 ocr_usage.json
 figure_usage.json
 run_summary.json
+```
+
+GUI 会根据这些文件生成成本报告，也可以在已有构建目录中手动运行：
+
+```powershell
+python scripts/generate_cost_report.py outputs\lecture
+```
+
+该操作生成：
+
+```text
 cost_report.json
 cost_report.md
 cost_dashboard.html
 ```
+
+CLI `slidenote build` 本身不会自动生成成本报告。成本取决于所用模型与价格配置，报告中的估算应按实际账单复核。
 
 如果你需要重新开放成本或并发调参，请先确认默认 `lecture` 路线的真实瓶颈，再把它作为开发者配置处理，而不是直接恢复到普通用户界面。

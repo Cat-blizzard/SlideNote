@@ -149,3 +149,76 @@ def test_llm_study_pack_generates_report_and_uses_cache(tmp_path, monkeypatch):
     assert cached["summary"]["llm_call"] is False
     assert cached["summary"]["local_cache_hits"] == 1
     assert cached["review"]["checklist"][0]["point"] == "Replica consistency"
+
+
+def test_clean_inline_keeps_math_comparisons_but_strips_html_tags():
+    from slidenote.study_pack.common import _clean_inline
+
+    assert _clean_inline("if a < b and c > d then x") == "if a < b and c > d then x"
+    assert _clean_inline("a<b and c>d") == "a<b and c>d"
+    assert _clean_inline('<span class="x">TCP</span> <br/>三次握手') == "TCP 三次握手"
+
+
+def test_normalize_exam_handles_malformed_choice_and_true_false_strings():
+    from slidenote.study_pack import _normalize_exam
+
+    raw = {
+        "questions": [
+            {"type": "choice", "question": "只有一个选项", "options": ["A"], "answer": "见解析", "explanation": "解释"},
+            {"type": "choice", "question": "越界答案", "options": ["A", "B"], "answer": 9},
+            {"type": "true_false", "question": "判断", "answer": "正确"},
+            {"type": "true_false", "question": "判断2", "answer": "false"},
+        ]
+    }
+
+    questions = _normalize_exam(raw, {"questions": []}, question_count=10)["questions"]
+
+    assert questions[0]["type"] == "short"
+    assert questions[0]["points"] == 6
+    assert questions[0]["answer"] == "见解析"
+    assert questions[1]["answer"] == 1
+    assert questions[2]["answer"] is True
+    assert questions[3]["answer"] is False
+
+
+def test_local_questions_vary_correct_choice_and_true_false_answers():
+    from slidenote.study_pack.questions import _local_questions
+
+    items = [
+        {"point": f"概念{index}", "explanation": f"概念{index}的解释内容，用于区分不同知识点。", "source_refs": [f"P{index}"]}
+        for index in range(1, 9)
+    ]
+
+    questions = _local_questions(items, question_count=32)
+    choice_answers = {question["answer"] for question in questions if question["type"] == "choice"}
+    tf_answers = {question["answer"] for question in questions if question["type"] == "true_false"}
+
+    assert len(choice_answers) > 1
+    assert tf_answers == {True, False}
+    for question in questions:
+        if question["type"] == "choice":
+            assert not any("只背" in option for option in question["options"])
+
+
+def test_collect_study_items_respects_limit():
+    from slidenote.study_pack import _collect_study_items
+
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(
+                slide_id=index,
+                title=f"Topic {index}",
+                text_blocks=[TextBlock(id=f"s{index}_t1", type="paragraph", content=f"Protocol{index} guarantees property number {index} for every message.")],
+                tables=[TableBlock(id=f"s{index}_tbl1", rows=[["k", "v"], ["a", str(index)]])],
+            )
+            for index in range(1, 11)
+        ],
+    )
+    guard = {"items": [{"element_id": f"s{index}_t1", "slide_id": index, "must_explain": True, "confidence": 0.9} for index in range(1, 11)]}
+
+    items = _collect_study_items(deck, "", guard, limit=5)
+
+    assert len(items) == 5
+    assert [item["source_refs"] for item in items] == [["P1"], ["P2"], ["P3"], ["P4"], ["P5"]]

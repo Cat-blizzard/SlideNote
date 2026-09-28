@@ -1,18 +1,21 @@
 # Element IR 与 Source Map
 
-SlideNote 的可追溯能力依赖几个稳定结构：
+SlideNote 用以下产物保留课件内容与笔记的结构化关联：
 
 ```text
-content.json -> element_ir.json -> source_map.json -> notes.md / GUI / coverage
+Ingest: Deck / 截图
+    -> Understand: content.json
+    -> Write: notes.md（含来源注释）
+    -> Guard: coverage.json + 最终 element_ir.json + source_map.json
 ```
 
-它们让正文可以读起来干净，同时保留页面、元素、图片和覆盖率信息。
+`source_map.json` 需要读取已生成的 `notes.md`，因此在 Guard 阶段建立，而不是笔记的输入。结构化来源有助于定位和复核，不证明解释在语义上完全准确。
 
 ## content.json
 
-`content.json` 是解析后的基础内容清单，记录每页的标题、文本块、表格、图片、截图路径、OCR 文本和视觉摘要。
+`content.json` 是 Understand 阶段写出的页面内容清单，记录每页的标题、文本块、表格、图片、截图路径，以及实际启用的 OCR 和视觉理解结果。
 
-它偏向“原始解析结果”，适合调试输入材料是否被正确读取。
+它保留解析结果及后续理解步骤写回的字段，适合检查输入材料是否被正确读取和补充。
 
 常见字段包括：
 
@@ -24,7 +27,7 @@ content.json -> element_ir.json -> source_map.json -> notes.md / GUI / coverage
 
 ## element_ir.json
 
-`element_ir.json` 是统一 Element IR，面向 prompt、coverage、source map、GUI 和后续 Agent 工作流。
+`element_ir.json` 是 Guard 阶段写出的最终 Element IR，供元素检查和后续工具使用。构建中的 prompt 与 coverage 也会从当前 `Deck` 构造需要的元素视图。
 
 每个元素尽量包含：
 
@@ -62,7 +65,7 @@ note block -> PPT/PDF page -> text/table/image element id
 <!-- slidenote-source: p4:s4_t1,s4_t2 -->
 ```
 
-阅读正文时不会被元素 ID 打断，但 GUI、coverage、导出和局部 revise 仍能找到来源。
+阅读正文时不会被元素 ID 打断；构建中的覆盖检查会使用这些标记，`source_map.json` 可供后续来源高亮和局部 revise 使用。目前 GUI 尚未直接读取该文件。
 
 ## 图片资产
 

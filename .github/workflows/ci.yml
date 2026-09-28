@@ -29,5 +29,5 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev,llm]"
 
-      - name: Run base test suite
-        run: python -m pytest -k "not integration"
+      - name: Run test suite
+        run: python -m pytest

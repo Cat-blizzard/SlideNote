@@ -201,3 +201,16 @@ def test_figure_grounding_vision_bad_json_falls_back_local(monkeypatch, tmp_path
     image = deck.pages[0].images[0]
     assert image.anchor_element_ids == ["s3_t1"]
     assert report["summary"]["vision_fallback_images"] == 1
+
+
+def test_generic_auto_captions_are_not_used_as_explanations_or_anchors():
+    from slidenote.figure_grounding import _figure_explanation, _is_generic_caption, _tokens
+    from slidenote.models import ImageAsset
+
+    assert _is_generic_caption("第 3 页局部图 2")
+    assert _is_generic_caption("第 3 页组合图 1")
+    assert not _is_generic_caption("TCP 三次握手时序图")
+    crop = ImageAsset(id="s3_fig2", path="figures/a.png", caption="第 3 页局部图 2")
+    assert _figure_explanation(crop) == (None, "missing")
+    assert not _tokens("第三章概述").intersection(_tokens("这是章节"))
+    assert _tokens("三次握手流程").intersection(_tokens("握手阶段"))

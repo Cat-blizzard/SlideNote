@@ -9,7 +9,21 @@ from slidenote.build.artifacts import (
     _register_export_artifacts,
     _run_json_stage,
 )
-from slidenote.build.config import _should_build_deck_brief
+from slidenote.build.config import (
+    AUXILIARY_TEXT_TEMPERATURE,
+    CONTENT_GUARD_DEFAULT_OUTPUT_TOKENS,
+    CONTENT_GUARD_MAX_OUTPUT_TOKENS,
+    DECK_BRIEF_DEFAULT_OUTPUT_TOKENS,
+    DECK_BRIEF_MAX_OUTPUT_TOKENS,
+    FIGURE_CROP_MAX_OUTPUT_TOKENS,
+    FIGURE_GROUNDING_MAX_OUTPUT_TOKENS,
+    SECTIONS_DEFAULT_OUTPUT_TOKENS,
+    SECTIONS_MAX_OUTPUT_TOKENS,
+    SEMANTIC_LAYOUT_MAX_OUTPUT_TOKENS,
+    VISION_AUX_DEFAULT_OUTPUT_TOKENS,
+    _capped_tokens,
+    _should_build_deck_brief,
+)
 from slidenote.build.progress import _llm_progress, _slowest_stages, _target_progress
 from slidenote.build.state import BuildState
 from slidenote.build.summary import _build_run_summary
@@ -30,6 +44,7 @@ from slidenote.source_map import build_source_map
 from slidenote.table_understanding import enrich_deck_with_table_understanding
 from slidenote.understanding import build_understanding_reports
 from slidenote.composite_figures import enrich_deck_with_composite_figures
+from slidenote.notes.contexts import _resolved_context_mode
 from slidenote.figure_grounding import enrich_deck_with_figure_grounding
 from slidenote.figures import enrich_deck_with_figures
 from slidenote.modality import apply_modality_overrides, enrich_deck_with_modalities
@@ -96,7 +111,9 @@ def _stage_semantic_layout(state: BuildState) -> None:
             base_url=args.vision_base_url,
             cache_mode=args.vision_cache,
             cache_dir=state.cache_dirs["vision"],
-            max_output_tokens=min(args.vision_max_output_tokens or 1000, 1400),
+            max_output_tokens=_capped_tokens(
+                args.vision_max_output_tokens, VISION_AUX_DEFAULT_OUTPUT_TOKENS, SEMANTIC_LAYOUT_MAX_OUTPUT_TOKENS
+            ),
             temperature=args.vision_temperature,
             detail=args.vision_detail or "low",
             max_edge=args.vision_max_edge,
@@ -137,7 +154,7 @@ def _stage_figure_crop(state: BuildState) -> None:
         max_crops_per_page=args.figure_max_crops_per_page,
         min_confidence=args.figure_min_confidence,
         min_area=args.figure_min_area,
-        max_output_tokens=min(args.vision_max_output_tokens or 1000, 1200),
+        max_output_tokens=_capped_tokens(args.vision_max_output_tokens, VISION_AUX_DEFAULT_OUTPUT_TOKENS, FIGURE_CROP_MAX_OUTPUT_TOKENS),
         temperature=args.vision_temperature,
         detail=args.vision_detail,
         max_edge=args.vision_max_edge,
@@ -185,12 +202,11 @@ def _stage_ocr(state: BuildState) -> None:
 def _stage_vision(state: BuildState) -> None:
     args = state.args
     deck = _require_deck(state)
-    vision_mode = args.vision if args.vision != "off" else "auto"
     state.progress.start_stage("vision", message="Running vision analysis")
     state.vision_report = enrich_deck_with_vision(
         deck,
         output_root=state.output_root,
-        mode=vision_mode,
+        mode=args.vision,
         provider=args.vision_provider,
         model=args.vision_model,
         api_key=args.vision_api_key,
@@ -228,7 +244,9 @@ def _stage_figure_grounding(state: BuildState) -> None:
         base_url=args.vision_base_url,
         cache_mode=args.vision_cache,
         cache_dir=state.cache_dirs["vision"],
-        max_output_tokens=min(args.vision_max_output_tokens or 1000, 1400),
+        max_output_tokens=_capped_tokens(
+            args.vision_max_output_tokens, VISION_AUX_DEFAULT_OUTPUT_TOKENS, FIGURE_GROUNDING_MAX_OUTPUT_TOKENS
+        ),
         temperature=args.vision_temperature,
         detail=args.vision_detail or "low",
         max_edge=args.vision_max_edge,
@@ -247,15 +265,15 @@ def _stage_sections(state: BuildState) -> None:
         deck,
         output_root=state.output_root,
         mode=args.section_detection,
-        use_llm=args.use_llm and (args.note_context == "section" or (args.note_context == "auto" and len(deck.pages) > 12)),
+        use_llm=args.use_llm and _resolved_context_mode(deck, args.note_context) == "section",
         provider=args.provider,
         model=args.model,
         api_key=args.api_key,
         base_url=args.base_url,
         cache_mode=args.section_cache,
         cache_dir=state.cache_dirs["sections"],
-        max_output_tokens=min(args.max_output_tokens or 1800, 2500),
-        temperature=0.0,
+        max_output_tokens=_capped_tokens(args.max_output_tokens, SECTIONS_DEFAULT_OUTPUT_TOKENS, SECTIONS_MAX_OUTPUT_TOKENS),
+        temperature=AUXILIARY_TEXT_TEMPERATURE,
     )
     state.artifacts.write_json("sections", "sections.json", state.section_report)
     state.progress.finish_stage("Section detection complete")
@@ -275,8 +293,8 @@ def _stage_deck_brief(state: BuildState) -> None:
         base_url=args.base_url,
         cache_mode=args.cache,
         cache_dir=state.cache_dirs["llm"],
-        max_output_tokens=min(args.max_output_tokens or 3000, 5000),
-        temperature=0.0,
+        max_output_tokens=_capped_tokens(args.max_output_tokens, DECK_BRIEF_DEFAULT_OUTPUT_TOKENS, DECK_BRIEF_MAX_OUTPUT_TOKENS),
+        temperature=AUXILIARY_TEXT_TEMPERATURE,
     )
     state.artifacts.write_json("deck_brief", "deck_brief.json", state.deck_brief_report)
     state.artifacts.write_text("deck_brief_markdown", "deck_brief.md", render_deck_brief_markdown(state.deck_brief_report))
@@ -298,8 +316,8 @@ def _stage_content_guard(state: BuildState) -> None:
         base_url=args.base_url,
         cache_mode=args.cache,
         cache_dir=state.cache_dirs["llm"],
-        max_output_tokens=min(args.max_output_tokens or 1800, 2500),
-        temperature=0.0,
+        max_output_tokens=_capped_tokens(args.max_output_tokens, CONTENT_GUARD_DEFAULT_OUTPUT_TOKENS, CONTENT_GUARD_MAX_OUTPUT_TOKENS),
+        temperature=AUXILIARY_TEXT_TEMPERATURE,
     )
     if state.content_guard_report is not None:
         state.artifacts.write_json("content_guard", "content_guard.json", state.content_guard_report)
@@ -424,7 +442,13 @@ def _stage_coverage(state: BuildState) -> None:
         "element_ir.json",
         build_deck_ir(deck, content_guard=state.content_guard_report, coverage_report=state.coverage_report),
     )
-    state.source_map = build_source_map(deck, state.notes_markdown, state.output_root)
+    state.source_map = build_source_map(
+        deck,
+        state.notes_markdown,
+        state.output_root,
+        content_guard=state.content_guard_report,
+        coverage_report=state.coverage_report,
+    )
     state.artifacts.write_json("source_map", "source_map.json", state.source_map)
     state.progress.finish_stage("Coverage complete")
 
@@ -441,7 +465,6 @@ def _stage_quality_report(state: BuildState) -> None:
         note_context=args.note_context,
         note_strategy=args.note_strategy,
         note_depth=args.note_depth,
-        study_pack_report=state.study_pack_report,
     )
     state.artifacts.write_json("quality_report", "quality_report.json", state.quality_report)
     state.progress.finish_stage("Quality report complete")
@@ -460,103 +483,27 @@ def _stage_export(state: BuildState) -> None:
 
 
 def _stage_run_summary(state: BuildState) -> None:
-    deck = _require_deck(state)
-    notes_result = _require_notes_result(state)
-    coverage_report = _require_report(state.coverage_report, "coverage")
-    source_map = _require_report(state.source_map, "source_map")
+    _require_deck(state)
+    _require_notes_result(state)
+    _require_report(state.coverage_report, "coverage")
+    _require_report(state.source_map, "source_map")
     state.progress.set_phase(None)
     state.progress.complete("Build complete")
     state.artifacts.register("run_summary", state.output_root / "run_summary.json")
-    run_summary = _build_run_summary(
-        args=state.args,
-        input_path=state.input_path,
-        output_root=state.output_root,
-        deck=deck,
-        modality_report=state.modality_report or {},
-        table_understanding_report=state.table_understanding_report or {},
-        semantic_layout_report=state.semantic_layout_report or {},
-        image_importance_report=state.image_importance_report,
-        section_report=state.section_report or {},
-        deck_brief_report=state.deck_brief_report,
-        deck_understanding_report=state.deck_understanding_report,
-        page_understanding_report=state.page_understanding_report,
-        composite_figure_report=state.composite_figure_report,
-        figure_report=state.figure_report,
-        figure_grounding_report=state.figure_grounding_report,
-        ocr_report=state.ocr_report,
-        vision_report=state.vision_report,
-        content_guard_report=state.content_guard_report,
-        llm_usage=notes_result.llm_usage,
-        coverage_report=coverage_report,
-        quality_report=state.quality_report,
-        source_map=source_map,
-        cache_dirs=state.cache_dirs,
-        refresh_slide_ids=state.refresh_slide_ids,
-        progress=state.progress,
-        note_asset_warnings=notes_result.asset_warnings or [],
-        export_report=state.export_report,
-        study_pack_report=state.study_pack_report,
-        artifact_registry=state.artifacts,
-        api_concurrency=state.api_concurrency,
-    )
-    state.artifacts.write_json("run_summary", "run_summary.json", run_summary)
+    state.artifacts.write_json("run_summary", "run_summary.json", _build_run_summary(state))
 
 
 def _print_build_outputs(state: BuildState) -> None:
-    args = state.args
-    if args.quiet:
+    if state.args.quiet:
         return
-    notes_result = _require_notes_result(state)
     output_root = state.output_root
     print(f"SlideNote build complete: {output_root}")
-    print(f"- content:  {output_root / 'content.json'}")
-    print(f"- notes:    {output_root / 'notes.md'}")
-    print(f"- coverage: {output_root / 'coverage.md'}")
-    print(f"- quality:  {output_root / 'quality_report.json'}")
-    print(f"- sources:  {output_root / 'source_map.json'}")
-    print(f"- element IR: {output_root / 'element_ir.json'}")
-    print(f"- modalities: {output_root / 'page_modalities.json'}")
-    print(f"- tables:   {output_root / 'table_understanding.json'}")
-    print(f"- semantic: {output_root / 'semantic_layout.json'}")
-    print(f"- sections: {output_root / 'sections.json'}")
-    if state.deck_brief_report is not None:
-        print(f"- deck brief: {output_root / 'deck_brief.json'}")
-    if state.content_guard_report is not None:
-        print(f"- content guard: {output_root / 'content_guard.json'}")
-    if state.deck_understanding_report is not None:
-        print(f"- deck understanding: {output_root / 'deck_understanding.json'}")
-    if state.page_understanding_report is not None:
-        print(f"- page understanding: {output_root / 'page_understanding.json'}")
-    print(f"- progress: {state.progress.path}")
-    print(f"- summary:  {output_root / 'run_summary.json'}")
-    if state.image_importance_report is not None:
-        print(f"- image rank: {output_root / 'image_importance.json'}")
-    if state.composite_figure_report is not None:
-        print(f"- composite figs: {output_root / 'composite_figures.json'}")
-    if notes_result.llm_usage is not None:
-        print(f"- llm use:  {output_root / 'llm_usage.json'}")
-    if notes_result.page_notes is not None:
-        print(f"- page notes: {output_root / 'page_notes.md'}")
-        print(f"- page json:  {output_root / 'page_notes.json'}")
-    if notes_result.weave_report is not None:
-        print(f"- weave:    {output_root / 'weave_report.json'}")
-    if state.figure_report is not None:
-        print(f"- figures:  {output_root / 'figures.json'}")
-        print(f"- fig use:  {output_root / 'figure_usage.json'}")
-    if state.figure_grounding_report is not None:
-        print(f"- fig ground: {output_root / 'figure_grounding.json'}")
-    if state.ocr_report is not None:
-        print(f"- ocr:      {output_root / 'ocr.json'}")
-        print(f"- ocr use:  {output_root / 'ocr_usage.json'}")
-    if state.vision_report is not None:
-        print(f"- visuals:  {output_root / 'visuals.json'}")
-        print(f"- vision:   {output_root / 'vision_usage.json'}")
-    if state.export_report is not None:
-        print(f"- exports:  {output_root / 'export_report.json'}")
-        notes_zip = output_root / "notes.zip"
-        if notes_zip.exists():
-            print(f"- note package: {notes_zip}")
-            print("  Reminder: Markdown notes are inside notes.zip with image assets.")
+    artifacts = state.artifacts.as_summary()
+    width = max((len(name) for name in artifacts), default=0)
+    for name, path in artifacts.items():
+        print(f"- {name.ljust(width)}  {output_root / path}")
+    if "notes_zip" in artifacts:
+        print("  Reminder: Markdown notes are inside notes.zip with image assets.")
     for stage in _slowest_stages(state.progress, limit=3):
         print(f"- slow stage: {stage['name']} {stage['elapsed_seconds']:.1f}s")
 
@@ -591,7 +538,7 @@ BUILD_PHASES = (
         BuildStep("figure_crop", _stage_figure_crop, lambda state: state.args.figure_crop == "vision" or (state.args.figure_crop == "auto" and state.args.vision != "off")),
         BuildStep("image_importance", _stage_image_importance, lambda state: state.args.image_ranking != "off"),
         BuildStep("ocr", _stage_ocr, lambda state: state.args.ocr != "off"),
-        BuildStep("vision", _stage_vision, lambda state: state.args.vision != "off" or state.args.figure_grounding == "vision"),
+        BuildStep("vision", _stage_vision, lambda state: state.args.vision != "off"),
         BuildStep("figure_grounding", _stage_figure_grounding, lambda state: state.args.figure_grounding != "off"),
         BuildStep("sections", _stage_sections),
         BuildStep("deck_brief", _stage_deck_brief, lambda state: _should_build_deck_brief(state.args)),

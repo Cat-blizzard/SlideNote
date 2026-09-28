@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -13,6 +11,10 @@ from slidenote.modality import page_has_hint, page_has_manual_modality
 from slidenote.models import Deck, SlidePage
 from slidenote.table_understanding import table_preview
 from slidenote.utils import (
+    advance_progress,
+    parse_json_object,
+    error_summary,
+    run_target_jobs,
     cleanup_temp_image,
     display_path,
     file_sha256,
@@ -97,25 +99,14 @@ def enrich_deck_with_vision(
         )
         return index, target, record, parsed
 
-    results = []
-    if workers == 1:
-        for index, target in enumerate(targets):
-            result = process(index, target)
-            results.append(result)
-            if progress_callback:
-                _, completed_target, record, _ = result
-                progress_callback({"event": "advance", "record": record, "slide_id": completed_target.slide_id})
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(process, index, target): (index, target) for index, target in enumerate(targets)}
-            for future in as_completed(futures):
-                result = future.result()
-                results.append(result)
-                if progress_callback:
-                    _, completed_target, record, _ = result
-                    progress_callback({"event": "advance", "record": record, "slide_id": completed_target.slide_id})
+    def failed(index: int, target: VisionTarget, exc: Exception) -> tuple[int, VisionTarget, dict[str, Any], dict[str, Any]]:
+        record = _skipped_record(target, "api_error")
+        record.update({"cache_status": "error", "error": error_summary(exc), "visual_status": "failed"})
+        return index, target, record, {}
 
-    for index, target, record, parsed in sorted(results, key=lambda item: item[0]):
+    results = run_target_jobs(targets, process, workers=workers, on_error=failed, on_result=advance_progress(progress_callback))
+
+    for index, target, record, parsed in results:
         _apply_visual_result(
             deck,
             target,
@@ -145,12 +136,12 @@ def _process_visual_target(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     source_path = (output_root / target.path).resolve()
     if not source_path.exists():
-        record = _skipped_record(target, "missing_file", output_root)
+        record = _skipped_record(target, "missing_file")
         record["visual_status"] = "missing_file"
         return record, {}
     prepared = prepare_image_for_api(source_path, max_edge=max_edge)
     if prepared is None:
-        record = _skipped_record(target, "unsupported_or_unreadable_image", output_root)
+        record = _skipped_record(target, "unsupported_or_unreadable_image")
         record["visual_status"] = "unsupported_or_unreadable_image"
         return record, {}
 
@@ -199,6 +190,7 @@ def _process_visual_target(
                 base_url=runtime["base_url"],
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
+                for_vision=True,
             )
             llm_result = client.generate_image_with_usage(prepared_path, prompt, system_prompt=VISION_SYSTEM_PROMPT, image_detail=detail)
             result_json = llm_result.text
@@ -350,6 +342,12 @@ def _vision_prompt(target: VisionTarget, page: SlidePage | None = None) -> str:
 
 
 def _page_context(page: SlidePage | None, limit: int = 1200) -> str:
+    extra = [f"page_ocr_text：{page.page_ocr_text[:600]}"] if page and page.page_ocr_text and page.page_ocr_status else []
+    return page_prompt_context(page, limit=limit, extra=extra)
+
+
+def page_prompt_context(page: SlidePage | None, *, limit: int, extra: list[str] | None = None) -> str:
+    """Compact page text (title, first text blocks, tables) for vision prompts."""
     if page is None:
         return ""
     pieces: list[str] = []
@@ -360,8 +358,7 @@ def _page_context(page: SlidePage | None, limit: int = 1200) -> str:
     for table in page.tables[:2]:
         preview = table_preview(table, limit=260, raw_rows=3)
         pieces.append(f"{table.id}(table)：{preview}")
-    if page.page_ocr_text and page.page_ocr_status:
-        pieces.append(f"page_ocr_text：{page.page_ocr_text[:600]}")
+    pieces.extend(extra or [])
     text = "\n".join(piece for piece in pieces if piece.strip())
     if len(text) > limit:
         return text[: limit - 1] + "…"
@@ -369,15 +366,9 @@ def _page_context(page: SlidePage | None, limit: int = 1200) -> str:
 
 
 def _parse_visual_json(text: str) -> dict[str, Any]:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        parsed = {"ocr_text": "", "visual_summary": cleaned, "content_type": "unknown", "confidence": None, "warnings": ["model_output_not_json"]}
+    parsed = parse_json_object(text)
+    if parsed is None:
+        parsed = {"ocr_text": "", "visual_summary": text.strip(), "content_type": "unknown", "confidence": None, "warnings": ["model_output_not_json"]}
     parsed.setdefault("ocr_text", "")
     parsed.setdefault("visual_summary", "")
     parsed.setdefault("warnings", [])
@@ -425,6 +416,7 @@ def _build_report(
         "llm_calls": sum(1 for record in records if record.get("llm_call")),
         "api_retries": sum(int(record.get("api_retries") or 0) for record in records),
         "skipped": sum(1 for record in records if record.get("cache_status") == "skipped"),
+        "failed": sum(1 for record in records if record.get("cache_status") == "error"),
         "input_tokens": sum_int(record.get("input_tokens") for record in records),
         "output_tokens": sum_int(record.get("output_tokens") for record in records),
         "total_tokens": sum_int(record.get("total_tokens") for record in records),
@@ -461,7 +453,7 @@ def _base_record(target: VisionTarget, cache_key: str, cache_path: Path, output_
     }
 
 
-def _skipped_record(target: VisionTarget, status: str, output_root: Path) -> dict[str, Any]:
+def _skipped_record(target: VisionTarget, status: str) -> dict[str, Any]:
     return {
         "slide_id": target.slide_id,
         "kind": target.kind,

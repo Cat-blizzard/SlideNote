@@ -177,3 +177,37 @@ def test_external_cli_adapter_normalizes_generic_pages_stdout(tmp_path, monkeypa
     assert deck.pages[0].slide_id == 1
     assert deck.pages[0].title == "Transport Layer"
     assert deck.pages[0].text_blocks[0].content == "Transport Layer"
+
+
+def test_generic_json_does_not_duplicate_nested_text_or_scan_tables_as_text(tmp_path):
+    from slidenote.parser_adapters import _deck_from_generic_json
+
+    data = {
+        "pages": [
+            {
+                "page": 1,
+                "blocks": [
+                    {"type": "section", "text": "Parent", "children": [{"type": "paragraph", "text": "Parent"}]},
+                    {"type": "table", "rows": [["A", "B"], ["1", "2"]], "children": [{"type": "cell", "text": "A"}]},
+                    {"type": "picture", "path": "img.png", "text": "caption"},
+                ],
+            }
+        ]
+    }
+
+    deck = _deck_from_generic_json(data, tmp_path / "x.pdf", tmp_path, tmp_path)
+    page = deck.pages[0]
+
+    assert [block.content for block in page.text_blocks] == ["Parent"]
+    assert len(page.tables) == 1
+    assert len(page.images) == 1
+
+
+def test_command_template_keeps_spaced_paths_and_literal_braces(tmp_path):
+    from pathlib import Path
+
+    from slidenote.parser_adapters import _command_from_template
+
+    command = _command_from_template("tool --pages {page} {input} -o {out}", Path("my deck.pdf"), Path("out dir"))
+
+    assert command == ["tool", "--pages", "{page}", "my deck.pdf", "-o", "out dir"]

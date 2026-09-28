@@ -5,7 +5,28 @@ import pytest
 
 from slidenote.llm import LLMClient, LLMResult, get_provider_spec, resolve_provider_runtime
 from slidenote.models import ImageAsset, SlidePage
-from slidenote.notes.prompts import _llm_page_prompt
+from slidenote.notes.contexts import NoteContext
+from slidenote.notes.prompt_templates import _llm_context_prompt
+
+
+def _llm_page_prompt(page: SlidePage, supports_image_input: bool = False) -> str:
+    """Single-page note prompt with default options (test convenience)."""
+    context = NoteContext(id=f"p{page.slide_id}", kind="page", title=page.title or f"第 {page.slide_id} 页", pages=[page])
+    return _llm_context_prompt(
+        context,
+        supports_image_input=supports_image_input,
+        asset_map={},
+        source_display="hidden",
+        note_context="page",
+        note_style="article",
+        note_profile="auto",
+        note_depth="detailed",
+        note_language="zh",
+        term_policy="bilingual",
+        screenshot_policy="fallback",
+        figure_placement="inline",
+        source_type="pdf",
+    )
 
 
 def test_provider_aliases():

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from collections import Counter
@@ -10,6 +9,7 @@ from typing import Any
 
 from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck, SlidePage
+from slidenote.utils import file_sha256
 
 PAGE_MODALITIES = {"native_text", "mixed", "image_only", "shape_diagram", "decorative"}
 OVERRIDE_MODALITIES = PAGE_MODALITIES | {"unknown"}
@@ -258,14 +258,11 @@ def _manifest_matches_source(manifest: dict[str, Any], source_path: str, warning
             warnings.append("Modality override source_sha256 must be a 64-character hex digest.")
             return False
         try:
-            digest = hashlib.sha256()
-            with Path(source_path).open("rb") as source:
-                for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                    digest.update(chunk)
+            digest = file_sha256(Path(source_path)).removeprefix("sha256:")
         except OSError as exc:
             warnings.append(f"Could not verify modality override source: {exc}")
             return False
-        if digest.hexdigest() != source_hash.lower():
+        if digest != source_hash.lower():
             warnings.append("Modality override source hash does not match this deck.")
             return False
         return True

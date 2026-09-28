@@ -10,15 +10,14 @@ from typing import Any
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text
 from slidenote.llm_cache import utc_now_iso
+from slidenote.geometry import normalize_asset_bbox, normalize_page_bbox
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_text_for_prompt
 from slidenote.utils import (
     as_float,
-    clamp_normalized_bbox as _clamp_bbox,
     cleanup_temp_image,
     display_path,
     file_sha256,
-    looks_normalized,
     layout_order_from_bbox as _order_from_bbox,
     parse_json_object,
     prepare_image_for_api,
@@ -29,7 +28,8 @@ from slidenote.utils import (
 
 FIGURE_GROUNDING_MODES = {"off", "auto", "vision"}
 FIGURE_PLACEMENT_MODES = {"inline", "page-end"}
-FIGURE_AUDIT_MODES = {"off", "local", "llm"}
+# Only the local audit is implemented; there is no LLM audit mode.
+FIGURE_AUDIT_MODES = {"off", "local"}
 FIGURE_GROUNDING_PROMPT_VERSION = "figure-grounding-vision-v1"
 FIGURE_GROUNDING_MIN_CONFIDENCE = 0.55
 
@@ -159,7 +159,7 @@ def enrich_deck_with_figure_grounding(
             if image.anchor_element_ids or image.role == "figure_crop":
                 auto_insertable_count += 1
 
-            page_records.append(_image_record(page, image, output_root))
+            page_records.append(_image_record(deck, page, image))
 
         page_entries.append(
             {
@@ -272,13 +272,11 @@ def ordered_page_elements(
 
 
 def normalized_image_bbox(deck: Deck, page: SlidePage, image: ImageAsset) -> list[float] | None:
-    if image.crop_bbox and looks_normalized(image.crop_bbox):
-        return _clamp_bbox(image.crop_bbox)
-    return _normalize_bbox(deck.source_type, image.bbox, page)
+    return normalize_asset_bbox(deck.source_type, page, image)
 
 
 def normalized_element_bbox(deck: Deck, page: SlidePage, element: TextBlock | TableBlock) -> list[float] | None:
-    return _normalize_bbox(deck.source_type, element.bbox, page)
+    return normalize_page_bbox(deck.source_type, element.bbox, page)
 
 
 def _layout_elements(deck: Deck, page: SlidePage) -> list[dict[str, Any]]:
@@ -421,6 +419,7 @@ def _process_figure_grounding_vision_page(
                 base_url=runtime["base_url"],
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
+                for_vision=True,
             )
             llm_result = client.generate_image_with_usage(
                 prepared_path,
@@ -809,8 +808,7 @@ def _local_audit_status(image: ImageAsset) -> str:
     return "ok"
 
 
-def _image_record(page: SlidePage, image: ImageAsset, output_root: Path) -> dict[str, Any]:
-    del output_root
+def _image_record(deck: Deck, page: SlidePage, image: ImageAsset) -> dict[str, Any]:
     return {
         "id": image.id,
         "path": image.path,
@@ -837,27 +835,9 @@ def _image_record(page: SlidePage, image: ImageAsset, output_root: Path) -> dict
         "crop_warnings": list(image.crop_warnings),
         "confidence": image.confidence,
         "bbox": image.bbox,
+        "bbox_normalized": normalized_image_bbox(deck, page, image),
         "slide_id": page.slide_id,
     }
-
-
-def _normalize_bbox(source_type: str, bbox: list[float] | None, page: SlidePage) -> list[float] | None:
-    if not bbox or len(bbox) != 4:
-        return None
-    if looks_normalized(bbox):
-        return _clamp_bbox(bbox)
-    width = page.page_width or 0.0
-    height = page.page_height or 0.0
-    if width <= 0 or height <= 0:
-        return None
-    x1, y1, third, fourth = [float(value) for value in bbox]
-    if source_type == "pptx":
-        x2 = x1 + third
-        y2 = y1 + fourth
-    else:
-        x2 = third
-        y2 = fourth
-    return _clamp_bbox([x1 / width, y1 / height, x2 / width, y2 / height])
 
 
 def _horizontal_overlap_ratio(a: list[float], b: list[float]) -> float:
@@ -879,14 +859,19 @@ def _image_sort_key(image: ImageAsset) -> tuple[int, float, str]:
 
 
 def _image_text(image: ImageAsset) -> str:
-    return " ".join(part for part in [image.caption, image.visual_summary, image.ocr_text] if part)
+    caption = image.caption if image.caption and not _is_generic_caption(image.caption) else None
+    return " ".join(part for part in [caption, image.visual_summary, image.ocr_text] if part)
 
 
 def _is_generic_caption(caption: str) -> bool:
-    return bool(re.fullmatch(r"第\s*\d+\s*页(?:嵌入)?图片\s*\d*|第\s*\d+\s*页图片|图示", caption.strip()))
+    return bool(re.fullmatch(r"第\s*\d+\s*页(?:嵌入图片|图片|局部图|组合图)\s*\d*|图示", caption.strip()))
 
 
 def _tokens(text: str) -> set[str]:
     words = {word.lower() for word in re.findall(r"[A-Za-z0-9_]{2,}", text)}
-    cjk = {char for char in text if "\u4e00" <= char <= "\u9fff"}
+    # Single CJK characters overlap between almost any two Chinese sentences, so
+    # compare character bigrams instead.
+    cjk: set[str] = set()
+    for run in re.findall(r"[\u4e00-\u9fff]+", text):
+        cjk.update(run[index : index + 2] for index in range(len(run) - 1))
     return words.union(cjk)

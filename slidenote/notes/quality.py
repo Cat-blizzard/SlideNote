@@ -5,7 +5,6 @@ from typing import Any
 
 from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck
-from slidenote.study_pack import build_question_quality_report
 from slidenote.utils import round_score
 
 
@@ -17,7 +16,6 @@ def build_note_quality_report(
     note_context: str,
     note_strategy: str,
     note_depth: str,
-    study_pack_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     paragraphs = _paragraphs(notes_markdown)
     heading_count = len(re.findall(r"(?m)^#{2,4}\s+", notes_markdown))
@@ -52,7 +50,6 @@ def build_note_quality_report(
         pitfall_score=pitfall_score,
         image_total=image_total,
     )
-    question_quality = build_question_quality_report(study_pack_report) if study_pack_report else None
     return {
         "schema_version": 1,
         "generated_at": utc_now_iso(),
@@ -71,8 +68,9 @@ def build_note_quality_report(
         "mechanical_page_listing_score": mechanical_page_listing_score,
         "self_test_score": self_test_score,
         "pitfall_score": pitfall_score,
-        "question_quality": question_quality,
-        "question_quality_score": question_quality.get("overall_score") if question_quality else None,
+        # Question quality belongs to `study-pack`; build keeps the documented null keys.
+        "question_quality": None,
+        "question_quality_score": None,
         "hallucination_risk": hallucination_risk,
         "suggested_repairs": suggested_repairs,
         "summary": {
@@ -83,7 +81,7 @@ def build_note_quality_report(
             "source_images": image_total,
             "coverage_missing": coverage_report.get("missing") if coverage_report else None,
             "required_visible_missing": (coverage_report.get("required_visible_coverage") or {}).get("missing") if coverage_report else None,
-            "question_quality_score": question_quality.get("overall_score") if question_quality else None,
+            "question_quality_score": None,
             "suggested_repairs": len(suggested_repairs),
         },
     }

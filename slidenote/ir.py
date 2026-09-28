@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from slidenote.geometry import asset_source_bbox
 from slidenote.ir_context import IRBuildContext
 from slidenote.ir_projection import source_ref_from_element
 from slidenote.ir_standard import (
@@ -55,8 +56,8 @@ def build_page_ir(
     return _build_page_ir(context, page)
 
 
-def iter_expected_source_elements(deck: Deck) -> Iterable[ElementIR]:
-    for page in build_deck_ir(deck)["pages"]:
+def iter_expected_source_elements(deck: Deck, deck_ir: dict[str, Any] | None = None) -> Iterable[ElementIR]:
+    for page in (deck_ir or build_deck_ir(deck))["pages"]:
         for element in page["elements"]:
             if element.get("kind") == "semantic_group":
                 continue
@@ -64,9 +65,9 @@ def iter_expected_source_elements(deck: Deck) -> Iterable[ElementIR]:
                 yield element
 
 
-def element_index_from_ir(deck: Deck) -> dict[str, dict[str, Any]]:
+def element_index_from_ir(deck: Deck, deck_ir: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
-    for page in build_deck_ir(deck)["pages"]:
+    for page in (deck_ir or build_deck_ir(deck))["pages"]:
         slide_id = int(page["slide_id"])
         for element in page["elements"]:
             if element.get("kind") == "semantic_group":
@@ -213,7 +214,7 @@ def _image_element(
         "figure_audit_status": image.figure_audit_status,
     }
     source_ids = _unique_ids([image.id, *image.source_element_ids])
-    raw_bbox = image.crop_bbox or image.bbox
+    raw_bbox = asset_source_bbox(image)
     role = primary_role("image", roles)
     element = {
         "element_id": image.id,

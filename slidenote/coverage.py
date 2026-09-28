@@ -3,13 +3,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from slidenote.content_guard import required_item_ids, structural_slide_ids as guard_structural_slide_ids
+from slidenote.content_guard import (
+    looks_like_structural_page,
+    required_item_ids,
+    structural_slide_ids as guard_structural_slide_ids,
+)
 from slidenote.figure_grounding import note_candidate_images
 from slidenote.ir import iter_expected_source_elements
 from slidenote.models import Deck, ImageAsset, SlidePage
 from slidenote.utils import (
     escape_md,
-    looks_like_outline_page,
     preview,
     source_tokens,
 )
@@ -301,63 +304,8 @@ def _structural_slide_ids(deck: Deck) -> set[int]:
     return {
         page.slide_id
         for index, page in enumerate(deck.pages)
-        if _looks_like_structural_page(page, index)
+        if looks_like_structural_page(page, index)
     }
-
-
-def _looks_like_structural_page(page: SlidePage, index: int) -> bool:
-    title = page.title or ""
-    text = "\n".join([title, *(block.content for block in page.text_blocks)])
-    normalized_title = _normalize_text_key(title)
-    normalized_text = _normalize_text_key(text)
-    if _has_structural_title(normalized_title):
-        return True
-    if index == 0 and any(marker in normalized_text for marker in _cover_markers()):
-        return True
-    if _has_standalone_structural_label(text):
-        return True
-    return looks_like_outline_page(text)
-
-
-def _has_structural_title(normalized_title: str) -> bool:
-    exact_titles = {
-        "\u76ee\u5f55",
-        "\u8bfe\u7a0b\u76ee\u5f55",
-        "\u672c\u7ae0\u76ee\u5f55",
-        "\u7ae0\u8282\u5bfc\u822a",
-        "contents",
-        "outline",
-        "agenda",
-    }
-    return normalized_title in exact_titles
-
-
-def _has_standalone_structural_label(text: str) -> bool:
-    labels = {"\u76ee\u5f55", "\u8bfe\u7a0b\u76ee\u5f55", "\u672c\u7ae0\u76ee\u5f55", "\u7ae0\u8282\u5bfc\u822a", "contents", "outline"}
-    for line in text.splitlines()[:4]:
-        normalized = _normalize_text_key(line)
-        if normalized in labels:
-            return True
-    return False
-
-
-def _cover_markers() -> set[str]:
-    return {
-        "\u8bb2\u5e08",
-        "\u6559\u5e08",
-        "\u6559\u6388",
-        "\u8054\u7cfb\u90ae\u7bb1",
-        "\u90ae\u7bb1",
-        "\u4e3b\u9875",
-        "email",
-        "homepage",
-        "http",
-        "www",
-    }
-
-
-def _normalize_text_key(value: str) -> str:
-    return re.sub(r"[\s:\uff1a,\uff0c.\u3002;\uff1b\u3001\-_\uff08\uff09()<>]+", "", value).lower()
 
 
 def _figure_coverage(deck: Deck, notes_markdown: str) -> dict[str, object]:

@@ -2,27 +2,28 @@ from __future__ import annotations
 
 import base64
 import json
-import tempfile
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
-
-from PIL import Image
 
 from slidenote.api_retry import with_api_retries
 from slidenote.llm_cache import LLMCache, make_cache_key, utc_now_iso
 from slidenote.modality import page_has_hint, page_has_manual_modality
 from slidenote.models import Deck, SlidePage
 from slidenote.utils import (
+    advance_progress,
+    error_summary,
+    run_target_jobs,
     cleanup_temp_image,
     display_path,
     file_sha256,
     first_env,
     image_area,
+    prepare_image_for_api,
     preview,
 )
 
@@ -172,6 +173,15 @@ def enrich_deck_with_ocr(
     if progress_callback:
         progress_callback({"event": "start", "total": len(targets)})
 
+    client_lock = threading.Lock()
+    shared_client: list[OCRClient] = []
+
+    def client_for_run() -> OCRClient:
+        with client_lock:
+            if not shared_client:
+                shared_client.append(OCRClient(provider=provider_name, api_key=api_key, secret_key=secret_key, endpoint=endpoint, language=language))
+            return shared_client[0]
+
     def process(index: int, target: OCRTarget) -> tuple[int, OCRTarget, dict[str, Any], str | None, str]:
         return (
             index,
@@ -182,8 +192,7 @@ def enrich_deck_with_ocr(
                 cache=cache,
                 cache_mode=cache_mode,
                 provider_name=provider_name,
-                api_key=api_key,
-                secret_key=secret_key,
+                client_for_run=client_for_run,
                 endpoint=endpoint,
                 language=language,
                 max_edge=max_edge,
@@ -191,25 +200,14 @@ def enrich_deck_with_ocr(
             ),
         )
 
-    results = []
-    if workers == 1:
-        for index, target in enumerate(targets):
-            result = process(index, target)
-            results.append(result)
-            if progress_callback:
-                _, completed_target, record, _, _ = result
-                progress_callback({"event": "advance", "record": record, "slide_id": completed_target.slide_id})
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(process, index, target): (index, target) for index, target in enumerate(targets)}
-            for future in as_completed(futures):
-                result = future.result()
-                results.append(result)
-                if progress_callback:
-                    _, completed_target, record, _, _ = result
-                    progress_callback({"event": "advance", "record": record, "slide_id": completed_target.slide_id})
+    def failed(index: int, target: OCRTarget, exc: Exception) -> tuple[int, OCRTarget, dict[str, Any], str | None, str]:
+        record = _skipped_record(target, "api_error")
+        record.update({"cache_status": "error", "error": error_summary(exc)})
+        return index, target, record, None, "failed"
 
-    for index, target, record, text, status in sorted(results, key=lambda item: item[0]):
+    results = run_target_jobs(targets, process, workers=workers, on_error=failed, on_result=advance_progress(progress_callback))
+
+    for index, target, record, text, status in results:
         _apply_ocr_result(deck, target, ocr_text=text, ocr_status=status)
         records_by_index[index] = record
 
@@ -223,8 +221,7 @@ def _process_ocr_target(
     cache: LLMCache,
     cache_mode: str,
     provider_name: str,
-    api_key: str | None,
-    secret_key: str | None,
+    client_for_run: Callable[[], "OCRClient"],
     endpoint: str | None,
     language: str,
     max_edge: int,
@@ -233,7 +230,7 @@ def _process_ocr_target(
     source_path = (output_root / target.path).resolve()
     if not source_path.exists():
         return _skipped_record(target, "missing_file"), None, "missing_file"
-    prepared = _prepare_image_for_ocr(source_path, max_edge=max_edge)
+    prepared = prepare_image_for_ocr(source_path, max_edge=max_edge)
     if prepared is None:
         return _skipped_record(target, "unsupported_or_unreadable_image"), None, "unsupported_or_unreadable_image"
 
@@ -267,7 +264,7 @@ def _process_ocr_target(
                 }
             )
         else:
-            client = OCRClient(provider=provider_name, api_key=api_key, secret_key=secret_key, endpoint=endpoint, language=language)
+            client = client_for_run()
             retry_result = with_api_retries(lambda: client.recognize(prepared_path))
             result = retry_result.value
             text = result.text
@@ -362,28 +359,26 @@ def _apply_ocr_result(deck: Deck, target: OCRTarget, ocr_text: str | None = None
             image.ocr_status = ocr_status or image.ocr_status
 
 
-def _prepare_image_for_ocr(path: Path, max_edge: int) -> tuple[Path, dict[str, Any]] | None:
-    try:
-        with Image.open(path) as image:
-            original = {"width": image.width, "height": image.height, "mode": image.mode, "format": image.format}
-            image = image.convert("RGB")
-            scale = min(1.0, max_edge / max(image.width, image.height))
-            if scale < 1.0:
-                image = image.resize((max(1, int(image.width * scale)), max(1, int(image.height * scale))))
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
-            tmp_path = Path(tmp.name)
-            tmp.close()
-            image.save(tmp_path, format="JPEG", quality=90, optimize=True)
-            meta = {
-                "original": original,
-                "prepared": {"width": image.width, "height": image.height, "mime_type": "image/jpeg", "bytes": tmp_path.stat().st_size},
-            }
-            return tmp_path, meta
-    except Exception:
-        return None
+def prepare_image_for_ocr(path: Path, max_edge: int) -> tuple[Path, dict[str, Any]] | None:
+    return prepare_image_for_api(path, max_edge=max_edge, quality=90)
+
+
+_BAIDU_TOKENS: dict[tuple[str, str], str] = {}
+_BAIDU_TOKEN_LOCK = threading.Lock()
 
 
 def _baidu_access_token(api_key: str, secret_key: str) -> str:
+    # Tokens are valid for 30 days; one per process avoids an extra request per image.
+    with _BAIDU_TOKEN_LOCK:
+        cached = _BAIDU_TOKENS.get((api_key, secret_key))
+        if cached:
+            return cached
+        token = _fetch_baidu_access_token(api_key, secret_key)
+        _BAIDU_TOKENS[(api_key, secret_key)] = token
+        return token
+
+
+def _fetch_baidu_access_token(api_key: str, secret_key: str) -> str:
     query = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": api_key, "client_secret": secret_key})
     data = _get_json(f"https://aip.baidubce.com/oauth/2.0/token?{query}")
     token = data.get("access_token")
@@ -437,6 +432,7 @@ def _build_report(
         "api_calls": sum(1 for record in records if record.get("api_call")),
         "api_retries": sum(int(record.get("api_retries") or 0) for record in records),
         "skipped": sum(1 for record in records if record.get("cache_status") == "skipped"),
+        "failed": sum(1 for record in records if record.get("cache_status") == "error"),
         "text_chars": sum(record.get("text_chars", 0) for record in records if isinstance(record.get("text_chars"), int)),
     }
     return {

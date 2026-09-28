@@ -105,3 +105,50 @@ def test_llm_section_plan_is_cached_and_normalized(tmp_path, monkeypatch):
     assert second["summary"]["local_cache_hits"] == 1
     assert second["summary"]["llm_call"] is False
     assert len(calls) == 1
+
+
+def _four_page_deck() -> Deck:
+    return Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[
+            SlidePage(slide_id=index, title=title, text_blocks=[TextBlock(id=f"s{index}_t1", type="paragraph", content=title)])
+            for index, title in enumerate(["Intro", "Replication", "Quorum", "Summary"], start=1)
+        ],
+    )
+
+
+def test_llm_section_plan_falls_back_to_local_plan_when_call_fails(tmp_path, monkeypatch):
+    class BrokenClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt, system_prompt=None):
+            raise RuntimeError("HTTP 401 unauthorized")
+
+    monkeypatch.setattr("slidenote.sections.LLMClient", BrokenClient)
+    plan = build_section_plan(_four_page_deck(), tmp_path, mode="llm", use_llm=True, provider="openai", api_key="bad", cache_dir=tmp_path / "cache")
+
+    assert plan["method"] == "local_fallback"
+    assert "llm_section_call_failed" in plan["warnings"]
+    assert "401" in plan["llm"]["error"]
+    assert plan["sections"]
+
+
+def test_llm_section_plan_accepts_numeric_string_slide_ids(tmp_path, monkeypatch):
+    class StringIdClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def generate_with_usage(self, prompt, system_prompt=None):
+            class Result:
+                text = '{"sections":[{"title":"Intro","start_slide_id":"1"},{"title":"Quorum","start_slide_id":"3"}]}'
+                usage = {}
+
+            return Result()
+
+    monkeypatch.setattr("slidenote.sections.LLMClient", StringIdClient)
+    plan = build_section_plan(_four_page_deck(), tmp_path, mode="llm", use_llm=True, provider="openai", api_key="k", cache_dir=tmp_path / "cache")
+
+    assert plan["method"] == "llm"
+    assert [section["slide_ids"] for section in plan["sections"]] == [[1, 2], [3, 4]]

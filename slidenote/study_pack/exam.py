@@ -39,14 +39,25 @@ def _attach_inline_figure_refs(exam: dict[str, Any], figure_table_notes: list[di
                 for note in matched[:2]
             ]
 
+MINUTES_PER_FINAL_QUESTION = 6
+
+
+def _question_points(question: dict[str, Any]) -> int:
+    qtype = _normalize_question_type(question.get("type"))
+    return _as_int(question.get("points"), _default_points(qtype))
+
+
+def _final_exam_duration(question_count: int) -> int:
+    return max(30, min(180, question_count * MINUTES_PER_FINAL_QUESTION))
+
+
 def _build_final_exam(exam: dict[str, Any]) -> dict[str, Any]:
     questions = _dict_list(exam.get("questions"), limit=200)
-    total_points = sum(_as_int(question.get("points"), _default_points(_normalize_question_type(question.get("type")))) for question in questions)
     return {
         "title": f"{_clean_inline(exam.get('title')) or '课程'} - 期末模拟卷",
         "mode": "mock_final",
-        "duration_minutes": max(30, min(180, len(questions) * 6)),
-        "total_points": total_points,
+        "duration_minutes": _final_exam_duration(len(questions)),
+        "total_points": sum(_question_points(question) for question in questions),
         "instructions": "先独立完成，再核对 final_exam.answers.md；错题回到来源页和 review.md 对应章节复盘。",
         "questions": questions,
     }
@@ -345,6 +356,43 @@ def render_exam_html(report: dict[str, Any]) -> str:
 </html>
 """
 
+def _question_lines(questions: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for index, question in enumerate(questions, start=1):
+        qtype = _normalize_question_type(question.get("type"))
+        label = QUESTION_TYPE_LABELS.get(qtype, "题目")
+        lines.append(f"{index}. 【{label} · {_question_points(question)} 分】{_clean_inline(question.get('question'))}")
+        if qtype == "choice":
+            for option_index, option in enumerate(_string_list(question.get("options"), limit=8)):
+                lines.append(f"   {chr(65 + option_index)}. {option}")
+        for image_ref in _dict_list(question.get("image_refs"), limit=3):
+            path = _clean_inline(image_ref.get("path"))
+            image_title = _clean_inline(image_ref.get("title")) or "题目图"
+            if path:
+                lines.append(f"   ![{image_title}]({path})")
+        if qtype in {"short", "essay", "comprehensive"}:
+            lines.extend(["", "   答："])
+        lines.append("")
+    return lines
+
+
+def _answer_lines(questions: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for index, question in enumerate(questions, start=1):
+        qtype = _normalize_question_type(question.get("type"))
+        explanation = _clean_inline(question.get("explanation")) or "复习对应知识点后再核对答案。"
+        lines.append(f"{index}. **答案**：{_answer_text(question, qtype)}")
+        lines.append(f"   **解析**：{explanation}")
+        pitfall = _clean_inline(question.get("pitfall"))
+        if pitfall:
+            lines.append(f"   **易错提醒**：{pitfall}")
+        source_refs = _string_list(question.get("source_refs"), limit=8)
+        if source_refs:
+            lines.append(f"   **来源**：{', '.join(source_refs)}")
+        lines.append("")
+    return lines
+
+
 def render_exam_markdown(report: dict[str, Any]) -> str:
     exam = report.get("exam") if isinstance(report.get("exam"), dict) else {}
     title = _clean_inline(exam.get("title")) or _source_title(report)
@@ -353,86 +401,29 @@ def render_exam_markdown(report: dict[str, Any]) -> str:
     subtitle = _clean_inline(exam.get("subtitle"))
     if subtitle:
         lines.extend([subtitle, ""])
-    lines.extend(["## 题目", ""])
-    for index, question in enumerate(questions, start=1):
-        qtype = _normalize_question_type(question.get("type"))
-        label = QUESTION_TYPE_LABELS.get(qtype, "题目")
-        points = _as_int(question.get("points"), _default_points(qtype))
-        lines.append(f"{index}. 【{label} · {points} 分】{_clean_inline(question.get('question'))}")
-        if qtype == "choice":
-            for option_index, option in enumerate(_string_list(question.get("options"), limit=8)):
-                lines.append(f"   {chr(65 + option_index)}. {option}")
-        for image_ref in _dict_list(question.get("image_refs"), limit=3):
-            path = _clean_inline(image_ref.get("path"))
-            title = _clean_inline(image_ref.get("title")) or "题目图"
-            if path:
-                lines.append(f"   ![{title}]({path})")
-        if qtype in {"short", "essay", "comprehensive"}:
-            lines.append("")
-            lines.append("   答：")
-        lines.append("")
-
-    lines.extend(["## 答案与解析", ""])
-    for index, question in enumerate(questions, start=1):
-        qtype = _normalize_question_type(question.get("type"))
-        answer = _answer_text(question, qtype)
-        explanation = _clean_inline(question.get("explanation")) or "复习对应知识点后再核对答案。"
-        lines.append(f"{index}. **答案**：{answer}")
-        lines.append(f"   **解析**：{explanation}")
-        pitfall = _clean_inline(question.get("pitfall"))
-        if pitfall:
-            lines.append(f"   **易错提醒**：{pitfall}")
-        source_refs = _string_list(question.get("source_refs"), limit=8)
-        if source_refs:
-            lines.append(f"   **来源**：{', '.join(source_refs)}")
-        lines.append("")
+    lines.extend(["## 题目", "", *_question_lines(questions)])
+    lines.extend(["## 答案与解析", "", *_answer_lines(questions)])
     return "\n".join(lines).rstrip() + "\n"
+
 
 def render_final_exam_answers_markdown(report: dict[str, Any]) -> str:
     final_exam = report.get("final_exam") if isinstance(report.get("final_exam"), dict) else {}
     title = _clean_inline(final_exam.get("title")) or _source_title(report)
     questions = _dict_list(final_exam.get("questions"), limit=200)
-    lines = [f"# {title} - 答案与评分提示", ""]
-    for index, question in enumerate(questions, start=1):
-        qtype = _normalize_question_type(question.get("type"))
-        answer = _answer_text(question, qtype)
-        explanation = _clean_inline(question.get("explanation")) or "复习对应知识点后再核对答案。"
-        lines.append(f"{index}. **答案**：{answer}")
-        lines.append(f"   **解析**：{explanation}")
-        pitfall = _clean_inline(question.get("pitfall"))
-        if pitfall:
-            lines.append(f"   **易错提醒**：{pitfall}")
-        source_refs = _string_list(question.get("source_refs"), limit=8)
-        if source_refs:
-            lines.append(f"   **来源**：{', '.join(source_refs)}")
-        lines.append("")
+    lines = [f"# {title} - 答案与评分提示", "", *_answer_lines(questions)]
     return "\n".join(lines).rstrip() + "\n"
+
 
 def render_final_exam_markdown(report: dict[str, Any]) -> str:
     final_exam = report.get("final_exam") if isinstance(report.get("final_exam"), dict) else {}
     title = _clean_inline(final_exam.get("title")) or _source_title(report)
     questions = _dict_list(final_exam.get("questions"), limit=200)
-    total_points = sum(_as_int(question.get("points"), 0) for question in questions)
-    duration = _as_int(final_exam.get("duration_minutes"), max(30, len(questions) * 5))
+    total_points = sum(_question_points(question) for question in questions)
+    duration = _as_int(final_exam.get("duration_minutes"), _final_exam_duration(len(questions)))
     lines = [f"# {title}", "", f"- 建议时长：{duration} 分钟", f"- 总分：{total_points} 分", ""]
-    lines.extend(["## 试题", ""])
-    for index, question in enumerate(questions, start=1):
-        qtype = _normalize_question_type(question.get("type"))
-        label = QUESTION_TYPE_LABELS.get(qtype, "题目")
-        points = _as_int(question.get("points"), _default_points(qtype))
-        lines.append(f"{index}. 【{label} · {points} 分】{_clean_inline(question.get('question'))}")
-        if qtype == "choice":
-            for option_index, option in enumerate(_string_list(question.get("options"), limit=8)):
-                lines.append(f"   {chr(65 + option_index)}. {option}")
-        for image_ref in _dict_list(question.get("image_refs"), limit=3):
-            path = _clean_inline(image_ref.get("path"))
-            title_text = _clean_inline(image_ref.get("title")) or "题目图"
-            if path:
-                lines.append(f"   ![{title_text}]({path})")
-        if qtype in {"short", "essay", "comprehensive"}:
-            lines.extend(["", "   答："])
-        lines.append("")
+    lines.extend(["## 试题", "", *_question_lines(questions)])
     return "\n".join(lines).rstrip() + "\n"
+
 
 def render_wrong_answer_review_prompt(report: dict[str, Any]) -> str:
     wrong_review = report.get("wrong_answer_review") if isinstance(report.get("wrong_answer_review"), dict) else {}

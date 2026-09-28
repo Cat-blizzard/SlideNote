@@ -10,7 +10,7 @@ from slidenote.coverage import analyze_coverage
 from slidenote.llm_cache import LLMCache
 from slidenote.models import Deck, SlidePage, TextBlock
 from slidenote.notes import NoteOptions, generate_notes_result
-from slidenote.notes.assembly import NoteContext
+from slidenote.notes.contexts import NoteContext
 from slidenote.notes.repair import _repair_required_markdown_once
 
 
