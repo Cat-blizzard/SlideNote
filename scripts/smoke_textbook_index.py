@@ -2,24 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 import fitz
+from _smoke_common import OCR_ENV_KEYS, env_without, run
 
-
-API_ENV_KEYS = {
-    "BAIDU_OCR_API_KEY",
-    "BAIDU_OCR_SECRET_KEY",
-    "GOOGLE_API_KEY",
-    "GOOGLE_VISION_API_KEY",
-    "MATHPIX_APP_ID",
-    "MATHPIX_APP_KEY",
-}
 
 REQUIRED_FILES = {
     "textbook_manifest.json",
@@ -46,8 +36,8 @@ def main() -> int:
     try:
         root.mkdir(parents=True, exist_ok=True)
         _write_fixture_pdf(source)
-        env = _no_ocr_env()
-        _run(
+        env = env_without(OCR_ENV_KEYS)
+        run(
             [
                 sys.executable,
                 "-m",
@@ -90,19 +80,6 @@ def _write_fixture_pdf(path: Path) -> None:
             y += 28
     doc.save(path)
     doc.close()
-
-
-def _no_ocr_env() -> dict[str, str]:
-    env = dict(os.environ)
-    for key in API_ENV_KEYS:
-        env.pop(key, None)
-    return env
-
-
-def _run(command: list[str], *, env: dict[str, str]) -> None:
-    completed = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, check=False)
-    if completed.returncode != 0:
-        raise RuntimeError(f"Command failed with exit code {completed.returncode}: {' '.join(command)}\n{completed.stdout}")
 
 
 def _require_files(root: Path) -> None:

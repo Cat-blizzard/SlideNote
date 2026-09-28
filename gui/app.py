@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import html
-import io
 import json
 import os
 import re
@@ -10,7 +9,6 @@ import shutil
 import subprocess
 import threading
 import time
-import zipfile
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,8 +27,13 @@ try:
 except Exception:  # pragma: no cover - GUI fallback only
     run_doctor = None
 
+from slidenote.costing import read_json
+from slidenote.exporting import find_libreoffice
+
 from gui.studio_core import (
+    DEFAULT_TEXT_PROVIDER,
     PROVIDER_ENV_KEYS,
+    TEXT_PROVIDERS,
     StudioConfig,
     TextbookConfig,
     build_env,
@@ -38,14 +41,20 @@ from gui.studio_core import (
     build_study_pack_command,
     build_textbook_command,
     command_for_display,
+    coverage_missing_items,
+    coverage_summary,
     discover_outputs,
     discover_textbook_outputs,
+    format_cost,
+    format_count,
     needs_text_api,
     needs_vision_api,
+    output_signature,
     performance_tips,
     progress_percent,
     provider_env_key,
     safe_run_name,
+    zip_output_dir,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +70,8 @@ PRESETS = {
 }
 
 MODALITY_OPTIONS = ["native_text", "mixed", "image_only", "shape_diagram", "decorative", "unknown"]
+
+OCR_MODES = {"Auto scanned pages": "auto", "Off": "off", "All pages": "all"}
 
 
 def _run_simplified_app() -> None:
@@ -104,11 +115,19 @@ def _run_simplified_app() -> None:
         preset_name = st.selectbox("Workflow preset", list(PRESETS.keys()), index=0)
         preset = PRESETS[preset_name]
         preset_value = str(preset["preset"])
-        provider = st.selectbox("Text provider", ["deepseek", "openai", "qwen", "doubao", "glm", "gemini", "claude"], index=0)
+        provider = st.selectbox("Text provider", TEXT_PROVIDERS, index=TEXT_PROVIDERS.index(DEFAULT_TEXT_PROVIDER))
         vision = st.selectbox("Vision", ["auto", "off"], index=["auto", "off"].index(str(preset["vision"])), disabled=preset_value == "local")
         if preset_value == "local":
             vision = "off"
         vision_provider = "qwen"
+        ocr_label = st.selectbox(
+            "OCR",
+            ["Auto scanned pages", "Off", "All pages"],
+            index=0,
+            disabled=preset_value == "local",
+            help="auto only OCRs low-text/scanned pages; the Local preview preset always skips OCR.",
+        )
+        ocr_mode = "off" if preset_value == "local" else OCR_MODES[ocr_label]
 
         with st.expander("API keys", expanded=preset_value == "lecture"):
             api_key = st.text_input("Text API key", type="password", placeholder="Used for lecture builds and study packs")
@@ -154,7 +173,7 @@ def _run_simplified_app() -> None:
         vision=vision,
         vision_provider=vision_provider,
         vision_api_key=vision_api_key or (api_key if provider == vision_provider else None) or None,
-        ocr="auto" if preset_value == "lecture" else "off",
+        ocr=ocr_mode,
         ocr_api_key=ocr_api_key or None,
         ocr_secret_key=ocr_secret_key or None,
         export=",".join(export_options) if export_options else None,
@@ -295,8 +314,8 @@ def _render_textbook_library() -> None:
             _render_source_file(uploaded)
 
         st.markdown("### Build library")
-        ocr_label = st.selectbox("OCR", ["Auto scanned pages", "Off", "All pages"], index=0)
-        ocr_mode = {"Auto scanned pages": "auto", "Off": "off", "All pages": "all"}[ocr_label]
+        ocr_label = st.selectbox("OCR", list(OCR_MODES), index=0)
+        ocr_mode = OCR_MODES[ocr_label]
         with st.expander("OCR API key", expanded=ocr_mode != "off"):
             ocr_api_key = st.text_input("OCR API key / app id", type="password", key="textbook_ocr_api_key")
             ocr_secret_key = st.text_input("OCR secret / app key", type="password", key="textbook_ocr_secret_key")
@@ -474,7 +493,7 @@ def _render_workspace_downloads(output_dir: Path, outputs: dict[str, Path]) -> N
         c2.download_button("notes.md", data=notes.read_bytes(), file_name="notes.md", mime="text/markdown", use_container_width=True)
     else:
         c2.button("notes.md", disabled=True, use_container_width=True)
-    c3.download_button("all results", data=_zip_output_dir(output_dir), file_name=f"{output_dir.name}.zip", mime="application/zip", use_container_width=True)
+    c3.download_button("all results", data=_cached_output_zip(str(output_dir), output_signature(output_dir)), file_name=f"{output_dir.name}.zip", mime="application/zip", use_container_width=True)
     if notes_zip:
         st.caption("Share Markdown notes with notes.zip; it includes notes.md and notes.assets.")
 
@@ -505,8 +524,8 @@ def _render_study_pack_compact(output_dir: Path, config: StudioConfig | None = N
 
 
 def _render_usage_snapshot(output_dir: Path) -> None:
-    run_summary = _read_json(output_dir / "run_summary.json") or {}
-    cost_report = _read_json(output_dir / "cost_report.json") or {}
+    run_summary = read_json(output_dir / "run_summary.json") or {}
+    cost_report = read_json(output_dir / "cost_report.json") or {}
     counts = run_summary.get("counts") if isinstance(run_summary.get("counts"), dict) else {}
     cost_summary = cost_report.get("summary") if isinstance(cost_report.get("summary"), dict) else {}
     rows = [
@@ -541,7 +560,7 @@ def _render_export_readiness(export_options: list[str]) -> None:
     needs_pandoc = any(fmt in export_options for fmt in ("docx", "pdf", "latex"))
     needs_libreoffice = "pdf" in export_options
     pandoc_path = shutil.which("pandoc")
-    libreoffice_path = _find_libreoffice()
+    libreoffice_path = find_libreoffice()
     if needs_pandoc and not pandoc_path:
         st.warning("Word/LaTeX/PDF exports need Pandoc. Install Pandoc, then rerun. Markdown TOC still works.")
         st.code("winget install JohnMacFarlane.Pandoc", language="powershell")
@@ -554,14 +573,6 @@ def _render_export_readiness(export_options: list[str]) -> None:
         st.code("winget install -e --id TheDocumentFoundation.LibreOffice", language="powershell")
     elif needs_libreoffice:
         st.success(f"LibreOffice ready for PDF: {libreoffice_path}")
-
-
-def _find_libreoffice() -> str | None:
-    for executable in ("soffice", "soffice.com", "libreoffice"):
-        found = shutil.which(executable)
-        if found:
-            return found
-    return None
 
 
 def _api_status(enabled: bool, typed_key: str | None, provider: str) -> tuple[str, str, str]:
@@ -592,6 +603,8 @@ def _ocr_status(enabled: bool, api_key: str | None, secret_key: str | None, prov
 
 
 def _status_card(label: str, status: str, detail: str, tone: str, icon: str = "•") -> None:
+    # Doctor output includes paths and tool messages; escape everything rendered as HTML.
+    label, status, detail, tone, icon = (html.escape(str(value)) for value in (label, status, detail, tone, icon))
     st.markdown(
         f"""
         <div class="status-card tone-{tone}">
@@ -684,7 +697,7 @@ def _prepare_run_paths(uploaded, output_base: Path, timestamped_subfolder: bool)
 
 
 def _output_source_path(output_dir: Path) -> Path | None:
-    content = _read_json(output_dir / "content.json") or {}
+    content = read_json(output_dir / "content.json") or {}
     if not isinstance(content, dict):
         return None
     source_name = content.get("source_path")
@@ -697,7 +710,7 @@ def _output_source_path(output_dir: Path) -> Path | None:
 
 
 def _output_source_matches(output_dir: Path, input_path: Path) -> bool:
-    manifest = _read_json(output_dir / "page_modalities.overrides.json") or {}
+    manifest = read_json(output_dir / "page_modalities.overrides.json") or {}
     source_hash = manifest.get("source_sha256") if isinstance(manifest, dict) else None
     if source_hash is not None:
         if not isinstance(source_hash, str) or len(source_hash) != 64 or any(char not in "0123456789abcdefABCDEF" for char in source_hash):
@@ -857,7 +870,7 @@ def _run_study_pack(config: StudioConfig, question_count: int) -> None:
 
 
 def _update_progress_ui(progress_path: Path, progress_bar, status_box, stage_box) -> None:
-    progress = _read_json(progress_path)
+    progress = read_json(progress_path)
     if not progress:
         status_box.info("Waiting for progress.json...")
         return
@@ -937,7 +950,7 @@ def _render_textbook_workspace(output_dir: Path | None) -> None:
         return
     outputs = discover_textbook_outputs(output_dir)
     st.markdown(f"<div class='output-path'>Output saved to<br><code>{html.escape(str(output_dir))}</code></div>", unsafe_allow_html=True)
-    manifest = _read_json(outputs.get("manifest") or output_dir / "textbook_manifest.json") or {}
+    manifest = read_json(outputs.get("manifest") or output_dir / "textbook_manifest.json") or {}
     counts = manifest.get("counts") if isinstance(manifest.get("counts"), dict) else {}
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Pages", counts.get("pages", "—"))
@@ -980,12 +993,12 @@ def _render_textbook_downloads(output_dir: Path, outputs: dict[str, Path]) -> No
             col.download_button(path.name, data=path.read_bytes(), file_name=path.name, mime=_mime_for_path(path), use_container_width=True)
         else:
             col.button(label, disabled=True, use_container_width=True)
-    st.download_button("all textbook files", data=_zip_output_dir(output_dir), file_name=f"{output_dir.name}.zip", mime="application/zip", use_container_width=True)
+    st.download_button("all textbook files", data=_cached_output_zip(str(output_dir), output_signature(output_dir)), file_name=f"{output_dir.name}.zip", mime="application/zip", use_container_width=True)
 
 
 def _render_exports_tab(output_dir: Path) -> None:
     outputs = discover_outputs(output_dir)
-    export_report = _read_json(output_dir / "export_report.json")
+    export_report = read_json(output_dir / "export_report.json")
     export_paths = [
         ("Markdown ZIP", outputs.get("notes_zip"), "notes.zip"),
         ("Markdown TOC", outputs.get("notes_toc"), "notes.toc.md"),
@@ -1018,69 +1031,40 @@ def _render_exports_tab(output_dir: Path) -> None:
         st.caption("export_report.json will appear when extra exports are requested.")
 
 
-def _zip_output_dir(output_dir: Path) -> bytes:
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for path in sorted(output_dir.rglob("*")):
-            if path.is_file():
-                archive.write(path, path.relative_to(output_dir).as_posix())
-    buffer.seek(0)
-    return buffer.getvalue()
+@st.cache_data(show_spinner=False, max_entries=4)
+def _cached_output_zip(output_dir: str, signature: tuple[tuple[str, int, int], ...]) -> bytes:
+    # `signature` only keys the cache: the zip is rebuilt when files change, not on
+    # every Streamlit rerun. zip_output_dir leaves out `.cache/`.
+    del signature
+    return zip_output_dir(Path(output_dir))
 
 
 def _render_quality_panel(output_dir: Path) -> None:
-    coverage = _read_json(output_dir / "coverage.json") or {}
-    run_summary = _read_json(output_dir / "run_summary.json") or {}
-    total = int(coverage.get("total") or 0)
-    covered = int(coverage.get("covered") or 0)
-    missing = int(coverage.get("missing") or 0)
-    score = (covered / total * 100) if total else 100.0
+    coverage = read_json(output_dir / "coverage.json") or {}
+    run_summary = read_json(output_dir / "run_summary.json") or {}
+    summary = coverage_summary(coverage)
+    score = summary["ratio"] * 100
+    label = "Visible coverage" if summary["visible"] else "Coverage"
     q1, q2, q3, q4 = st.columns(4)
-    q1.metric("Coverage score", f"{score:.1f}%")
-    q2.metric("Covered elements", covered)
-    q3.metric("Missing elements", missing)
+    q1.metric(label, f"{score:.1f}%")
+    q2.metric("Explained elements", summary["covered"])
+    q3.metric("Not explained", summary["missing"])
     q4.metric("Pages", (run_summary.get("counts") or {}).get("pages", "—"))
     st.progress(min(max(score / 100, 0), 1))
+    if summary["required_total"]:
+        st.caption(f"Required items not explained: {summary['required_missing']} / {summary['required_total']}")
 
-    if missing:
-        st.warning("Some elements are not visibly covered. Use the repair queue below to decide which pages need refresh.")
-        missing_items = _coverage_missing_items(coverage)
-        if missing_items:
-            st.dataframe(missing_items, use_container_width=True, hide_index=True)
-            missing_pages = sorted({str(item.get("slide_id")) for item in missing_items if item.get("slide_id")})
-            if missing_pages:
-                pages_text = ",".join(missing_pages)
-                st.code(pages_text, language="text")
-                st.caption("Copy this into 'Refresh only these pages' to rerun only the affected pages.")
+    missing_items = coverage_missing_items(coverage)
+    if missing_items:
+        st.warning("Some slide elements are not explained in the note text. Review these pages against the slides.")
+        st.dataframe(missing_items, use_container_width=True, hide_index=True)
+        missing_pages = sorted({int(item["slide_id"]) for item in missing_items if item.get("slide_id")})
+        if missing_pages:
+            st.caption("Pages to review: " + ", ".join(str(page) for page in missing_pages))
     else:
         st.success("No missing coverage items reported.")
 
     _render_stage_timings(run_summary)
-
-
-def _coverage_missing_items(coverage: dict[str, Any]) -> list[dict[str, Any]]:
-    explicit = coverage.get("missing_items") or coverage.get("marker_only_items") or []
-    items = explicit if isinstance(explicit, list) else []
-    if not items and isinstance(coverage.get("items"), list):
-        items = [item for item in coverage["items"] if not item.get("covered")]
-    normalized = []
-    for item in items[:200]:
-        normalized.append(
-            {
-                "slide_id": item.get("slide_id") or _slide_id_from_element(item.get("id") or item.get("element_id")),
-                "element_id": item.get("id") or item.get("element_id"),
-                "kind": item.get("kind") or item.get("type") or "",
-                "reason": item.get("reason") or item.get("status") or "missing",
-            }
-        )
-    return normalized
-
-
-def _slide_id_from_element(element_id: str | None) -> int | None:
-    if not element_id:
-        return None
-    match = re.match(r"s(\d+)_", str(element_id))
-    return int(match.group(1)) if match else None
 
 
 def _render_stage_timings(run_summary: dict[str, Any]) -> None:
@@ -1107,8 +1091,8 @@ def _render_stage_timings(run_summary: dict[str, Any]) -> None:
 
 
 def _render_page_explorer(output_dir: Path) -> None:
-    content = _read_json(output_dir / "content.json") or {}
-    modalities = _read_json(output_dir / "page_modalities.json") or {}
+    content = read_json(output_dir / "content.json") or {}
+    modalities = read_json(output_dir / "page_modalities.json") or {}
     pages = content.get("pages") or []
     if not pages:
         st.info("content.json not found or has no pages.")
@@ -1206,7 +1190,7 @@ def _note_excerpt_for_page(notes_path: Path, slide_id: int) -> str:
 
 def _save_modality_override(output_dir: Path, slide_id: int, modality: str, note: str) -> None:
     path = output_dir / "page_modalities.overrides.json"
-    data = _read_json(path) or {"schema_version": 1, "pages": {}}
+    data = read_json(path) or {"schema_version": 1, "pages": {}}
     pages = data.setdefault("pages", {})
     pages[str(slide_id)] = {
         "modality": modality,
@@ -1232,14 +1216,14 @@ def _shorten(value: str, limit: int) -> str:
 
 
 def _render_cost_tab(output_dir: Path) -> None:
-    cost = _read_json(output_dir / "cost_report.json")
+    cost = read_json(output_dir / "cost_report.json")
     if cost:
         summary = cost.get("summary", {})
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Estimated cost", f"{summary.get('estimated_cost', 0):.6f} {cost.get('currency', 'USD')}")
+        c1.metric("Estimated cost", format_cost(summary.get("estimated_cost"), cost.get("currency")))
         c2.metric("Calls", summary.get("calls", 0))
-        c3.metric("Input tokens", f"{summary.get('input_tokens', 0):,}")
-        c4.metric("Output tokens", f"{summary.get('output_tokens', 0):,}")
+        c3.metric("Input tokens", format_count(summary.get("input_tokens", 0)))
+        c4.metric("Output tokens", format_count(summary.get("output_tokens", 0)))
         c5.metric("Cache hits", summary.get("local_cache_hits", 0))
         stages = cost.get("stages", [])
         if stages:
@@ -1259,7 +1243,7 @@ def _render_run_summary_tab(output_dir: Path) -> None:
         path = output_dir / filename
         if path.exists():
             with st.expander(filename, expanded=filename == "run_summary.json"):
-                st.json(_read_json(path) or {})
+                st.json(read_json(path) or {})
 
 
 def _render_markdown_file(path: Path, label: str) -> None:
@@ -1292,15 +1276,6 @@ def _mime_for_path(path: Path) -> str:
     if suffix == ".zip":
         return "application/zip"
     return "application/octet-stream"
-
-
-def _read_json(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
 
 
 def _read_jsonl(path: Path | None) -> list[dict[str, Any]]:
@@ -1489,9 +1464,6 @@ def _style() -> None:
         .device-log code { color:#cbd5e1; background:transparent; }
         .device-log code.ok { color:#86efac; }
 
-        .topbar {
-          display: none;
-        }
         .chip-row { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin: .8rem 0 .6rem; }
         .chip {
           display: inline-flex; align-items: center; min-height: 28px; max-width: 100%;

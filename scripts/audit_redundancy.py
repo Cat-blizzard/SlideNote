@@ -4,7 +4,8 @@ Pure-stdlib AST analysis. Reports:
   1. unused imports per module (names bound by import but never referenced,
      unless exported via __all__ or used in type-comment/string contexts)
   2. modules that are never imported anywhere in the repository
-  3. duplicate function bodies (same AST, same module or cross-module)
+  3. duplicate function bodies (same AST, same module or cross-module),
+     including the gui/ and scripts/ helpers
 
 Usage: python scripts/audit_redundancy.py
 """
@@ -19,6 +20,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "slidenote"
+# Directories whose functions are also checked for duplicated bodies.
+DUPLICATE_SCAN_DIRS = (ROOT / "gui", ROOT / "scripts")
 
 # Modules that are legitimate entry points / never need importers.
 ENTRY_POINTS = {
@@ -42,9 +45,18 @@ def module_name(path: Path, root: Path, package_prefix: str | None = None) -> st
     return ".".join(parts)
 
 
-def analyze_file(path: Path) -> tuple[set[str], list[tuple[int, str]], list[ast.stmt]]:
+def _annotations(node: ast.AST) -> list[ast.expr]:
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        args = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+        args += [arg for arg in (node.args.vararg, node.args.kwarg) if arg is not None]
+        return [annotation for annotation in [node.returns, *(arg.annotation for arg in args)] if annotation is not None]
+    if isinstance(node, ast.AnnAssign):
+        return [node.annotation]
+    return []
+
+
+def analyze_tree(tree: ast.Module) -> tuple[set[str], list[tuple[int, str, str]], list[ast.stmt]]:
     """Return (used_names, unused_imports, module_functions)."""
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     used: set[str] = set()
     imported: list[tuple[int, str, str]] = []  # (lineno, name, source)
     functions: list[ast.stmt] = []
@@ -54,12 +66,21 @@ def analyze_file(path: Path) -> tuple[set[str], list[tuple[int, str]], list[ast.
     for node in tree.body:
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "__all__":
-                    for elt in node.value.elts:  # type: ignore[attr-defined]
+                # Only literal lists/tuples can be read statically; skip computed __all__.
+                if isinstance(target, ast.Name) and target.id == "__all__" and isinstance(node.value, (ast.List, ast.Tuple)):
+                    for elt in node.value.elts:
                         if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
                             exported.add(elt.value)
 
     for node in ast.walk(tree):
+        # Quoted annotations ("NoteOptions") reference TYPE_CHECKING-only imports.
+        for annotation in _annotations(node):
+            if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+                try:
+                    parsed = ast.parse(annotation.value, mode="eval")
+                except SyntaxError:
+                    continue
+                used.update(name.id for name in ast.walk(parsed) if isinstance(name, ast.Name))
         if isinstance(node, ast.Name):
             used.add(node.id)
         elif isinstance(node, ast.Import):
@@ -73,7 +94,8 @@ def analyze_file(path: Path) -> tuple[set[str], list[tuple[int, str]], list[ast.
                 if alias.name == "*":
                     continue
                 local = alias.asname or alias.name
-                imported.append((node.lineno, local, f"{node.module}.{alias.name}"))
+                source = "." * node.level + (node.module or "")
+                imported.append((node.lineno, local, f"{source}.{alias.name}" if node.module else f"{source}{alias.name}"))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if node.name.startswith("test_") or node.name.startswith("_test"):
                 continue
@@ -113,10 +135,12 @@ def main() -> int:
     for path in repository_files:
         mod = importer_name(path)
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        if path in module_of:
-            _, unused, functions = analyze_file(path)
-            for lineno, name, src in unused:
-                all_unused.append((mod, lineno, name, src))
+        in_package = path in module_of
+        if in_package or any(scan_dir in path.parents for scan_dir in DUPLICATE_SCAN_DIRS):
+            _, unused, functions = analyze_tree(tree)
+            if in_package:
+                for lineno, name, src in unused:
+                    all_unused.append((mod, lineno, name, src))
             for fn in functions:
                 if len(fn.body) == 1 and (
                     isinstance(fn.body[0], ast.Pass)

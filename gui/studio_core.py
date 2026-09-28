@@ -1,88 +1,51 @@
 from __future__ import annotations
 
+import io
 import os
 import re
 import sys
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from slidenote.llm import PROVIDERS as LLM_PROVIDERS
+from slidenote.utils import as_float, as_int
 
 # Provider metadata derives from slidenote.llm.ProviderSpec (single source of truth).
 PROVIDER_ENV_KEYS: dict[str, tuple[str, ...]] = {name: spec.api_key_envs for name, spec in LLM_PROVIDERS.items()}
 
-DEFAULT_MODELS: dict[str, str] = {name: (spec.default_model or "") for name, spec in LLM_PROVIDERS.items()}
+DEFAULT_TEXT_PROVIDER = "deepseek"
+# Selectable text providers, default first, then slidenote.llm registry order.
+TEXT_PROVIDERS: list[str] = sorted(LLM_PROVIDERS, key=lambda name: name != DEFAULT_TEXT_PROVIDER)
 
-VISION_DEFAULT_MODELS: dict[str, str] = {name: (spec.default_vision_model or "") for name, spec in LLM_PROVIDERS.items()}
+# Build caches are large, machine-local and not useful to share.
+ZIP_EXCLUDED_DIRS = frozenset({".cache"})
 
 SAFE_OUTPUT_RE = re.compile(r"[^a-zA-Z0-9_.-]+")
+
+# The build and textbook-index CLIs only use Baidu OCR (no --ocr-provider flag);
+# credentials are passed through these environment variables.
+OCR_API_KEY_ENV = "BAIDU_OCR_API_KEY"
+OCR_SECRET_KEY_ENV = "BAIDU_OCR_SECRET_KEY"
 
 
 @dataclass(slots=True)
 class StudioConfig:
+    """GUI build settings. Only options the `slidenote build` CLI accepts are kept."""
+
     input_path: Path
     output_dir: Path
     progress_json: Path
     preset: str = "lecture"
-    speed_mode: str = "quality"
-    concurrency: int = 1
-    llm_concurrency: int | None = None
-    vision_concurrency: int | None = None
-    ocr_concurrency: int | None = None
-    figure_concurrency: int | None = None
-    global_cache_dir: Path | None = None
-    refresh_pages: str | None = None
-    use_llm: bool = True
     provider: str = "deepseek"
-    model: str | None = None
     api_key: str | None = None
-    base_url: str | None = None
-    max_output_tokens: int | None = None
-    temperature: float | None = None
-    content_guard: str = "auto"
-    note_context: str = "section"
-    note_style: str = "article"
-    note_language: str = "zh"
-    term_policy: str = "bilingual"
-    note_strategy: str = "lecture-weave"
-    note_depth: str = "very-detailed"
-    weave_dedup: str = "normal"
-    page_neighborhood: int = 1
-    deck_brief: str = "auto"
-    section_detection: str = "auto"
-    section_cache: str = "on"
-    cache: str = "on"
     ocr: str = "auto"
-    ocr_provider: str = "baidu"
     ocr_api_key: str | None = None
     ocr_secret_key: str | None = None
-    ocr_language: str = "CHN_ENG"
-    ocr_cache: str = "on"
-    ocr_max_targets: int | None = None
-    ocr_max_edge: int | None = None
     vision: str = "auto"
     vision_provider: str = "qwen"
-    vision_model: str | None = None
     vision_api_key: str | None = None
-    vision_base_url: str | None = None
-    vision_cache: str = "on"
-    vision_max_targets: int | None = None
-    vision_max_edge: int | None = None
-    vision_detail: str | None = "low"
-    vision_max_output_tokens: int | None = None
-    figure_crop: str = "auto"
-    figure_max_targets: int | None = None
-    figure_grounding: str = "auto"
-    figure_audit: str = "local"
-    composite_figures: str = "auto"
-    image_ranking: str = "local"
-    screenshot_policy: str = "fallback"
-    source_display: str = "hidden"
-    asset_mode: str = "bundle"
-    review_mode: str = "off"
-    exam_mode: str = "off"
-    exam_question_count: int = 12
     export: str | None = None
     quiet: bool = True
 
@@ -92,7 +55,6 @@ class TextbookConfig:
     input_path: Path
     output_dir: Path
     ocr: str = "auto"
-    ocr_provider: str = "baidu"
     ocr_api_key: str | None = None
     ocr_secret_key: str | None = None
     quiet: bool = True
@@ -125,24 +87,22 @@ def needs_text_api(config: StudioConfig) -> bool:
 
 
 def build_env(base_env: dict[str, str] | None, config: StudioConfig | TextbookConfig) -> dict[str, str]:
-    env = dict(base_env or os.environ)
-    if isinstance(config, StudioConfig) and needs_text_api(config) and config.api_key:
-        env[provider_env_key(config.provider)] = config.api_key
-    if isinstance(config, StudioConfig) and needs_vision_api(config) and config.vision_api_key:
-        env[provider_env_key(config.vision_provider)] = config.vision_api_key
-    if config.ocr != "off" and config.ocr_api_key:
-        env[f"{config.ocr_provider.upper()}_OCR_API_KEY"] = config.ocr_api_key
-        if config.ocr_provider == "baidu":
-            env["BAIDU_OCR_API_KEY"] = config.ocr_api_key
-        if config.ocr_provider == "mathpix":
-            env["MATHPIX_APP_ID"] = config.ocr_api_key
-        if config.ocr_provider == "google":
-            env["GOOGLE_VISION_API_KEY"] = config.ocr_api_key
-    if config.ocr != "off" and config.ocr_secret_key:
-        if config.ocr_provider == "baidu":
-            env["BAIDU_OCR_SECRET_KEY"] = config.ocr_secret_key
-        if config.ocr_provider == "mathpix":
-            env["MATHPIX_APP_KEY"] = config.ocr_secret_key
+    env = dict(os.environ if base_env is None else base_env)
+    if isinstance(config, StudioConfig):
+        text_env = None
+        if needs_text_api(config) and config.api_key:
+            text_env = provider_env_key(config.provider)
+            env[text_env] = config.api_key
+        if needs_vision_api(config) and config.vision_api_key:
+            vision_env = provider_env_key(config.vision_provider)
+            # Same provider for text and vision shares one env var: keep the text key.
+            if vision_env != text_env:
+                env[vision_env] = config.vision_api_key
+    if config.ocr != "off":
+        if config.ocr_api_key:
+            env[OCR_API_KEY_ENV] = config.ocr_api_key
+        if config.ocr_secret_key:
+            env[OCR_SECRET_KEY_ENV] = config.ocr_secret_key
     return env
 
 
@@ -163,6 +123,8 @@ def build_slidenote_command(config: StudioConfig) -> list[str]:
         config.provider,
         "--vision",
         config.vision,
+        "--ocr",
+        config.ocr,
     ]
     if config.quiet:
         cmd.append("--quiet")
@@ -221,20 +183,20 @@ def performance_tips(config: StudioConfig) -> list[str]:
 
 
 def progress_percent(progress: dict[str, Any]) -> float:
-    current = progress.get("current_stage") or {}
-    stages = progress.get("stages") or []
-    completed = len(stages)
+    if progress.get("status") == "complete":
+        return 1.0
     planned = progress.get("planned_stages")
-    total_known_stages = len(planned) if isinstance(planned, list) and planned else 13
-    base = min(completed / total_known_stages, 0.95)
+    if not isinstance(planned, list) or not planned:
+        # No stage plan yet (build just started): progress is indeterminate.
+        return 0.02
+    current = progress.get("current_stage") or {}
+    completed = len(progress.get("stages") or [])
+    total_stages = len(planned)
+    base = min(completed / total_stages, 0.95)
     stage_total = current.get("total") or 0
     stage_current = current.get("current") or 0
     if stage_total:
-        base = min((completed + min(stage_current / stage_total, 1.0)) / total_known_stages, 0.98)
-    if progress.get("status") == "complete":
-        return 1.0
-    if progress.get("status") == "failed":
-        return max(base, 0.02)
+        base = min((completed + min(stage_current / stage_total, 1.0)) / total_stages, 0.98)
     return max(base, 0.02)
 
 
@@ -277,3 +239,101 @@ def discover_textbook_outputs(output_dir: Path) -> dict[str, Path]:
         "ocr_usage": "ocr_usage.json",
     }
     return {key: output_dir / filename for key, filename in names.items() if (output_dir / filename).exists()}
+
+
+def _zip_members(output_dir: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in output_dir.rglob("*")
+        if path.is_file() and not ZIP_EXCLUDED_DIRS.intersection(path.relative_to(output_dir).parts)
+    )
+
+
+def output_signature(output_dir: Path) -> tuple[tuple[str, int, int], ...]:
+    """Cheap fingerprint of the files `zip_output_dir` would package."""
+    signature = []
+    for path in _zip_members(output_dir):
+        stat = path.stat()
+        signature.append((path.relative_to(output_dir).as_posix(), stat.st_size, stat.st_mtime_ns))
+    return tuple(signature)
+
+
+def zip_output_dir(output_dir: Path) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in _zip_members(output_dir):
+            archive.write(path, path.relative_to(output_dir).as_posix())
+    return buffer.getvalue()
+
+
+def coverage_summary(coverage: dict[str, Any]) -> dict[str, Any]:
+    """Visible (prose) coverage metrics from coverage.json, falling back to trace totals for old reports."""
+    visible = coverage.get("visible_coverage")
+    source = visible if isinstance(visible, dict) else coverage
+    required = coverage.get("required_visible_coverage")
+    required = required if isinstance(required, dict) else {}
+    return {
+        "total": as_int(source.get("total")),
+        "covered": as_int(source.get("covered")),
+        "missing": as_int(source.get("missing")),
+        "ratio": as_float(source.get("coverage_ratio"), 1.0),
+        "visible": isinstance(visible, dict),
+        "trace_ratio": as_float(coverage.get("coverage_ratio"), 1.0),
+        "required_total": as_int(required.get("total")),
+        "required_missing": as_int(required.get("missing")),
+    }
+
+
+def slide_id_from_element(element_id: str | None) -> int | None:
+    if not element_id:
+        return None
+    match = re.match(r"s(\d+)_", str(element_id))
+    return int(match.group(1)) if match else None
+
+
+def coverage_missing_items(coverage: dict[str, Any], limit: int = 200) -> list[dict[str, Any]]:
+    """Elements not explained in visible prose (the coverage.json `items` schema), required ones first."""
+    items = [item for item in coverage.get("items") or [] if isinstance(item, dict)]
+    has_visible = any("visible_covered" in item for item in items)
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        required = bool(item.get("required"))
+        if has_visible:
+            # Structural pages are exempt from prose coverage unless an item is required.
+            if item.get("visible_covered") or (item.get("structural") and not required):
+                continue
+        elif item.get("covered"):
+            continue
+        if required:
+            reason = "required, not explained in prose"
+        elif not item.get("trace_covered", item.get("covered")):
+            reason = "not referenced in notes"
+        else:
+            reason = "source marker only, no prose explanation"
+        element_id = item.get("id") or item.get("element_id")
+        rows.append(
+            {
+                "slide_id": item.get("slide_id") or slide_id_from_element(element_id),
+                "element_id": element_id,
+                "kind": item.get("kind") or item.get("type") or "",
+                "required": required,
+                "reason": reason,
+            }
+        )
+    rows.sort(key=lambda row: (not row["required"], as_int(row["slide_id"])))
+    return rows[:limit]
+
+
+def format_cost(value: Any, currency: str | None = "USD") -> str:
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return "not recorded"
+    return f"{amount:.6f} {currency or 'USD'}"
+
+
+def format_count(value: Any) -> str:
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return "—"
