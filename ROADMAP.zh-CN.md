@@ -1,132 +1,80 @@
 # SlideNote 后续扩展路线图
 
-这个文档只保留方向、优先级和关键决策。较长的模块设计说明已经迁移到 [docs/roadmap/extension-notes.zh-CN.md](docs/roadmap/extension-notes.zh-CN.md)。
+本文只记录当前能力、下一步优先级和关键原则。较长的设计想法见 [路线图设计笔记](docs/roadmap/extension-notes.zh-CN.md)，具体参数见 [CONFIG.zh-CN.md](CONFIG.zh-CN.md)。
 
-SlideNote 当前的核心定位是：
-
-> 保真型课程笔记生成器：不是简单总结 PPT/PDF，而是先解析、再理解、再写作、再检查覆盖率。
-
-长期愿景是：
-
-> 从课件转换器，成长为课程学习操作系统。
-
-## 目录
-
-- [五阶段产品流水线](#五阶段产品流水线)
-- [当前基础](#当前基础)
-- [建议优先级](#建议优先级)
-- [长期愿景](#长期愿景吃到未来-ai-红利)
-- [关键原则](#关键原则)
+SlideNote 的核心定位是：把 PPT/PDF 转成可阅读、可追溯、可复习的课程笔记，并报告可能遗漏的内容。长期愿景是把课件、教材、个人笔记和练习连接成一条学习工作流。
 
 ## 五阶段产品流水线
-
-SlideNote 的底层能力很多，但用户侧和 LLM 工作流应该按五个阶段收束：
 
 ```text
 Ingest -> Understand -> Write -> Guard -> Export
 ```
 
-| 阶段 | 当前角色 | 下一步方向 |
+| 阶段 | 当前职责与主要产物 | 后续重点 |
 | --- | --- | --- |
-| **Ingest** | 解析 PPT/PDF，生成 `content.json`、`element_ir.json`、`source_map.json`、截图和图片资产。 | 已引入 parser adapter 架构；内置解析器和 Docling / Marker / MinerU 外部 CLI adapter 通过统一 `Deck` 契约接入。 |
-| **Understand** | 生成章节、页面类型、语义版面、图表理解、Deck Brief。 | 已收束为 `deck_understanding.json` 和 `page_understanding.json`，作为 GUI、Agent 和局部 revise 的稳定认知入口。 |
-| **Write** | 生成 `notes.md`，支持 Lecture-Weave、section context、lecture-notes profile、teaching enrichment。 | 继续把默认高质量路线从“总结”推向“教学重构”。 |
-| **Guard** | coverage、content guard、quality report、review/exam 题目质量检查。 | 加强来源校验、幻觉风险检测和错题复盘闭环。 |
-| **Export** | Markdown、Word、PDF、LaTeX、review/exam pack、GUI 下载。 | 模板系统、课程级导出、多 PPT 整合。 |
+| **Ingest** | 解析课件并提取页面、截图和图片资产；内置解析器与可选外部 parser adapter 统一输出 `Deck`。 | 提高复杂课件的解析保真度。 |
+| **Understand** | 执行 OCR、视觉与版面增强、章节识别、Content Guard 分类；生成 `content.json`、`deck_understanding.json` 和 `page_understanding.json`。 | 核对理解结果与原课件的对应关系。 |
+| **Write** | 生成 `notes.md`；Lecture-Weave 先生成逐页内容，再按章节等上下文组织正文。 | 提高解释的准确性和阅读连贯性。 |
+| **Guard** | 检查覆盖情况，生成 `coverage.json`、最终 `element_ir.json`、`source_map.json` 和 `quality_report.json`。 | 区分结构性漏项提示与需要人工判断的语义质量。 |
+| **Export** | 按需导出 Word、PDF、LaTeX 等格式，并生成运行摘要。 | 验收实际渲染后的阅读排版。 |
 
-更多细节见 [Pipeline 文档](docs/pipeline.zh-CN.md)。
+学习包由单独的 `study-pack` 命令生成，不属于 `build` 的 Guard 阶段。更多细节见 [Pipeline 文档](docs/pipeline.zh-CN.md)。
 
-## 当前基础
+## 已实现的基础
 
-已经具备的产品基础：
-
-- 支持 `.pptx` / `.pdf` 解析，`.ppt` 可尝试借助 LibreOffice 转 PDF；解析入口已抽象为 parser adapter，外部 Docling / Marker / MinerU 可选接入。
-- 生成 `content.json`、`element_ir.json`、`source_map.json`、页面截图和图片资产。
-- 支持 OCR、Vision、语义版面增强、表格理解、图片重要性排序、组合图识别、局部图裁剪、图文锚定。
-- 生成 `deck_understanding.json` 和 `page_understanding.json`，统一承载 Deck Brief、章节、页面角色、图表理解和图片排序。
-- 支持 `--preset lecture|local`，把底层参数收束成默认高质量讲义和无 API 本地预览两条用户侧工作流。
-- 支持 Lecture-Weave、Deck Brief、Content Guard、teaching enrichment 和质量报告。
-- 支持 coverage 报告、review/exam 学习包、题目质量指标和错题复盘 prompt。
-- 支持 LLM/OCR/Vision 缓存、并发、用量报告、`progress.json`、`run_summary.json` 和 GUI。
-- 支持 Markdown、带目录 Markdown、Word、PDF、LaTeX 导出。
-
-详细配置见 [CONFIG.zh-CN.md](CONFIG.zh-CN.md)，详细机制见 [docs/index.zh-CN.md](docs/index.zh-CN.md)。
+- 内置 `.pptx` / `.pdf` 解析；`.ppt` 可尝试经 LibreOffice 转换。parser adapter 已接入统一 `Deck` 契约，Docling、Marker、MinerU 是需要相应工具的可选外部 CLI adapter。
+- `build` 已按五阶段组织，支持 `lecture|local` preset，以及 OCR、Vision、图表与版面相关的可选增强。
+- 已生成 `deck_understanding.json` 和 `page_understanding.json`，汇集章节、页面角色和相关理解结果。它们目前是构建产物，GUI 和局部 revise 尚未将其作为稳定的交互入口。
+- 已生成 `notes.md`、coverage、source map 和启发式质量报告。Coverage 能提示部分漏项和来源标记问题，不能证明解释准确或学习效果。
+- 独立的 `study-pack` 命令可生成 review、exam、交互式 `exam.html`、结构化学习包与错题复盘提示词；答题记录尚未形成持久化闭环。
+- 已有 GUI 查看与下载、进度报告，以及 Markdown、Word、PDF、LaTeX 等输出能力；导出排版仍需用真实课件系统验收。
 
 ## 建议优先级
 
-### P0：近期最值得做
+### P0：先让单份课件的笔记可靠、好读
 
-1. **错题复盘闭环继续产品化**
-   - 让 `exam.html` 的答题结果更自然地进入 `wrong_answer_review_prompt.md`。
-   - 把错题关联到 section、source page、concept 和 review pack。
-   - 在 GUI 中展示“错在哪里、该回看哪里”。
+1. **真实课件评测与内容核对**
+   - 建立包含文字密集页、图表、表格、公式、扫描页和长课件的固定样本集。
+   - 对照原课件人工抽查关键事实、漏项、图文对应、来源定位；同时记录运行时间和成本。
+   - 每次改动在同一批样本上比较，并留下可复核的失败案例。不要仅用 coverage 分数代表内容质量。
 
-2. **题目质量约束继续增强**
-   - 扩展 `quality_report.json` 的题目质量指标。
-   - 检查答案唯一性、干扰项质量、解析充分性和来源覆盖。
-   - 图表题保持图文就地嵌入。
+2. **笔记阅读与导出排版验收**
+   - 检查标题层级、段落密度、图表与解释的位置、长表格、公式和中文换行。
+   - 把 Markdown、Word、PDF 的实际渲染纳入验收，发现断页、溢出、图文错位时能定位到样本与页面。
+   - 先稳定默认版式和图文关系；封面、主题、页眉页脚等装饰性模板留待后续。
 
-3. **统一理解产物（已落地，2026-06-03）**
-   - 已生成 `deck_understanding.json`：聚合 Deck Brief、章节、页面角色、关键概念、跨页关联、重要图表。
-   - 已生成 `page_understanding.json`：聚合每页 section、role、modality、key points、表格、图示、语义组和 required items。
-   - Deck Brief、section detection、page role、figure/table understanding、image ranking 已收束为稳定认知包，底层调试产物仍保留。
+3. **来源与质量提示说清边界**
+   - 在文档和 GUI 中明确区分结构性 coverage、启发式质量分数与人工内容复核。
+   - 让缺失项、来源页和笔记位置更容易一起查看；对高风险页面给出复查提示。
 
-4. **Parser Adapter 架构（已落地，2026-06-03）**
-   - 已定义内置解析器 adapter 接口，默认 `auto` 仍优先走内置 PPT/PDF 解析。
-   - 已注册 Docling / Marker / MinerU 外部 CLI adapter，可通过 `--parser docling|marker|mineru` 或命令模板环境变量接入。
-   - 核心 pipeline 只依赖统一 `Deck` 数据模型，不直接绑定某个外部解析库。
+### P1：围绕可信笔记完善学习与修订流程
 
-### P1：中期能力
+1. **错题复盘闭环**
+   - 保存 `exam.html` 的作答与错题记录，再关联章节、来源页、概念和 review 内容。
+   - 让用户从错题进入对应笔记及复习提示；当前仅有可复制的复盘提示词。
 
-1. **课程级学习包**
-   - 支持多 PPT / 多讲次整合。
-   - 生成课程级概念图、术语表、章节导航和复习计划。
+2. **局部编辑与 revise**
+   - 在 GUI 中按页或章节发起修订，并明确受影响的缓存和产物。
+   - 现有缺失项修补会重写其传入的整段上下文；真正只改局部笔记块还需实现并验证不会破坏其余内容。
 
-2. **GUI 局部编辑与 revise**
-   - 在 GUI 中按页、按 section 或按 source element 发起局部重写。
-   - 依赖 `element_ir.json`、`source_map.json` 和 artifact registry。
+3. **学习包与质量审阅**
+   - 在 `study-pack` 中核对题目来源、答案唯一性、解析和干扰项质量；题目指标与构建笔记的 `quality_report.json` 分开呈现。
+   - 可选增加独立审阅流程，重点检查事实与解释边界，并用真实样本验证效果。
 
-3. **质量审阅升级**
-   - 引入可选 LLM 质量评审。
-   - 检查机械逐页复述、解释深度、例子密度、图表整合和幻觉风险。
-   - 审阅模型和写作模型尽量分离。
+### P2：在单份课件体验稳定后扩展
 
-4. **教材 / 个人笔记接入**
-   - 教材作为可追溯背景知识，不替代课件来源。
-   - 个人笔记作为补充上下文，明确区分来源。
+- **课程级整合：**多讲次导航、概念关联、术语表和复习计划。
+- **教材与个人笔记：**作为可追溯的补充来源，清楚区分课件、外部资料和 AI 解释。
+- **受控 Agent 工作流：**基于明确阶段、产物和来源映射探索，不预设多 Agent 必然优于现有流程。
+- **发布与输入扩展：**主题、封面、页眉页脚，以及更多输入格式，按用户需求和评测结果决定顺序。
 
-### P2：长期增强
+## 长期愿景
 
-1. **开放式 Agent 工作流**
-   - 用 artifact registry、IR 和 source map 作为共享状态。
-   - 让 agent 调用明确阶段，而不是把整个 pipeline 交给自由聊天。
-
-2. **模板与发布系统**
-   - 支持课程封面、页眉页脚、引用样式、主题和导出模板。
-   - 支持更完整的 PDF / Word / LaTeX 发布路线。
-
-3. **更多输入格式**
-   - 在 parser adapter 基础上支持 Word、HTML、图片集合、教材 PDF 和更多文档格式。
-
-4. **局部性能重写**
-   - 如果确定性模块成为瓶颈，再考虑 Rust 或其它语言重写局部组件。
-   - 当前阶段优先产品结构和质量闭环，不急于语言迁移。
-
-## 长期愿景：吃到未来 AI 红利
-
-SlideNote 带着一个乐观前提在建设：未来 AI 会更强、更快、更便宜，也会更容易通过成熟的开源智能体框架来组织复杂工作流。
-
-以 DeepSeek 这类强调性价比、可获得性和开放生态的模型 / 服务为例，当高质量 API 的价格、速度和可用性继续改善，多 pass 的高质量流程就会更适合普通课程材料。SlideNote 可以把更深的课件理解、逐页视觉推理、教师讲义式写作、teaching enrichment、coverage repair、考试题生成、错题复盘和来源校验变成更自然的默认能力。
-
-项目真正要抓住的不是某一个模型，而是一个可迁移的工程底座：`element_ir.json`、`source_map.json`、coverage、artifact registry、preset、cache key、review/exam 学习包和 GUI 审阅工作台。这些结构让未来模型能力提升时，SlideNote 的上限也能一起升高。
-
-愿景是让课件、教材、个人笔记、图表、公式、测验、错题和局部修订都处在同一条可检查、可追溯、可复习的学习工作流里。
+模型能力和成本会变化；SlideNote 应把稳定的数据结构、来源追踪和可复核的质量流程留在自身工程中，再逐步利用更好的模型。课程级工作流是长期方向，不作为近期交付承诺。
 
 ## 关键原则
 
-- **不要让 README 变成参数手册。** 首页负责让人快速理解项目，细节放到 `docs/`。
-- **不要把确定性工程交给 LLM。** 元素 ID、source map、缓存、导出、成本统计应保持稳定。
-- **让 LLM 做它擅长的事。** 章节理解、图表解释、讲义写作、易错点、自测题和语义修复适合模型参与。
-- **Coverage 是质检器，不是写作模板。** 正文应该像讲义，coverage 负责最后查漏和局部修补。
-- **Preset 是用户入口。** 普通用户应优先看到 `lecture|local`；底层质量、缓存、并发、OCR/Vision 细节尽量留在内部默认里。
-- **保留项目气质。** 起源、愿景、致谢和对未来 AI 红利的期待属于 README，不是可以随手迁走的噪音。
+- **Coverage 是质检线索，不是写作模板或语义正确性的证明。** 正文应像讲义，异常项提示复查。
+- **确定性工作交给程序。** 元素 ID、来源映射、缓存、导出和报告应可重复检查。
+- **模型处理适合语义判断的任务。** 章节理解、图表解释、讲义写作和修订可以使用模型，但结果需要样本验证。
+- **Preset 是普通用户入口。** 高级参数留在配置文档，README 保持简洁。

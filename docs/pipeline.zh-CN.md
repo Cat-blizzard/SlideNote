@@ -42,7 +42,7 @@ Ingest -> Understand -> Write -> Guard -> Export
 - 图表、流程图、公式截图的含义解释。
 - 讲义式正文生成。
 - 背景直觉、例子、易错点、自测题。
-- 语义层面的遗漏修复和质量审阅。
+- 针对必讲内容生成补漏候选稿；候选稿仍需本地覆盖检查和人工复核。
 
 SlideNote 的原则是：本地规则管边界和证据，模型管理解和表达。
 
@@ -72,15 +72,15 @@ figures/
 screenshots/
 ```
 
-不是每次运行都会生成所有文件。具体取决于 `--preset`、`--vision`、`--export`，以及是否单独运行 `slidenote study-pack`。
+不是每次运行都会生成所有文件，具体取决于 `--preset`、`--vision`、`--export` 等选项。`slidenote study-pack` 是构建后的独立命令，会另外生成复习和考试材料。
 
 ## 稳定认知包
 
 `deck_understanding.json` 聚合 Deck Brief、章节计划、页面角色、核心问题、关键术语、跨页关联、重要表格和高价值图示。它是全局导航入口，不替代底层 `sections.json` / `deck_brief.json` 调试产物。
 
-`page_understanding.json` 聚合每页的 section、role、modality、key points、文本摘要、表格结论、图示解释、semantic groups 和 content guard required items。它适合作为 GUI、Agent backend 和局部 revise 的逐页稳定入口。
+`page_understanding.json` 聚合每页的 section、role、modality、key points、文本摘要、表格结论、图示解释、semantic groups 和 content guard required items。当前构建会产出该文件；GUI 和局部 revise 尚未把它作为统一入口。
 
-`quality_report.json` 继续负责质量审阅：覆盖率、机械逐页复述风险、解释深度、图表整合和题目质量。
+`quality_report.json` 用本地启发式指标提示讲义结构、解释深度、图表整合和机械逐页复述等风险，结合 `coverage.json` 供人工复核。独立运行的 `study-pack` 不会回写构建报告的题目质量字段。
 
 ## Parser Adapter
 

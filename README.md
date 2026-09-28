@@ -37,16 +37,18 @@
 ## Contents
 
 - [Quick Start](#quick-start)
+- [Modes and Pipeline](#modes-and-pipeline)
+- [Outputs and Review](#outputs-and-review)
 - [Optional GUI](#optional-gui)
-- [Pipeline And Presets](#slidenote-pipeline)
+- [Textbook Chunks](#textbook-chunks)
 - [Origin](#origin)
-- [Setup](#setup)
-- [Common Workflows](#common-workflows)
-- [Technical Docs](#technical-docs)
-- [Future Outlook](#future-outlook)
-- [License And Acknowledgements](#license)
+- [Setup and Docs](#setup-and-docs)
+- [License](#license)
+- [Acknowledgements](#acknowledgements)
 
 ## Quick Start
+
+On Windows / PowerShell:
 
 ```powershell
 git clone https://github.com/Cat-blizzard/SlideNote.git
@@ -55,208 +57,88 @@ cd SlideNote
 .\run_gui.ps1
 ```
 
-The setup script creates `.venv`, installs SlideNote with GUI/LLM extras, and runs `slidenote doctor`. The GUI lets you paste API keys in the page for a single run, so you do not have to set terminal environment variables first.
-
-Manual setup is still available:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev,llm]"
-python -m slidenote doctor
-```
-
-Manual setup does not include the GUI extra; `.\run_gui.ps1` automatically installs `".[dev,llm,gui]"` when it is missing.
-
-For a local preview without API calls:
+The installer creates `.venv`, installs GUI and model dependencies, and checks the environment. You can enter API keys in the GUI for a single run. Start with a local preview to check extraction and note generation:
 
 ```powershell
 python -m slidenote build path\to\lecture.pdf --out outputs\local --preset local --export markdown-zip
 ```
 
-After the first install, run this Local preview command first. Confirm that `notes.md` and the shareable `notes.zip` are generated before switching to the `lecture` quality workflow.
-
-For higher-quality notes with visual understanding:
+For model-assisted writing and visual understanding, configure the relevant API keys. For example, with DeepSeek for text and the default vision provider:
 
 ```powershell
-$env:DASHSCOPE_API_KEY="..."
 $env:DEEPSEEK_API_KEY="..."
+$env:DASHSCOPE_API_KEY="..."
 python -m slidenote build path\to\lecture.pdf --out outputs\lecture --provider deepseek --export markdown-zip
 ```
 
-Open `outputs\lecture\notes.md` after generation. Images are copied into `outputs\lecture\notes.assets\` by default.
+The main output is `outputs\lecture\notes.md`. Check generated explanations against the slides.
 
-## Optional GUI
+For manual setup, use `python -m pip install -e "."` for local mode or `python -m pip install -e ".[llm]"` for model mode. `.\run_gui.ps1` installs the GUI extra when needed. The `dev` extra is mainly for project tests.
 
-SlideNote Studio is a Streamlit interface around the same CLI pipeline. It supports uploading PPT/PDF files, entering API keys in the page, selecting presets, watching progress and ETA, reviewing token/cost reports, checking page-level sources, and downloading generated results.
+## Modes and Pipeline
 
-```powershell
-.\run_gui.ps1
-```
+| Mode | Use | Behavior |
+| --- | --- | --- |
+| Default `lecture` | Model-assisted detailed study notes | Uses a text model and, as configured, OCR, visual understanding, and Lecture-Weave writing. Quality depends on the source and model output. |
+| `local` | Offline preview and extraction checks | Makes no text, vision, or OCR API calls; local rules produce basic notes. |
 
-See [gui/README_GUI.md](gui/README_GUI.md) and [gui/README_GUI.zh-CN.md](gui/README_GUI.zh-CN.md) for GUI details.
-
-## Textbook Library
-
-SlideNote can also build a RAG-ready corpus from a PDF textbook. This entrypoint only parses the textbook, detects the table of contents, maps sections to pages, and writes retrievable chunks; it is not connected to note generation yet.
-
-```powershell
-python -m slidenote textbook-index path\to\textbook.pdf --out outputs\textbook --ocr auto
-```
-
-`--ocr auto` extracts native PDF text first and only calls OCR for scanned or low-text pages. Use `--ocr off` for copyable digital textbooks.
-
-## SlideNote Pipeline
-
-SlideNote is organized as a five-stage product pipeline. Low-level modules can stay fine-grained for caching, debugging, and partial refresh; the user-facing workflow should remain simple.
+`--vision off` disables visual model calls; it does not prevent images from appearing in notes or exports. Use `--ocr off|auto|all` to adjust OCR. See [configuration](CONFIG.zh-CN.md) for options and presets.
 
 ```text
 Ingest -> Understand -> Write -> Guard -> Export
 ```
 
-| Stage | Purpose | Main artifacts |
+| Stage | Main work | Main artifacts |
 | --- | --- | --- |
-| **1. Ingest** | Parse PPT/PDF into stable, traceable structure. | `content.json`, `element_ir.json`, `source_map.json`, screenshots, assets, parser adapters |
-| **2. Understand** | Decide what the courseware is teaching. | `deck_understanding.json`, `page_understanding.json`, `sections.json`, `deck_brief.json`, figure/table understanding |
-| **3. Write** | Turn structured material into readable study notes. | `notes.md`, Lecture-Weave page notes, teaching enrichment |
-| **4. Guard** | Check faithfulness, coverage, and study quality. | `coverage.json`, `coverage.md`, `content_guard.json`, `quality_report.json` |
-| **5. Export** | Publish notes and reports. | `notes.zip`, `notes.toc.md`, `notes.docx`, `notes.pdf`, `notes.tex`; review/exam packs are generated separately by `study-pack` |
+| **Ingest** | Parse PPT/PDF and extract pages, screenshots, and image assets. | Pages and assets for later stages |
+| **Understand** | Run OCR, visual and structural understanding, and assemble structured content. | `content.json`, `deck_understanding.json`, `page_understanding.json`; `content_guard.json` when configured |
+| **Write** | Generate readable study notes. | `notes.md` |
+| **Guard** | Build source mappings, coverage reports, and quality diagnostics. | Final `element_ir.json`, `source_map.json`, `coverage.json`, `coverage.md`, `quality_report.json` |
+| **Export** | Produce requested sharing or reading formats. | `notes.zip`, `notes.docx`, `notes.pdf`, and others |
 
-More detail: [SlideNote Pipeline](docs/pipeline.zh-CN.md).
+See the [pipeline guide](docs/pipeline.zh-CN.md) for implementation details.
 
-## User Presets
+## Outputs and Review
 
-Use top-level `--preset` for product workflows. Everyday users now only need two modes: the default `lecture` mode and the no-API `local` mode.
-
-| Preset | Best for | Behavior |
-| --- | --- | --- |
-| `lecture` | Teacher-style detailed lecture notes. | Enables LLM, OCR auto, Vision auto, Lecture-Weave, deck brief, content guard, and teaching enrichment. |
-| `local` | No API key, offline preview, parser checks. | Uses local rules only and does not call text, vision, or OCR APIs. |
+`notes.md` is the main output. With `--export markdown-zip`, SlideNote writes `notes.zip` containing the notes; it includes files from `notes.assets/` when images are referenced. Word and PDF export require external tools; see [configuration](CONFIG.zh-CN.md). Generate review and exam materials separately after a build:
 
 ```powershell
-python -m slidenote build lecture.pdf --out outputs\lecture --provider deepseek
-python -m slidenote build lecture.pdf --out outputs\local --preset local
+python -m slidenote study-pack outputs\lecture --question-count 20
 ```
 
-More detail: [User Presets](docs/presets.zh-CN.md).
+Coverage uses element IDs and text markers to flag potentially missing source items. Quality scores are mostly heuristic diagnostics. Neither proves factual accuracy, completeness, or question validity. Before sharing notes, compare important claims, figure placement, equations, tables, and exported layout with the source slides.
+
+## Optional GUI
+
+SlideNote Studio lets you upload PPT/PDF, enter temporary API keys, select a mode, view progress and reports, inspect page screenshots and notes, and download outputs:
+
+```powershell
+.\run_gui.ps1
+```
+
+See the [GUI guide](gui/README_GUI.md).
+
+## Textbook Chunks
+
+`textbook-index` turns a PDF textbook into a chunked corpus with table-of-contents and section mapping for future retrieval features. It currently creates no vector index, provides no search, and does not feed note generation.
+
+```powershell
+python -m slidenote textbook-index path\to\textbook.pdf --out outputs\textbook --ocr auto
+```
+
+For a digital PDF with selectable text, try `--ocr off`. The `auto` setting uses OCR on scanned or low-text pages.
 
 ## Origin
 
-SlideNote started from a very personal learning problem.
+I learn more comfortably by reading and revisiting material at my own pace. Lecture slides, however, are often prompts for a live explanation: the logic is scattered, and important details may be in figures, tables, formulas, or what the teacher says. Rewriting them into notes after class takes time and can miss details.
 
-I have never been the kind of student who learns best by simply listening to lectures. Sometimes I cannot fully follow a teacher's explanation in real time, and I usually learn more efficiently by reading. Reading lets me slow down, go back, skip ahead, and control the pace of understanding by myself.
+SlideNote grew from the idea of turning slides into structured study notes that preserve images and links to their source pages, with coverage reports that point to material worth checking. The aim is to make courseware easier to read and review while keeping the original material available for verification.
 
-But lecture slides are not the same as readable notes. After class, reading the PPT directly often feels incomplete: the bullets are fragmented, the logic is implicit, and many important details live in diagrams, screenshots, formulas, or the teacher's spoken explanation. Manually rewriting everything into notes is possible, but it is time-consuming, hard to keep complete, and not always pleasant to revisit later.
+## Setup and Docs
 
-So I wanted to build a tool that could turn course slides into structured, readable, traceable notes: not just a summary, but a faithful learning document that preserves images, keeps page references, checks coverage, and helps convert lecture materials into something I can actually study from.
+SlideNote needs Python 3.10 or newer. Local mode needs no GPU. LibreOffice or PowerPoint may be needed for slide conversion and full-page screenshots; Pandoc and LibreOffice may be needed for Word, PDF, or LaTeX exports. The setup scripts above target Windows; Linux/macOS users can call the same `python -m slidenote ...` commands.
 
-That idea became SlideNote.
-
-## Setup
-
-SlideNote does not require a local GPU. The local parser can run with only Python dependencies; LLM rewriting, OCR, and visual understanding require API keys for the providers you choose.
-
-Minimum setup:
-
-- Python `3.10` or newer.
-- A virtual environment is recommended.
-- New users can run `.\install.ps1` and then `.\run_gui.ps1`.
-- `python -m pip install -e ".[dev]"` for local parsing.
-- `python -m pip install -e ".[dev,llm]"` for LLM providers.
-
-Optional software:
-
-| Software | Purpose |
-| --- | --- |
-| LibreOffice | Converts `.ppt` / `.pptx` to PDF and enables full-slide screenshots when PowerPoint is unavailable. |
-| Microsoft PowerPoint + `pywin32` | Windows-only PPTX screenshot export route. |
-| Pandoc | Word and LaTeX export. |
-| LibreOffice + Pandoc | PDF export from `notes.docx`, usually more stable for CJK layout. |
-
-Configuration details live in [CONFIG.zh-CN.md](CONFIG.zh-CN.md). The `build` entrypoint is intentionally small; provider, OCR, Vision, and cache details are handled mostly through strong defaults and environment variables.
-
-> The setup scripts target Windows PowerShell; the `python -m slidenote ...` commands themselves are cross-platform (Linux/macOS users can skip the `.ps1` scripts and call the commands directly).
-
-## Common Workflows
-
-Local rule-based draft:
-
-```powershell
-python -m slidenote build path\to\lecture.pptx --out outputs\local --preset local --export markdown-zip
-```
-
-Teacher-style lecture notes:
-
-```powershell
-python -m slidenote build path\to\lecture.pdf `
-  --out outputs\lecture-notes `
-  --provider deepseek `
-  --export markdown-zip
-```
-
-Review and exam pack:
-
-```powershell
-python -m slidenote build path\to\lecture.pdf `
-  --out outputs\lecture-review `
-  --provider deepseek
-python -m slidenote study-pack outputs\lecture-review --question-count 20
-```
-
-Text-only lecture notes:
-
-```powershell
-python -m slidenote build path\to\lecture.pdf `
-  --out outputs\text-only `
-  --provider deepseek `
-  --vision off
-```
-
-## Technical Docs
-
-README is intentionally kept as a landing page. Detailed behavior lives in the docs (currently Chinese-first; the tables and code examples remain readable for English users):
-
-| Topic | Link |
-| --- | --- |
-| Documentation index | [docs/index.zh-CN.md](docs/index.zh-CN.md) |
-| Pipeline stages | [docs/pipeline.zh-CN.md](docs/pipeline.zh-CN.md) |
-| Presets | [docs/presets.zh-CN.md](docs/presets.zh-CN.md) |
-| Coverage, content guard, quality report, review/exam packs | [docs/quality-and-guard.zh-CN.md](docs/quality-and-guard.zh-CN.md) |
-| Element IR, source map, assets | [docs/ir-and-source-map.zh-CN.md](docs/ir-and-source-map.zh-CN.md) |
-| LLM providers, OCR, vision, cache, cost | [docs/providers-and-cost.zh-CN.md](docs/providers-and-cost.zh-CN.md) |
-| Roadmap design notes | [docs/roadmap/extension-notes.zh-CN.md](docs/roadmap/extension-notes.zh-CN.md) |
-
-The main output is `notes.md`. To share Markdown notes with images, export `notes.zip`; it contains `notes.md` and the `notes.assets/` image folder. Depending on options, SlideNote can also write `content.json`, `deck_understanding.json`, `page_understanding.json`, `element_ir.json`, `source_map.json`, `coverage.md`, `quality_report.json`, `review.md`, `exam.md`, `exam.json`, `exam.html`, `notes.docx`, `notes.pdf`, and other reports.
-
-## Future Outlook
-
-SlideNote is built with a hopeful assumption: future AI systems will become stronger, faster, cheaper, and easier to orchestrate through mature open-source agent frameworks. If that happens, this project should not merely run the same prompts for less money. Its ceiling should rise.
-
-Models and providers such as DeepSeek are one example of the direction that makes this exciting: better price/performance, broader access, and a more open ecosystem can make high-quality multi-pass workflows practical for ordinary study materials. When API latency drops and agent frameworks become more reliable, SlideNote can afford to run richer stages by default: deeper deck understanding, page-level visual reasoning, teacher-style section writing, teaching enrichment, coverage repair, exam generation, wrong-answer review, and source verification.
-
-The reason this matters is that SlideNote's bottleneck is not only "can the model summarize a slide?" The harder problem is coordinating parsing, vision, writing, grounding, quality checks, and revision without losing traceability. That is why the project invests in `element_ir.json`, `source_map.json`, coverage reports, artifact registries, presets, cache keys, and review/exam packs. Those structures let SlideNote absorb future model gains without being tied to one model, provider, or agent runtime.
-
-The long-term vision is:
-
-> SlideNote should grow from a courseware converter into a course learning operating system.
-
-In that version, slides, readings, personal notes, figures, formulas, quizzes, mistakes, and revisions all live in one traceable learning workflow.
-
-## Design Principle
-
-SlideNote deliberately avoids this shortcut:
-
-```text
-PPT -> LLM -> Summary
-```
-
-Instead, it follows:
-
-```text
-PPT/PDF -> structured extraction -> source inventory -> note generation -> coverage check -> export
-```
-
-The local rule-based draft is only a baseline for debugging extraction and coverage. Production notes should use the default `lecture` preset, while coverage checks still rely on element IDs so the model cannot silently summarize away details.
+See the [documentation index](docs/index.zh-CN.md), [configuration](CONFIG.zh-CN.md), and [roadmap](ROADMAP.zh-CN.md). The detailed docs are currently Chinese-first. The longer-term aim is a traceable workflow across slides, textbooks, review questions, and personal notes; the roadmap tracks actual priorities.
 
 ## License
 
@@ -280,19 +162,3 @@ The SlideNote name, logo, and other brand assets are not licensed for standalone
 - SlideNote's future retrieval, source tracing, and post-generation QA direction is informed by systems such as [RAGFlow](https://github.com/infiniflow/ragflow). These projects are references and inspirations, not bundled dependencies unless explicitly listed elsewhere.
 - Thanks to [LEO690201](https://github.com/LEO690201) for contributing bug fixes that improved SlideNote's reliability.
 - SlideNote's development has also benefited from code analysis, implementation, and debugging assistance provided by Codex, Claude Code, and DeepSeek Harness. All AI-assisted changes remain subject to maintainer review and project testing.
-
-## References
-
-- [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat/create)
-- [OpenAI Images and vision](https://developers.openai.com/api/docs/guides/images-vision)
-- [DeepSeek API](https://api-docs.deepseek.com/)
-- [Alibaba Cloud Model Studio OpenAI-compatible API](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope)
-- [Volcengine Ark OpenAI SDK compatibility](https://www.volcengine.com/docs/82379/1330626)
-- [Zhipu GLM OpenAI compatibility](https://docs.bigmodel.cn/cn/guide/develop/openai/introduction)
-- [Baidu OCR API](https://ai.baidu.com/ai-doc/REFERENCE/4kru2vqdg)
-- [Mathpix OCR API](https://docs.mathpix.com/reference/post-v3-text)
-- [Google Cloud Vision OCR](https://cloud.google.com/vision/docs/ocr)
-- [Gemini generateContent API](https://ai.google.dev/gemini-api/docs/text-generation)
-- [Gemini image understanding](https://ai.google.dev/gemini-api/docs/image-understanding)
-- [Claude Messages API](https://docs.anthropic.com/en/api/messages)
-- [Claude Vision](https://platform.claude.com/docs/en/build-with-claude/vision)

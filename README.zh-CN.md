@@ -37,16 +37,18 @@
 ## 目录
 
 - [快速开始](#快速开始)
+- [模式与工作流程](#模式与工作流程)
+- [结果与复核](#结果与复核)
 - [可选 GUI](#可选-gui)
-- [Pipeline 与 Preset](#slidenote-pipeline)
+- [教材分块](#教材分块)
 - [起源](#起源)
-- [环境与安装](#环境与安装)
-- [常用工作流](#常用工作流)
-- [技术文档](#技术文档)
-- [未来展望](#未来展望)
-- [许可证与致谢](#许可证)
+- [配置与文档](#配置与文档)
+- [许可证](#许可证)
+- [致谢](#致谢)
 
 ## 快速开始
+
+Windows / PowerShell 用户可以运行：
 
 ```powershell
 git clone https://github.com/Cat-blizzard/SlideNote.git
@@ -55,204 +57,88 @@ cd SlideNote
 .\run_gui.ps1
 ```
 
-安装脚本会创建 `.venv`、安装带 GUI/LLM 的依赖，并运行 `slidenote doctor`。GUI 可以在页面里临时填写 API key，所以新手不需要先理解终端环境变量。
-
-也可以手动安装：
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev,llm]"
-python -m slidenote doctor
-```
-
-手动安装默认不含 GUI 依赖；运行 `.\run_gui.ps1` 时脚本会按需自动补装 `".[dev,llm,gui]"`。
-
-如果只想先本地预览，确认课件能正常解析：
+安装脚本会创建 `.venv`、安装 GUI 和模型相关依赖，并运行环境检查。GUI 支持在页面中临时填写 API key。先用本地模式检查课件能否解析、笔记能否生成：
 
 ```powershell
 python -m slidenote build path\to\lecture.pdf --out outputs\local --preset local --export markdown-zip
 ```
 
-第一次安装后建议先跑这条 Local preview 命令，确认 `notes.md` 和可分享的 `notes.zip` 都能生成，再切换到 `lecture` 质量模式。
-
-如果想生成带图片理解的高质量讲义式笔记：
+需要模型辅助讲解和视觉理解时，再配置对应的 API key。例如，使用 DeepSeek 文本模型和默认视觉模型：
 
 ```powershell
-$env:DASHSCOPE_API_KEY="..."
 $env:DEEPSEEK_API_KEY="..."
+$env:DASHSCOPE_API_KEY="..."
 python -m slidenote build path\to\lecture.pdf --out outputs\lecture --provider deepseek --export markdown-zip
 ```
 
-生成后打开 `outputs\lecture\notes.md`。图片默认会复制到 `outputs\lecture\notes.assets\`。
+主输出在 `outputs\lecture\notes.md`。模型生成的内容仍应对照课件核查。
 
-## 可选 GUI
+手动安装可用 `python -m pip install -e "."`（本地模式）或 `python -m pip install -e ".[llm]"`（模型模式）；运行 GUI 时，`.\run_gui.ps1` 会按需补装 GUI 依赖。`dev` extra 主要用于项目测试，不是普通使用的前提。
 
-SlideNote Studio 是套在同一条 CLI pipeline 外面的 Streamlit 图形界面。它支持上传 PPT/PDF、在页面内配置 API key、选择运行 preset、查看进度和 ETA、查看 token / 成本报告、逐页检查来源，并下载生成结果。
+## 模式与工作流程
 
-```powershell
-.\run_gui.ps1
-```
+| 模式 | 用途 | 行为 |
+| --- | --- | --- |
+| 默认 `lecture` | 生成模型辅助的详细讲义 | 使用文本模型，并按配置执行 OCR、视觉理解和 Lecture-Weave 写作；质量取决于课件与模型输出。 |
+| `local` | 离线预览与解析检查 | 不调用文本、视觉或 OCR API；用本地规则生成基础笔记。 |
 
-GUI 详情见 [gui/README_GUI.zh-CN.md](gui/README_GUI.zh-CN.md) 和 [gui/README_GUI.md](gui/README_GUI.md)。
-
-## 教材库
-
-SlideNote 也可以先把 PDF 教材构建成 RAG-ready 文档库。这个入口只做教材解析、目录识别、章节映射和 chunk 切片；当前不会自动参与笔记生成。
-
-```powershell
-python -m slidenote textbook-index path\to\textbook.pdf --out outputs\textbook --ocr auto
-```
-
-`--ocr auto` 会先抽取 PDF 原生文本，只对扫描页或低文本页调用 OCR。可复制文字的电子教材可以使用 `--ocr off`。
-
-## SlideNote Pipeline
-
-SlideNote 按五个产品阶段组织。底层模块可以继续保持细粒度，方便缓存、调试和局部刷新；但用户侧应该先看到一条清楚的流水线，而不是一长串彼此独立的开关。
+`--vision off` 只关闭视觉模型调用，并不禁止笔记引用或导出图片；需要调整 OCR 时可用 `--ocr off|auto|all`。参数及预设说明见 [配置参考](CONFIG.zh-CN.md)。
 
 ```text
 Ingest -> Understand -> Write -> Guard -> Export
 ```
 
-| 阶段 | 作用 | 主要产物 |
+| 阶段 | 主要工作 | 主要产物 |
 | --- | --- | --- |
-| **1. Ingest** | 稳定解析 PPT/PDF，并保留可追溯来源。 | `content.json`、`element_ir.json`、`source_map.json`、截图、图片资产、parser adapter |
-| **2. Understand** | 理解课件在讲什么，每页/每图/每表起什么作用。 | `deck_understanding.json`、`page_understanding.json`、`sections.json`、`deck_brief.json`、图表理解 |
-| **3. Write** | 把结构化材料写成可读学习笔记。 | `notes.md`、Lecture-Weave 逐页讲解、teaching enrichment |
-| **4. Guard** | 检查保真、覆盖率和学习质量。 | `coverage.json`、`coverage.md`、`content_guard.json`、`quality_report.json` |
-| **5. Export** | 发布最终结果和运行报告。 | `notes.zip`、`notes.toc.md`、`notes.docx`、`notes.pdf`、`notes.tex`；复习/考试包由 `study-pack` 另行生成 |
+| **Ingest** | 解析 PPT/PDF，提取页面、截图和图片资产。 | 页面与素材，供后续阶段使用 |
+| **Understand** | OCR、视觉与结构理解，并整理结构化内容。 | `content.json`、`deck_understanding.json`、`page_understanding.json`；按配置生成 `content_guard.json` 等 |
+| **Write** | 生成可阅读的学习笔记。 | `notes.md` |
+| **Guard** | 生成来源映射、覆盖率和质量诊断。 | 最终 `element_ir.json`、`source_map.json`、`coverage.json`、`coverage.md`、`quality_report.json` |
+| **Export** | 按需导出分享或阅读格式。 | `notes.zip`、`notes.docx`、`notes.pdf` 等 |
 
-详细说明见 [SlideNote Pipeline](docs/pipeline.zh-CN.md)。
+实现细节见 [Pipeline 文档](docs/pipeline.zh-CN.md)。
 
-## 用户侧 Preset
+## 结果与复核
 
-顶层 `--preset` 是用户侧工作流入口。现在普通用户只需要理解两个模式：默认 `lecture` 和无 API 的 `local`。
-
-| Preset | 适合场景 | 背后行为 |
-| --- | --- | --- |
-| `lecture` | 想要“像老师重新讲一遍”的详细讲义。 | 默认启用 LLM、OCR auto、Vision auto、Lecture-Weave、Deck Brief、Content Guard 和 teaching enrichment。 |
-| `local` | 没有 API key、离线预览、检查解析是否正常。 | 不调用文本模型、视觉模型或 OCR API，只用本地规则生成基础 Markdown。 |
+`notes.md` 是主输出。选择 `--export markdown-zip` 后会生成 `notes.zip`，其中包含笔记；笔记引用了图片时，还会包含 `notes.assets/` 中的相应文件。Word、PDF 等格式需要相应的外部工具，见 [配置参考](CONFIG.zh-CN.md)。复习和考试材料可在构建后单独生成：
 
 ```powershell
-python -m slidenote build lecture.pdf --out outputs\lecture --provider deepseek
-python -m slidenote build lecture.pdf --out outputs\local --preset local
+python -m slidenote study-pack outputs\lecture --question-count 20
 ```
 
-详细说明见 [用户侧 Preset](docs/presets.zh-CN.md)。
+覆盖率通过元素 ID 和正文标记提示可能漏写的来源；质量分数主要是启发式诊断。它们不能证明解释准确、内容完整或题目有效。分享笔记前，建议对照课件检查关键事实、图文位置、公式表格及导出版式。
+
+## 可选 GUI
+
+SlideNote Studio 提供上传 PPT/PDF、临时填写 API key、选择模式、查看进度和报告、逐页查看截图与笔记、下载结果等操作：
+
+```powershell
+.\run_gui.ps1
+```
+
+详情见 [GUI 使用说明](gui/README_GUI.zh-CN.md)。
+
+## 教材分块
+
+`textbook-index` 可把 PDF 教材解析为带目录与章节映射的分块语料，供后续检索功能使用。目前它不创建向量索引、不提供检索，也不会自动参与笔记生成。
+
+```powershell
+python -m slidenote textbook-index path\to\textbook.pdf --out outputs\textbook --ocr auto
+```
+
+电子版 PDF 可尝试 `--ocr off`；`auto` 会对扫描页或低文本页使用 OCR。
 
 ## 起源
 
-SlideNote 来自一个个人的学习困境。
+我更习惯按自己的节奏阅读和复习，但课堂 PPT 往往只是讲课提示：逻辑分散，关键内容还可能藏在图、表、公式和老师的讲解里。课后从头整理笔记很耗时，也容易漏掉细节。
 
-我一直不是那种特别适合“只靠听课”学习的人。有时候老师讲得很快，或者表达方式不太适合我，我在课堂上并不能完全跟上。相比听课，我更喜欢阅读：文字可以反复看，可以停下来想，也可以按照自己的节奏跳转、回看和整理。
+SlideNote 因此尝试把课件整理为有结构、保留图片、能回看来源的学习笔记，并用覆盖报告提示需要复核的地方。目标是让笔记更适合阅读和复习，而不是替代对原始课件的判断。
 
-但课下直接读 PPT，我又总觉得差点意思。PPT 本质上更像是老师讲课时的提示板，而不是一份真正适合阅读和复习的笔记。很多内容都是零散的，逻辑藏在老师的讲解里，关键知识还经常出现在图、表、流程图、公式截图和页面布局中。
+## 配置与文档
 
-当然，我也试过自己整理笔记，但这件事既耗时间，也很难保证不遗漏。而且手写笔记的字迹和排版有时会让我自己都不太想回头看。
+SlideNote 需要 Python 3.10 或更高版本，本地模式不需要 GPU。PPT 转换和整页截图可能需要 LibreOffice 或 PowerPoint；Word、PDF、LaTeX 导出可能需要 Pandoc 和 LibreOffice。Windows 安装脚本见上文，Linux/macOS 可使用相同的 `python -m slidenote ...` 命令。
 
-所以我想做一个工具，把课程 PPT/PDF 转换成结构清晰、内容完整、保留图片、可追溯到原页码、并且经过覆盖率校验的课程笔记。它不只是总结课件，而是尽量把展示材料变成真正适合学习的文字材料。
-
-于是就有了 SlideNote。
-
-## 环境与安装
-
-SlideNote 不需要本机 GPU。基础解析只需要 Python 依赖；LLM 改写、OCR 和视觉理解按需配置对应 provider 的 API key。
-
-最低环境：
-
-- Python `3.10` 或更高版本。
-- 推荐使用虚拟环境。
-- 新手可以直接运行 `.\install.ps1`，然后运行 `.\run_gui.ps1`。
-- 本地解析：`python -m pip install -e ".[dev]"`。
-- LLM provider：`python -m pip install -e ".[dev,llm]"`。
-
-可选软件：
-
-| 软件 | 用途 |
-| --- | --- |
-| LibreOffice | 将 `.ppt` / `.pptx` 转 PDF，并在没有 PowerPoint 时生成整页截图。 |
-| Microsoft PowerPoint + `pywin32` | Windows 上的 PPTX 整页截图导出路线。 |
-| Pandoc | Word 和 LaTeX 导出。 |
-| LibreOffice + Pandoc | PDF 导出会优先从 `notes.docx` 转换，中文/CJK 排版更稳。 |
-
-配置指南见 [CONFIG.zh-CN.md](CONFIG.zh-CN.md)。现在 `build` 入口已经简化，provider、OCR、Vision 和缓存细节主要通过强默认和环境变量处理。
-
-> 安装脚本面向 Windows / PowerShell；`python -m slidenote ...` 命令本身跨平台可用（Linux/macOS 用户直接调用命令即可，跳过 `.ps1` 脚本）。
-
-## 常用工作流
-
-本地规则草稿：
-
-```powershell
-python -m slidenote build path\to\lecture.pptx --out outputs\local --preset local --export markdown-zip
-```
-
-教师讲义式笔记：
-
-```powershell
-python -m slidenote build path\to\lecture.pdf `
-  --out outputs\lecture-notes `
-  --provider deepseek `
-  --export markdown-zip
-```
-
-复习 / 考试包：
-
-```powershell
-python -m slidenote build path\to\lecture.pdf `
-  --out outputs\lecture-review `
-  --provider deepseek
-python -m slidenote study-pack outputs\lecture-review --question-count 20
-```
-
-纯文本讲义：
-
-```powershell
-python -m slidenote build path\to\lecture.pdf `
-  --out outputs\text-only `
-  --provider deepseek `
-  --vision off
-```
-
-## 技术文档
-
-README 现在只作为项目首页。细节放到文档中心：
-
-| 主题 | 链接 |
-| --- | --- |
-| 文档导航 | [docs/index.zh-CN.md](docs/index.zh-CN.md) |
-| 五阶段 Pipeline | [docs/pipeline.zh-CN.md](docs/pipeline.zh-CN.md) |
-| 用户侧 Preset | [docs/presets.zh-CN.md](docs/presets.zh-CN.md) |
-| Coverage、Content Guard、Quality Report、复习/考试包 | [docs/quality-and-guard.zh-CN.md](docs/quality-and-guard.zh-CN.md) |
-| Element IR、Source Map、图片资产 | [docs/ir-and-source-map.zh-CN.md](docs/ir-and-source-map.zh-CN.md) |
-| LLM Provider、OCR、Vision、缓存与成本 | [docs/providers-and-cost.zh-CN.md](docs/providers-and-cost.zh-CN.md) |
-| 路线图设计笔记 | [docs/roadmap/extension-notes.zh-CN.md](docs/roadmap/extension-notes.zh-CN.md) |
-
-主输出是 `notes.md`。如果要把 Markdown 笔记发给别人，推荐导出 `notes.zip`，里面包含 `notes.md` 和 `notes.assets/` 图片资源。根据选项不同，SlideNote 还会写出 `content.json`、`deck_understanding.json`、`page_understanding.json`、`element_ir.json`、`source_map.json`、`coverage.md`、`quality_report.json`、`review.md`、`exam.md`、`exam.json`、`exam.html`、`notes.docx`、`notes.pdf` 等报告和导出文件。
-
-## 未来展望
-
-SlideNote 带着一个乐观前提在建设：未来 AI 会更强、更快、更便宜，也会更容易通过成熟的开源智能体框架来组织复杂工作流。如果这件事发生，SlideNote 不应该只是“用更低成本跑同一套 prompt”，而应该让项目上限被真正抬高。
-
-以 DeepSeek 这类强调性价比、可获得性和开放生态的模型 / 服务为例，它让人看到一种很值得期待的方向：当高质量 API 的价格、速度和可用性继续改善，多 pass 的高质量流程就不再只是少数重型场景才能负担的奢侈品。SlideNote 可以把更深的课件理解、逐页视觉推理、教师讲义式写作、teaching enrichment、coverage repair、考试题生成、错题复盘和来源校验变成更自然的默认能力。
-
-这件事之所以重要，是因为 SlideNote 的难点不只是“模型能不能总结一页 PPT”。真正难的是在解析、视觉理解、写作、图文锚定、质量检查和局部修订之间保持协调，同时不丢失可追溯性。所以项目会持续投入 `element_ir.json`、`source_map.json`、coverage、artifact registry、preset、cache key 和 review/exam 学习包这些工程结构。它们让 SlideNote 能吃到未来模型进步的红利，而不是被某一个模型、某一家 provider 或某一种 agent runtime 绑死。
-
-长期愿景是：
-
-> SlideNote 从课件转换器，成长为课程学习操作系统。
-
-在这个愿景里，课件、教材、个人笔记、图表、公式、测验、错题和局部修订都处在同一条可检查、可追溯、可复习的学习工作流里。
-
-## 设计原则
-
-SlideNote 不走 `PPT -> LLM -> 总结` 的捷径，而是：
-
-```text
-PPT/PDF -> 结构化解析 -> 内容清单 -> 笔记生成 -> 覆盖率校验 -> 导出
-```
-
-本地规则草稿只负责把结构化内容“保底写出来”，方便调试解析和覆盖率。正式笔记默认使用 `lecture` preset，但覆盖率检查仍然依靠元素 ID 做硬校验，避免模型把细节悄悄总结掉。
+更多内容见[文档中心](docs/index.zh-CN.md)、[配置参考](CONFIG.zh-CN.md)和[路线图](ROADMAP.zh-CN.md)。长期希望把课件、教材、复习题和个人笔记连成可追溯的学习流程；具体开发优先级以路线图为准。
 
 ## 许可证
 
@@ -276,19 +162,3 @@ SlideNote 名称、logo 和其它品牌素材不授权作独立复用。具体�
 - SlideNote 后续的检索、来源追踪和生成后质检方向也参考了 [RAGFlow](https://github.com/infiniflow/ragflow) 这类深度文档理解 / RAG 系统。这些项目是思路参考，不代表已作为依赖打包进 SlideNote。
 - 感谢 [LEO690201](https://github.com/LEO690201) 为 SlideNote 修复 bug、提升项目稳定性所作的贡献。
 - SlideNote 的开发也得到了 Codex、Claude Code 和 DeepSeek Harness 在代码分析、实现与调试方面的辅助。所有 AI 辅助改动仍须经过维护者审核和项目测试。
-
-## 参考文档
-
-- [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat/create)
-- [OpenAI Images and vision](https://developers.openai.com/api/docs/guides/images-vision)
-- [DeepSeek API](https://api-docs.deepseek.com/)
-- [阿里云百炼 OpenAI 兼容接口](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope)
-- [火山方舟 OpenAI SDK 兼容](https://www.volcengine.com/docs/82379/1330626)
-- [智谱 GLM OpenAI 兼容](https://docs.bigmodel.cn/cn/guide/develop/openai/introduction)
-- [百度 OCR API](https://ai.baidu.com/ai-doc/REFERENCE/4kru2vqdg)
-- [Mathpix OCR API](https://docs.mathpix.com/reference/post-v3-text)
-- [Google Cloud Vision OCR](https://cloud.google.com/vision/docs/ocr)
-- [Gemini generateContent API](https://ai.google.dev/gemini-api/docs/text-generation)
-- [Gemini image understanding](https://ai.google.dev/gemini-api/docs/image-understanding)
-- [Claude Messages API](https://docs.anthropic.com/en/api/messages)
-- [Claude Vision](https://platform.claude.com/docs/en/build-with-claude/vision)

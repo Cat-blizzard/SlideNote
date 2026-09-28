@@ -1,10 +1,10 @@
 # SlideNote 配置指南
 
-SlideNote 现在把普通用户入口收敛到两个 preset：`lecture` 和 `local`。底层仍然保留 OCR、Vision、图文锚定、Lecture-Weave、缓存和质量报告等能力，但这些不再作为 `slidenote build` 的日常参数暴露。
+SlideNote 的普通用户入口是两个 preset：`lecture` 和 `local`。`build` 只公开少量常用选项；更细的图文锚定、Lecture-Weave、缓存与质量检查由流水线内部处理。
 
 ## 我该怎么跑？
 
-高质量讲义，默认推荐：
+正式生成讲义，使用默认 `lecture`：
 
 ```powershell
 $env:DEEPSEEK_API_KEY="..."
@@ -18,11 +18,11 @@ python -m slidenote build lecture.pdf --out outputs\lecture --provider deepseek 
 python -m slidenote build lecture.pdf --out outputs\local --preset local --export markdown-zip
 ```
 
-关闭视觉理解，只用文本模型写讲义：
+关闭视觉模型来写讲义（课件图片仍可能进入笔记，OCR 也可单独运行）：
 
 ```powershell
 $env:DEEPSEEK_API_KEY="..."
-python -m slidenote build lecture.pdf --out outputs\text-only --provider deepseek --vision off
+python -m slidenote build lecture.pdf --out outputs\no-vision --provider deepseek --vision off
 ```
 
 从已有笔记生成复习包：
@@ -31,7 +31,7 @@ python -m slidenote build lecture.pdf --out outputs\text-only --provider deepsee
 python -m slidenote study-pack outputs\lecture --question-count 12
 ```
 
-把 PDF 教材构建成 RAG-ready 文档库：
+把 PDF 教材解析成供后续检索使用的分块语料（当前尚无向量索引，也未接入笔记生成）：
 
 ```powershell
 python -m slidenote textbook-index textbook.pdf --out outputs\textbook --ocr auto
@@ -43,7 +43,7 @@ python -m slidenote textbook-index textbook.pdf --out outputs\textbook --ocr aut
 python -m slidenote build lecture.pdf --out outputs\paper --export docx,pdf
 ```
 
-分享 Markdown 给别人时，优先使用 `--export markdown-zip`。`notes.zip` 里包含 `notes.md` 和 `notes.assets/`，对方解压后打开 `notes.md` 才能看到图片。
+分享 Markdown 给别人时，优先使用 `--export markdown-zip`。`notes.zip` 包含 `notes.md`；有图片资源时还包含 `notes.assets/`。对方解压后打开 `notes.md` 即可查看。
 
 ## Build 参数
 
@@ -51,11 +51,12 @@ python -m slidenote build lecture.pdf --out outputs\paper --export docx,pdf
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `input` | 必填 | 输入 `.pptx` / `.ppt` / `.pdf`。 |
+| `input` | 必填 | 输入 `.pptx` / `.ppt` / `.pdf`；其他格式取决于可选外部 parser。 |
 | `--out` | `outputs/slidenote` | 输出目录。 |
 | `--preset` | `lecture` | `lecture` 走强质量 AI 讲义流程；`local` 不调用 API。 |
 | `--provider` | `deepseek` | 文本模型 provider。支持 `deepseek`、`openai`、`qwen`、`doubao`、`glm`、`gemini`、`claude`。 |
-| `--vision` | `auto` | `auto` 启用视觉理解；`off` 跳过视觉 API。`local` preset 会强制关闭。 |
+| `--vision` | `auto` | `auto` 按需调用视觉模型；`off` 跳过视觉 API，但不删除课件图片。`local` preset 会强制关闭。 |
+| `--ocr` | `auto` | `auto` 只处理低文本/扫描页；`off` 跳过 OCR；`all` 处理所有页。`local` preset 会强制关闭。 |
 | `--export` | 无 | 额外导出：`markdown-zip`、`markdown-toc`、`docx`、`pdf`、`latex`、`all`。 |
 | `--parser` | `auto` | 可选解析器入口，普通用户不用改。 |
 | `--progress-json` | `<out>/progress.json` | GUI/自动化使用的进度文件。 |
@@ -76,8 +77,10 @@ python -m slidenote build lecture.pdf --out outputs\paper --export docx,pdf
 
 | Preset | 适合场景 | 行为 |
 | --- | --- | --- |
-| `lecture` | 正式学习、长期保存、希望笔记像讲义。 | 默认启用 LLM、OCR auto、Vision auto、图文锚定、Deck Brief、Content Guard、Lecture-Weave、teaching enrichment 和本地缓存。需要 provider API key。 |
-| `local` | 没有 API key、离线预览、检查解析是否正常。 | 不调用文本模型、视觉模型或 OCR API，只用本地规则生成基础 Markdown 和质量报告。 |
+| `lecture` | 正式学习、长期保存、需要图文理解；像老师重新讲一遍。 | 默认启用 LLM、OCR auto、Vision auto、图文锚定、Deck Brief、Content Guard、Lecture-Weave、teaching enrichment 和本地缓存。需要相应 API key。 |
+| `local` | 首次预览、没有 API key、检查课件能否被读出。 | 不调用文本模型、视觉模型或 OCR API，只用本地规则生成基础 Markdown 和质量报告。 |
+
+首次处理新课件可先用 `local` 检查解析；正式学习或分享笔记再用 `lecture`。图表较多时保留 `--vision auto`；只想关闭视觉模型时使用 `--vision off`。复习题由独立的 `study-pack` 命令生成。
 
 ## 环境变量
 
