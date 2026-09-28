@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import json
 import base64
+import json
 import mimetypes
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -137,6 +138,14 @@ ALIASES = {
     "anthropic": "claude",
 }
 
+HTTP_TIMEOUT_SECONDS = 120
+ANTHROPIC_API_VERSION = "2023-06-01"
+# Generic overrides apply to the text-model role only; vision has its own.
+TEXT_MODEL_ENV = "SLIDENOTE_MODEL"
+TEXT_BASE_URL_ENV = "SLIDENOTE_BASE_URL"
+VISION_MODEL_ENV = "SLIDENOTE_VISION_MODEL"
+VISION_BASE_URL_ENV = "SLIDENOTE_VISION_BASE_URL"
+
 SYSTEM_PROMPT = (
     "你是课程笔记写作助手。输出必须直接进入 Markdown 正文，不要写寒暄、任务复述、JSON 说明或规则遵循说明。"
     "你要把幻灯片中的零散 bullet 改写成自然、连贯、适合复习的课程笔记，并保留必要来源标记。"
@@ -153,13 +162,16 @@ class LLMClient:
         base_url: str | None = None,
         max_output_tokens: int = 4096,
         temperature: float | None = None,
+        for_vision: bool = False,
     ) -> None:
         self.spec = get_provider_spec(provider)
-        self.model = _resolve_model(self.spec, model)
+        self.model = _resolve_model(self.spec, model, for_vision=for_vision)
         self.api_key = _resolve_api_key(self.spec, api_key)
-        self.base_url = _resolve_base_url(self.spec, base_url)
+        self.base_url = _resolve_base_url(self.spec, base_url, for_vision=for_vision)
         self.max_output_tokens = max_output_tokens
         self.temperature = temperature
+        self._openai_client: Any = None
+        self._openai_client_lock = threading.Lock()
 
     @property
     def provider_name(self) -> str:
@@ -208,38 +220,26 @@ class LLMClient:
         retry_result = with_api_retries(call)
         return _with_retry_usage(retry_result.value, retry_result.retries)
 
+    # -- OpenAI-compatible -------------------------------------------------
+
+    def _openai(self) -> Any:
+        """Return one SDK client per LLMClient; ``with_api_retries`` owns retries."""
+        with self._openai_client_lock:
+            if self._openai_client is None:
+                try:
+                    from openai import OpenAI
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "OpenAI SDK is required for OpenAI-compatible providers. Install with `pip install openai`."
+                    ) from exc
+                client_kwargs: dict[str, Any] = {"api_key": self.api_key, "max_retries": 0}
+                if self.base_url:
+                    client_kwargs["base_url"] = self.base_url
+                self._openai_client = OpenAI(**client_kwargs)
+            return self._openai_client
+
     def _generate_openai_compatible(self, system_prompt: str, user_prompt: str) -> LLMResult:
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise RuntimeError("OpenAI SDK is required for OpenAI-compatible providers. Install with `pip install openai`.") from exc
-
-        client_kwargs: dict[str, Any] = {"api_key": self.api_key}
-        if self.base_url:
-            client_kwargs["base_url"] = self.base_url
-        client = OpenAI(**client_kwargs)
-
-        request: dict[str, Any] = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        }
-        if self.max_output_tokens:
-            request["max_tokens"] = self.max_output_tokens
-        if self.temperature is not None:
-            request["temperature"] = self.temperature
-
-        response = client.chat.completions.create(**request)
-        content = response.choices[0].message.content
-        return LLMResult(
-            text=content.strip() if content else "",
-            usage=_with_finish_reason(
-                _normalize_openai_usage(getattr(response, "usage", None)),
-                getattr(response.choices[0], "finish_reason", None),
-            ),
-        )
+        return self._openai_chat(system_prompt, user_prompt)
 
     def _generate_openai_image(
         self,
@@ -249,34 +249,28 @@ class LLMClient:
         mime_type: str,
         image_detail: str,
     ) -> LLMResult:
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise RuntimeError("OpenAI SDK is required for OpenAI-compatible providers. Install with `pip install openai`.") from exc
+        data_url = f"data:{mime_type};base64,{_b64(image_bytes)}"
+        return self._openai_chat(
+            system_prompt,
+            [
+                {"type": "text", "text": user_prompt},
+                {"type": "image_url", "image_url": {"url": data_url, "detail": image_detail}},
+            ],
+        )
 
-        client_kwargs: dict[str, Any] = {"api_key": self.api_key}
-        if self.base_url:
-            client_kwargs["base_url"] = self.base_url
-        client = OpenAI(**client_kwargs)
-        data_url = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+    def _openai_chat(self, system_prompt: str, user_content: str | list[dict[str, Any]]) -> LLMResult:
         request: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_prompt},
-                        {"type": "image_url", "image_url": {"url": data_url, "detail": image_detail}},
-                    ],
-                },
+                {"role": "user", "content": user_content},
             ],
         }
         if self.max_output_tokens:
             request["max_tokens"] = self.max_output_tokens
         if self.temperature is not None:
             request["temperature"] = self.temperature
-        response = client.chat.completions.create(**request)
+        response = self._openai().chat.completions.create(**request)
         content = response.choices[0].message.content
         return LLMResult(
             text=content.strip() if content else "",
@@ -286,52 +280,23 @@ class LLMClient:
             ),
         )
 
-    def _generate_gemini(self, system_prompt: str, user_prompt: str) -> LLMResult:
-        model = self.model.removeprefix("models/")
-        endpoint = f"{self.base_url.rstrip('/')}/models/{urllib.parse.quote(model, safe='')}:generateContent"
-        payload: dict[str, Any] = {
-            "system_instruction": {"parts": [{"text": system_prompt}]},
-            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-        }
-        generation_config: dict[str, Any] = {}
-        if self.max_output_tokens:
-            generation_config["maxOutputTokens"] = self.max_output_tokens
-        if self.temperature is not None:
-            generation_config["temperature"] = self.temperature
-        if generation_config:
-            payload["generationConfig"] = generation_config
+    # -- Gemini ------------------------------------------------------------
 
-        data = _post_json(endpoint, payload, {"x-goog-api-key": self.api_key})
-        candidates = data.get("candidates") or []
-        if not candidates:
-            raise RuntimeError(f"Gemini returned no candidates: {data}")
-        parts = candidates[0].get("content", {}).get("parts", [])
-        return LLMResult(
-            text="".join(part.get("text", "") for part in parts).strip(),
-            usage=_with_finish_reason(
-                _normalize_gemini_usage(data.get("usageMetadata")), candidates[0].get("finishReason")
-            ),
-        )
+    def _generate_gemini(self, system_prompt: str, user_prompt: str) -> LLMResult:
+        return self._gemini_generate(system_prompt, [{"text": user_prompt}])
 
     def _generate_gemini_image(self, system_prompt: str, user_prompt: str, image_bytes: bytes, mime_type: str) -> LLMResult:
+        return self._gemini_generate(
+            system_prompt,
+            [{"inline_data": {"mime_type": mime_type, "data": _b64(image_bytes)}}, {"text": user_prompt}],
+        )
+
+    def _gemini_generate(self, system_prompt: str, parts: list[dict[str, Any]]) -> LLMResult:
         model = self.model.removeprefix("models/")
         endpoint = f"{self.base_url.rstrip('/')}/models/{urllib.parse.quote(model, safe='')}:generateContent"
         payload: dict[str, Any] = {
             "system_instruction": {"parts": [{"text": system_prompt}]},
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [
-                        {
-                            "inline_data": {
-                                "mime_type": mime_type,
-                                "data": base64.b64encode(image_bytes).decode("ascii"),
-                            }
-                        },
-                        {"text": user_prompt},
-                    ],
-                }
-            ],
+            "contents": [{"role": "user", "parts": parts}],
         }
         generation_config: dict[str, Any] = {}
         if self.max_output_tokens:
@@ -344,71 +309,42 @@ class LLMClient:
         candidates = data.get("candidates") or []
         if not candidates:
             raise RuntimeError(f"Gemini returned no candidates: {data}")
-        parts = candidates[0].get("content", {}).get("parts", [])
+        response_parts = candidates[0].get("content", {}).get("parts", [])
         return LLMResult(
-            text="".join(part.get("text", "") for part in parts).strip(),
+            text="".join(part.get("text", "") for part in response_parts).strip(),
             usage=_with_finish_reason(
                 _normalize_gemini_usage(data.get("usageMetadata")), candidates[0].get("finishReason")
             ),
         )
 
-    def _generate_claude(self, system_prompt: str, user_prompt: str) -> LLMResult:
-        endpoint = f"{self.base_url.rstrip('/')}/v1/messages"
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "max_tokens": self.max_output_tokens,
-            "system": system_prompt,
-            "messages": [{"role": "user", "content": user_prompt}],
-        }
-        if self.temperature is not None:
-            payload["temperature"] = self.temperature
+    # -- Claude ------------------------------------------------------------
 
-        data = _post_json(
-            endpoint,
-            payload,
-            {
-                "x-api-key": self.api_key,
-                "anthropic-version": "2023-06-01",
-            },
-        )
-        blocks = data.get("content") or []
-        return LLMResult(
-            text="".join(block.get("text", "") for block in blocks if block.get("type") == "text").strip(),
-            usage=_with_finish_reason(_normalize_claude_usage(data.get("usage")), data.get("stop_reason")),
-        )
+    def _generate_claude(self, system_prompt: str, user_prompt: str) -> LLMResult:
+        return self._claude_messages(system_prompt, user_prompt)
 
     def _generate_claude_image(self, system_prompt: str, user_prompt: str, image_bytes: bytes, mime_type: str) -> LLMResult:
+        return self._claude_messages(
+            system_prompt,
+            [
+                {"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": _b64(image_bytes)}},
+                {"type": "text", "text": user_prompt},
+            ],
+        )
+
+    def _claude_messages(self, system_prompt: str, user_content: str | list[dict[str, Any]]) -> LLMResult:
         endpoint = f"{self.base_url.rstrip('/')}/v1/messages"
         payload: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_output_tokens,
             "system": system_prompt,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": mime_type,
-                                "data": base64.b64encode(image_bytes).decode("ascii"),
-                            },
-                        },
-                        {"type": "text", "text": user_prompt},
-                    ],
-                }
-            ],
+            "messages": [{"role": "user", "content": user_content}],
         }
         if self.temperature is not None:
             payload["temperature"] = self.temperature
         data = _post_json(
             endpoint,
             payload,
-            {
-                "x-api-key": self.api_key,
-                "anthropic-version": "2023-06-01",
-            },
+            {"x-api-key": self.api_key, "anthropic-version": ANTHROPIC_API_VERSION},
         )
         blocks = data.get("content") or []
         return LLMResult(
@@ -447,19 +383,19 @@ def resolve_provider_runtime(provider: str, model: str | None = None, base_url: 
     return {
         "provider": spec.canonical_name,
         "model": _resolve_model(spec, model, for_vision=for_vision),
-        "base_url": _resolve_base_url(spec, base_url),
+        "base_url": _resolve_base_url(spec, base_url, for_vision=for_vision),
         "supports_image_input": spec.supports_image_input,
     }
 
 
 def _resolve_model(spec: ProviderSpec, explicit_model: str | None, for_vision: bool = False) -> str:
     if for_vision:
-        model = explicit_model or first_env(("SLIDENOTE_VISION_MODEL",) + spec.vision_model_envs) or spec.default_vision_model
+        model = explicit_model or first_env((VISION_MODEL_ENV,) + spec.vision_model_envs) or spec.default_vision_model
     else:
-        model = explicit_model or first_env(("SLIDENOTE_MODEL",) + spec.model_envs) or spec.default_model
+        model = explicit_model or first_env((TEXT_MODEL_ENV,) + spec.model_envs) or spec.default_model
     if not model:
         model_envs = spec.vision_model_envs if for_vision else spec.model_envs
-        generic_env = "SLIDENOTE_VISION_MODEL" if for_vision else "SLIDENOTE_MODEL"
+        generic_env = VISION_MODEL_ENV if for_vision else TEXT_MODEL_ENV
         raise RuntimeError(
             f"`{spec.canonical_name}` requires a model name. Pass `--model ...` or set one of: "
             f"{', '.join(model_envs) or generic_env}"
@@ -477,8 +413,9 @@ def _resolve_api_key(spec: ProviderSpec, explicit_api_key: str | None) -> str:
     return key
 
 
-def _resolve_base_url(spec: ProviderSpec, explicit_base_url: str | None) -> str | None:
-    return explicit_base_url or first_env(("SLIDENOTE_BASE_URL",) + spec.base_url_envs) or spec.base_url
+def _resolve_base_url(spec: ProviderSpec, explicit_base_url: str | None, for_vision: bool = False) -> str | None:
+    generic_env = VISION_BASE_URL_ENV if for_vision else TEXT_BASE_URL_ENV
+    return explicit_base_url or first_env((generic_env,) + spec.base_url_envs) or spec.base_url
 
 
 def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
@@ -493,7 +430,7 @@ def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str]) -> di
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
             response_body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
@@ -501,6 +438,10 @@ def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str]) -> di
     except urllib.error.URLError as exc:
         raise RuntimeError(f"LLM request failed: {exc}") from exc
     return json.loads(response_body)
+
+
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
 
 
 def _guess_mime_type(path: Path) -> str:

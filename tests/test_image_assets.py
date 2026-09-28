@@ -2,8 +2,7 @@ from PIL import Image
 
 from slidenote.image_assets import classify_image_asset, refine_image_role_for_placement
 from slidenote.image_ranking import rank_deck_images, sorted_images_by_importance
-from slidenote.extractors.pdf import _is_page_like_bbox
-from slidenote.extractors.pptx import _is_page_like_shape
+from slidenote.geometry import placement_metrics
 from slidenote.models import Deck, ImageAsset, SlidePage
 
 
@@ -40,13 +39,16 @@ def test_refine_keeps_medium_edge_content_image():
 
 
 def test_pdf_page_like_bbox_detection():
-    assert _is_page_like_bbox([0, 0, 950, 950], (1000, 1000)) is True
-    assert _is_page_like_bbox([100, 100, 500, 500], (1000, 1000)) is False
+    assert placement_metrics("pdf", [0, 0, 950, 950], 1000, 1000)[2] is True
+    assert placement_metrics("pdf", [100, 100, 500, 500], 1000, 1000)[2] is False
 
 
 def test_pptx_page_like_shape_detection():
-    assert _is_page_like_shape([0, 0, 950, 950], 1000, 1000) is True
-    assert _is_page_like_shape([0, 0, 400, 400], 1000, 1000) is False
+    assert placement_metrics("pptx", [0, 0, 950, 950], 1000, 1000)[2] is True
+    assert placement_metrics("pptx", [0, 0, 400, 400], 1000, 1000)[2] is False
+    area_ratio, near_edge, _ = placement_metrics("pptx", [450, 450, 50, 50], 1000, 1000)
+    assert round(area_ratio, 4) == 0.0025
+    assert near_edge is False
 
 
 def test_image_importance_ranks_figure_crop_above_generic_image(tmp_path):

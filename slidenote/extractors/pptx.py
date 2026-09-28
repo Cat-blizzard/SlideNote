@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
+from slidenote.geometry import placement_metrics
 from slidenote.image_assets import image_metadata, refine_image_role_for_placement
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock, normalize_rel_path
 from slidenote.rendering import render_pptx_screenshots
@@ -201,7 +202,7 @@ def _extract_picture(
     image_path.write_bytes(image.blob)
     meta = image_metadata(image_path)
     bbox = _shape_bbox(shape)
-    page_like = _is_page_like_shape(bbox, slide_width, slide_height)
+    area_ratio, near_edge, page_like = placement_metrics("pptx", bbox, slide_width, slide_height)
     role = "page_image" if page_like else meta["role"]
     ignored = True if page_like else meta["ignored"]
     ignore_reason = "full_page_image" if page_like else meta["ignore_reason"]
@@ -209,8 +210,8 @@ def _extract_picture(
         role,
         ignored,
         ignore_reason,
-        _shape_area_ratio(bbox, slide_width, slide_height),
-        _shape_near_slide_edge(bbox, slide_width, slide_height),
+        area_ratio,
+        near_edge,
     )
     return ImageAsset(
         id=f"s{slide_index}_img{image_index}",
@@ -232,29 +233,6 @@ def _shape_bbox(shape: object) -> list[float] | None:
         return [float(shape.left), float(shape.top), float(shape.width), float(shape.height)]
     except Exception:
         return None
-
-
-def _is_page_like_shape(bbox: list[float] | None, slide_width: float, slide_height: float) -> bool:
-    if not bbox or slide_width <= 0 or slide_height <= 0:
-        return False
-    _, _, width, height = bbox
-    return max(0.0, width) * max(0.0, height) / (slide_width * slide_height) >= 0.85
-
-
-def _shape_area_ratio(bbox: list[float] | None, slide_width: float, slide_height: float) -> float | None:
-    if not bbox or slide_width <= 0 or slide_height <= 0:
-        return None
-    _, _, width, height = bbox
-    return max(0.0, width) * max(0.0, height) / (slide_width * slide_height)
-
-
-def _shape_near_slide_edge(bbox: list[float] | None, slide_width: float, slide_height: float) -> bool:
-    if not bbox or slide_width <= 0 or slide_height <= 0:
-        return False
-    left, top, width, height = bbox
-    margin_x = slide_width * 0.08
-    margin_y = slide_height * 0.08
-    return left <= margin_x or top <= margin_y or left + width >= slide_width - margin_x or top + height >= slide_height - margin_y
 
 
 def _fallback_title(blocks: list[TextBlock]) -> str | None:

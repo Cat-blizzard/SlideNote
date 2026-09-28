@@ -6,12 +6,31 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
 
+# Fallback only; override with "exchange_rates": {"CNY": ...} in the pricing JSON.
+DEFAULT_CNY_PER_USD = 7.2
 DEFAULT_PRICING = {
     "currency": "USD",
-    "exchange_rates": {"USD": 1.0, "CNY": 7.2},
+    "exchange_rates": {"USD": 1.0, "CNY": DEFAULT_CNY_PER_USD},
     "models": {},
     "ocr": {},
 }
+
+# Usage files written by stages that report their own call records.
+USAGE_FILES = (
+    ("llm_usage.json", "llm"),
+    ("vision_usage.json", "vision"),
+    ("figure_usage.json", "figure"),
+    ("ocr_usage.json", "ocr"),
+)
+# Stage reports that embed model usage in their own shape:
+# (file, bucket name, provider/model block, calls key, cache-hits key).
+EMBEDDED_USAGE_REPORTS = (
+    ("sections.json", "sections", "llm", "llm_call", "local_cache_hits"),
+    ("deck_brief.json", "deck_brief", "llm", "llm_call", "local_cache_hits"),
+    ("content_guard.json", "content_guard", "llm", None, None),
+    ("semantic_layout.json", "semantic_layout", "vision_enhancement", "vision_calls", "vision_cache_hits"),
+    ("figure_grounding.json", "figure_grounding", "vision_grounding", "vision_calls", "vision_cache_hits"),
+)
 
 @dataclass(slots=True)
 class UsageBucket:
@@ -45,15 +64,22 @@ def read_json(path: Path) -> dict[str, Any] | None:
 
 
 def load_pricing(path: Path | None = None) -> dict[str, Any]:
-    if path and path.exists():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            merged = dict(DEFAULT_PRICING)
-            merged.update(data)
-            return merged
-        except Exception:
-            return DEFAULT_PRICING
-    return DEFAULT_PRICING
+    merged = {key: dict(value) if isinstance(value, dict) else value for key, value in DEFAULT_PRICING.items()}
+    if not (path and path.exists()):
+        return merged
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return merged
+    if not isinstance(data, dict):
+        return merged
+    for key, value in data.items():
+        if key == "exchange_rates" and isinstance(value, dict):
+            # Merge so a pricing file that only sets EUR keeps the CNY default.
+            merged["exchange_rates"].update(value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _int(value: Any) -> int:
@@ -147,17 +173,56 @@ def bucket_from_report(name: str, report: dict[str, Any] | None, pricing: dict[s
     return bucket
 
 
+def _embedded_usage_report(
+    report: dict[str, Any] | None,
+    runtime_key: str,
+    calls_key: str | None,
+    hits_key: str | None,
+) -> dict[str, Any] | None:
+    """Normalize a stage report with embedded model usage to the usage-file shape."""
+    if not isinstance(report, dict):
+        return None
+    runtime = report.get(runtime_key)
+    if not isinstance(runtime, dict) or not runtime.get("provider"):
+        return None
+    if calls_key is None:
+        # content_guard keeps a single call record in its runtime block.
+        source = runtime
+        calls = 1 if runtime.get("llm_call") else 0
+        hits = 1 if runtime.get("cache_status") == "local_hit" else 0
+    else:
+        source = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+        raw_calls = source.get(calls_key)
+        # sections/deck_brief store a single boolean `llm_call`.
+        calls = int(raw_calls) if isinstance(raw_calls, bool) else _int(raw_calls)
+        hits = _int(source.get(hits_key)) if hits_key else 0
+    billed = calls > 0
+    return {
+        "provider": runtime.get("provider"),
+        "model": runtime.get("model"),
+        "summary": {
+            "llm_calls": calls,
+            "local_cache_hits": hits,
+            # Token counts of cache hits describe the original call, not this run.
+            "input_tokens": source.get("input_tokens") if billed else 0,
+            "output_tokens": source.get("output_tokens") if billed else 0,
+            "total_tokens": source.get("total_tokens") if billed else 0,
+            "provider_cached_input_tokens": source.get("provider_cached_input_tokens") if billed else 0,
+        },
+    }
+
+
 def build_cost_report(output_dir: Path, pricing_path: Path | None = None, currency: str = "USD") -> dict[str, Any]:
     output_dir = output_dir.resolve()
     pricing = load_pricing(pricing_path)
     buckets = []
-    for filename, name in [
-        ("llm_usage.json", "llm"),
-        ("vision_usage.json", "vision"),
-        ("figure_usage.json", "figure"),
-        ("ocr_usage.json", "ocr"),
-    ]:
+    for filename, name in USAGE_FILES:
         bucket = bucket_from_report(name, read_json(output_dir / filename), pricing)
+        if bucket:
+            buckets.append(bucket)
+    for filename, name, runtime_key, calls_key, hits_key in EMBEDDED_USAGE_REPORTS:
+        usage = _embedded_usage_report(read_json(output_dir / filename), runtime_key, calls_key, hits_key)
+        bucket = bucket_from_report(name, usage, pricing)
         if bucket:
             buckets.append(bucket)
 

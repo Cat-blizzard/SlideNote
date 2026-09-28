@@ -96,6 +96,9 @@ def _render_with_powerpoint(input_path: Path, screenshots_dir: Path, output_root
     except Exception:
         return {}
 
+    # PowerPoint is a single-instance COM server: Dispatch attaches to a copy the
+    # user already has open. Only quit it if we started it and nothing else is open.
+    was_running = _powerpoint_is_running(win32com.client)
     powerpoint = None
     presentation = None
     try:
@@ -115,9 +118,18 @@ def _render_with_powerpoint(input_path: Path, screenshots_dir: Path, output_root
                 presentation.Close()
             except Exception:
                 pass
-        if powerpoint is not None:
+        if powerpoint is not None and not was_running:
             try:
-                powerpoint.Quit()
+                if powerpoint.Presentations.Count == 0:
+                    powerpoint.Quit()
             except Exception:
                 pass
+
+
+def _powerpoint_is_running(win32com_client) -> bool:
+    try:
+        win32com_client.GetActiveObject("PowerPoint.Application")
+    except Exception:
+        return False
+    return True
 

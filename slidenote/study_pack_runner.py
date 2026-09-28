@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,10 @@ from slidenote.study_pack import (
 )
 from slidenote.utils import write_json, write_text
 
+DEFAULT_STUDY_PACK_PROVIDER = "deepseek"
+# Review + exam JSON for up to 60 questions needs a large completion budget.
+STUDY_PACK_MAX_OUTPUT_TOKENS = 12000
+
 
 def run_study_pack(args: argparse.Namespace) -> int:
     output_root = args.build_out_dir.resolve()
@@ -35,8 +40,17 @@ def run_study_pack(args: argparse.Namespace) -> int:
     notes_markdown = notes_path.read_text(encoding="utf-8")
     run_summary = _read_optional_json(output_root / "run_summary.json") or {}
     run_config = run_summary.get("run") if isinstance(run_summary.get("run"), dict) else {}
-    provider = str(run_config.get("provider") or "deepseek")
-    use_llm = _provider_can_run(provider)
+    warnings: list[str] = []
+    provider = str(run_config.get("provider") or "")
+    if not provider:
+        provider = DEFAULT_STUDY_PACK_PROVIDER
+        warnings.append(
+            f"study_pack_provider_fallback:{provider} (run_summary.json has no run.provider; "
+            "the original build's provider/model could not be reused)"
+        )
+    model = str(run_config.get("model") or "") or None
+    base_url = str(run_config.get("base_url") or "") or None
+    use_llm = _provider_can_run(provider, model=model)
 
     report = build_study_pack(
         deck=deck,
@@ -47,9 +61,11 @@ def run_study_pack(args: argparse.Namespace) -> int:
         question_count=max(1, int(args.question_count or 12)),
         use_llm=use_llm,
         provider=provider,
+        model=model,
+        base_url=base_url,
         cache_mode="on",
         cache_dir=output_root / ".cache" / "llm",
-        max_output_tokens=12000,
+        max_output_tokens=STUDY_PACK_MAX_OUTPUT_TOKENS,
         temperature=0.0,
         note_language=str(run_config.get("note_language") or "zh"),
         section_plan=_read_optional_json(output_root / "sections.json"),
@@ -60,6 +76,10 @@ def run_study_pack(args: argparse.Namespace) -> int:
     )
     if report is None:
         raise UserFacingConfigError("study-pack did not produce any output.")
+    if warnings:
+        report["warnings"] = [*warnings, *(report.get("warnings") or [])]
+        for warning in warnings:
+            print(f"Warning: {warning}", file=sys.stderr)
 
     _write_study_pack_outputs(output_root, report)
     if not args.quiet:
@@ -90,13 +110,13 @@ def _write_study_pack_outputs(output_root: Path, report: dict[str, Any]) -> None
         write_text(output_root / "wrong_answer_review_prompt.md", render_wrong_answer_review_prompt(report))
 
 
-def _provider_can_run(provider: str) -> bool:
+def _provider_can_run(provider: str, model: str | None = None) -> bool:
     try:
         spec = get_provider_spec(provider)
     except ValueError:
         return False
     has_key = any(os.getenv(name) for name in spec.api_key_envs)
-    has_model = bool(os.getenv("SLIDENOTE_MODEL") or any(os.getenv(name) for name in spec.model_envs) or spec.default_model)
+    has_model = bool(model or os.getenv("SLIDENOTE_MODEL") or any(os.getenv(name) for name in spec.model_envs) or spec.default_model)
     return has_key and has_model
 
 

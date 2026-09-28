@@ -5,9 +5,8 @@ from pathlib import Path
 from typing import Any
 
 from slidenote.content_guard import learning_items_for_page
-from slidenote.models import Deck, SlidePage
+from slidenote.models import Deck
 
-from .assembly import NoteContext
 from .prompt_payload import (
     _nearby_page_payloads,
     _page_payload_for_prompt,
@@ -21,25 +20,6 @@ from .prompt_rules import (
     _source_prompt_rule,
     _term_policy_prompt_rule,
 )
-
-
-def _llm_page_prompt(page: SlidePage, supports_image_input: bool = False) -> str:
-    context = NoteContext(id=f"p{page.slide_id}", kind="page", title=page.title or f"\u7b2c {page.slide_id} \u9875", pages=[page])
-    return _llm_context_prompt(
-        context,
-        supports_image_input=supports_image_input,
-        asset_map={},
-        source_display="hidden",
-        note_context="page",
-        note_style="article",
-        note_profile="auto",
-        note_depth="detailed",
-        note_language="zh",
-        term_policy="bilingual",
-        screenshot_policy="fallback",
-        figure_placement="inline",
-        source_type="pdf",
-    )
 
 
 def _llm_context_prompt(

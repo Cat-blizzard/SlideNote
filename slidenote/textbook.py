@@ -7,11 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from slidenote.llm_cache import LLMCache, make_cache_key, sha256_text, utc_now_iso
-from slidenote.ocr import OCRClient, _prepare_image_for_ocr
+from slidenote.api_retry import with_api_retries
+from slidenote.ocr import OCRClient, prepare_image_for_ocr
 from slidenote.utils import (
     cleanup_temp_image,
     display_path,
     ensure_clean_dir,
+    file_sha256,
     write_json,
     write_text,
 )
@@ -52,7 +54,7 @@ def build_textbook_index(
         raise FileNotFoundError(input_path)
 
     ensure_clean_dir(output_root)
-    source_hash = _sha256_file(input_path)
+    source_hash = file_sha256(input_path)
     pages, metadata = extract_textbook_pages(input_path)
     ocr_report = None
     if ocr != "off":
@@ -307,7 +309,7 @@ def _recognize_textbook_page(
             "provider": provider,
             "source_hash": source_hash,
             "physical_page": page_number,
-            "rendered_hash": _sha256_file(rendered_path),
+            "rendered_hash": file_sha256(rendered_path),
         }
     )
     cache_path = cache.path_for(cache_key)
@@ -325,18 +327,20 @@ def _recognize_textbook_page(
         record["text_chars"] = len(text)
         return record, text
 
-    prepared = _prepare_image_for_ocr(rendered_path, max_edge=2200)
+    prepared = prepare_image_for_ocr(rendered_path, max_edge=2200)
     if prepared is None:
         record.update({"cache_status": "skipped", "skip_reason": "unreadable_rendered_page"})
         return record, ""
     prepared_path, image_meta = prepared
     try:
         client = OCRClient(provider=provider, api_key=api_key, secret_key=secret_key)
-        result = client.recognize(prepared_path)
+        retry_result = with_api_retries(lambda: client.recognize(prepared_path))
+        result = retry_result.value
         text = result.text.strip()
         record.update(
             {
                 "api_call": True,
+                "api_retries": retry_result.retries,
                 "text_chars": len(text),
                 "provider_usage": result.usage,
                 "image_meta": image_meta,
@@ -772,13 +776,3 @@ def _title_hint(text: str) -> str | None:
             return _strip_toc_leader(line)[:140]
     first = next(iter(_clean_lines(text)), "")
     return first[:140] if first else None
-
-
-def _sha256_file(path: Path) -> str:
-    import hashlib
-
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()

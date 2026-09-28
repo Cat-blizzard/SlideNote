@@ -1,6 +1,8 @@
 from slidenote.models import Deck
 from slidenote.utils import round_score
 from typing import Any
+import hashlib
+import random
 import re
 from .common import (
     _as_int,
@@ -76,13 +78,15 @@ def _local_choice_options(item: dict[str, Any], items: list[dict[str, Any]]) -> 
             continue
         distractors.append(f"把「{other_point}」的作用误当成「{point}」的主要含义。")
         if other_explanation:
-            distractors.append(f"只记住相邻结论“{_trim_text(other_explanation, 52)}”，但忽略它和「{point}」的适用条件。")
+            distractors.append(f"只记住相邻结论“{_shorten(other_explanation, 52)}”，但忽略它和「{point}」的适用条件。")
         if len(distractors) >= 3:
             break
+    # Generic but plausible misconceptions (over-generalisation, reversed causality,
+    # isolation from neighbouring concepts); avoid trivially eliminable options.
     fallback = [
-        f"只背「{point}」这个名称，但不能说明它解决的问题和限制。",
-        f"把「{point}」理解成任何场景都成立的结论，忽略材料给出的条件。",
-        f"只记住最终结论，却不能解释「{point}」与前后概念的关系。",
+        f"把「{point}」理解成任何场景都成立的结论，忽略材料给出的前提条件。",
+        f"把「{point}」中的因果关系颠倒，把结果当成了原因。",
+        f"认为「{point}」与前后概念相互独立，彼此之间没有依赖关系。",
     ]
     for option in fallback:
         if len(distractors) >= 3:
@@ -136,6 +140,37 @@ def _local_pitfall(point: str, role: str | None = None) -> str:
         return "不要只看图名，要能沿箭头或结构关系讲出因果链。"
     return "不要只背关键词，要能说明它解决的问题和使用场景。"
 
+def _seeded_rng(*parts: Any) -> random.Random:
+    """Deterministic RNG so local study packs are reproducible across runs."""
+    digest = hashlib.sha256("|".join(str(part) for part in parts).encode("utf-8")).digest()
+    return random.Random(int.from_bytes(digest[:8], "big"))
+
+
+def _local_true_false(item: dict[str, Any], items: list[dict[str, Any]], index: int) -> dict[str, Any]:
+    point = _clean_inline(item.get("point")) or "知识点"
+    explanation = _clean_inline(item.get("explanation")) or point
+    other_explanations = [
+        text
+        for other in items
+        if (text := _clean_inline(other.get("explanation"))) and text != explanation and _clean_inline(other.get("point")) != point
+    ]
+    rng = _seeded_rng("true_false", point, index)
+    if not other_explanations or rng.random() < 0.5:
+        return {
+            "question": f"判断：根据材料，「{point}」可以概括为：{_shorten(explanation, 120)}",
+            "answer": True,
+            "explanation": f"正确。材料原意：{explanation}",
+            "pitfall": "判断题要逐句核对条件和对象，不要只凭关键词作答。",
+        }
+    swapped = rng.choice(other_explanations)
+    return {
+        "question": f"判断：根据材料，「{point}」可以概括为：{_shorten(swapped, 120)}",
+        "answer": False,
+        "explanation": f"错误。这句描述对应的是另一个知识点；「{point}」的原意是：{explanation}",
+        "pitfall": "相邻知识点的描述容易张冠李戴，注意核对说明对应的对象。",
+    }
+
+
 def _local_questions(items: list[dict[str, Any]], question_count: int) -> list[dict[str, Any]]:
     questions: list[dict[str, Any]] = []
     if not items:
@@ -148,6 +183,8 @@ def _local_questions(items: list[dict[str, Any]], question_count: int) -> list[d
         image_refs = _normalize_image_refs(item.get("image_refs"))
         if index % 4 == 1:
             options = _local_choice_options(item, items)
+            correct = options[0]
+            _seeded_rng("choice", point, index).shuffle(options)
             questions.append(
                 {
                     "id": f"q{index}",
@@ -155,7 +192,7 @@ def _local_questions(items: list[dict[str, Any]], question_count: int) -> list[d
                     "points": 2,
                     "question": f"关于「{point}」，哪一项最符合材料中的含义？",
                     "options": options,
-                    "answer": 0,
+                    "answer": options.index(correct),
                     "explanation": explanation,
                     "pitfall": _clean_inline(item.get("pitfall")),
                     "source_refs": source_refs,
@@ -168,10 +205,7 @@ def _local_questions(items: list[dict[str, Any]], question_count: int) -> list[d
                     "id": f"q{index}",
                     "type": "true_false",
                     "points": 1,
-                    "question": f"判断：「{point}」只要背下名称即可，不需要理解它解决的问题或使用场景。",
-                    "answer": False,
-                    "explanation": f"错误。复习时应说明它的含义、作用和易错点：{explanation}",
-                    "pitfall": "把概念当成孤立名词，是短期备考最常见的失分方式。",
+                    **_local_true_false(item, items, index),
                     "source_refs": source_refs,
                     "image_refs": image_refs,
                 }
@@ -310,6 +344,10 @@ def _question_quality_flags(
     if mechanical_definition_score > 0.65:
         flags.append("questions_too_definition_like")
     return flags
+
+def _shorten(text: str, limit: int) -> str:
+    """Truncate inline text for question/option display (no prompt-budget marker)."""
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 def _trim_text(text: str, limit: int) -> str:
     if len(text) <= limit:

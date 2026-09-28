@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from slidenote.build.artifacts import remove_stale_build_artifacts
+from slidenote.build.errors import UserFacingConfigError
 from slidenote.build.config import _parse_slide_ranges, _resolve_api_concurrency, _resolve_cache_dirs
 from slidenote.models import Deck
 from slidenote.notes import NoteGenerationResult
@@ -45,19 +47,27 @@ class BuildState:
     coverage_report: dict[str, Any] | None = None
     quality_report: dict[str, Any] | None = None
     source_map: dict[str, Any] | None = None
-    study_pack_report: dict[str, Any] | None = None
     export_report: dict[str, Any] | None = None
     export_exit_code: int = 0
+
+def resolve_progress_path(args: argparse.Namespace) -> Path:
+    return (args.progress_json or (args.out / "progress.json")).resolve()
+
 
 def create_build_state(args: argparse.Namespace, export_formats: list[str]) -> BuildState:
     input_path = args.input.resolve()
     output_root = args.out.resolve()
     if not input_path.exists():
-        raise FileNotFoundError(input_path)
+        raise UserFacingConfigError(f"Input file not found: {input_path}")
+    try:
+        refresh_slide_ids = _parse_slide_ranges(args.refresh_pages)
+    except ValueError as exc:
+        raise UserFacingConfigError(f"Invalid refresh page range `{args.refresh_pages}`: {exc}") from exc
 
     ensure_clean_dir(output_root)
-    progress = ProgressReporter((args.progress_json or (output_root / "progress.json")).resolve(), quiet=args.quiet)
-    refresh_slide_ids = _parse_slide_ranges(args.refresh_pages)
+    progress_path = resolve_progress_path(args)
+    remove_stale_build_artifacts(output_root, keep=(input_path, progress_path))
+    progress = ProgressReporter(progress_path, quiet=args.quiet)
     concurrency = max(1, args.concurrency)
     api_concurrency = _resolve_api_concurrency(args)
     cache_dirs = _resolve_cache_dirs(args, output_root)

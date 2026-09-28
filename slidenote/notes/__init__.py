@@ -7,14 +7,11 @@ from typing import Any, Callable
 from slidenote.figure_grounding import FIGURE_PLACEMENT_MODES
 from slidenote.models import Deck
 
-from .assembly import (
-    _prepare_note_assets,
-    _select_note_contexts,
-    _validate_markdown_image_links,
-)
+from .assets import _prepare_note_assets, _validate_markdown_image_links
+from .contexts import _select_note_contexts
 from .local import _generate_notes_locally
 from .options import NOTE_PROFILES, TEACHING_ENRICHMENT_MODES, resolve_note_depth, should_run_teaching_enrichment
-from .orchestrator import _generate_notes_with_llm
+from .direct import _generate_notes_with_llm
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -41,11 +38,11 @@ class NoteOptions:
     """All note-generation configuration, passed down the pipeline as one object.
 
     Replaces the ~31-parameter call signatures that used to thread through
-    notes/__init__ -> orchestrator -> direct/lecture_weave -> llm_calls.
+    notes/__init__ -> direct/lecture_weave -> llm_calls.
     """
 
     use_llm: bool = False
-    provider: str = "openai"
+    provider: str = "deepseek"
     model: str | None = None
     api_key: str | None = None
     base_url: str | None = None
@@ -84,6 +81,7 @@ class NoteGenerationResult:
     page_notes_markdown: str | None = None
     weave_report: dict[str, Any] | None = None
     teaching_report: dict[str, Any] | None = None
+    generation_warnings: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------

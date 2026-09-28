@@ -6,6 +6,23 @@ from typing import Any
 
 from slidenote.llm import get_provider_spec
 
+# Per-stage output-token caps and temperatures for auxiliary model passes.
+SEMANTIC_LAYOUT_MAX_OUTPUT_TOKENS = 1400
+FIGURE_CROP_MAX_OUTPUT_TOKENS = 1200
+FIGURE_GROUNDING_MAX_OUTPUT_TOKENS = 1400
+VISION_AUX_DEFAULT_OUTPUT_TOKENS = 1000
+SECTIONS_MAX_OUTPUT_TOKENS = 2500
+SECTIONS_DEFAULT_OUTPUT_TOKENS = 1800
+DECK_BRIEF_MAX_OUTPUT_TOKENS = 5000
+DECK_BRIEF_DEFAULT_OUTPUT_TOKENS = 3000
+CONTENT_GUARD_MAX_OUTPUT_TOKENS = 2500
+CONTENT_GUARD_DEFAULT_OUTPUT_TOKENS = 1800
+AUXILIARY_TEXT_TEMPERATURE = 0.0
+
+
+def _capped_tokens(requested: int | None, default: int, cap: int) -> int:
+    return min(requested or default, cap)
+
 
 def _friendly_build_error(exc: Exception, args: argparse.Namespace) -> str | None:
     message = str(exc)
@@ -225,15 +242,39 @@ BUILD_PRESET_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 
 
+# Presets whose values always win over explicit CLI flags (with a warning).
+FORCED_BUILD_PRESETS = {"local"}
+
+
 def _apply_build_preset_defaults(args: argparse.Namespace) -> None:
     preset = getattr(args, "preset", "lecture")
     preset_defaults = BUILD_PRESET_DEFAULTS[preset]
     explicit_options = set(getattr(args, "_explicit_options", set()) or set())
+    warnings: list[str] = list(getattr(args, "_config_warnings", None) or [])
+    forced = preset in FORCED_BUILD_PRESETS
     for name, value in preset_defaults.items():
-        if preset == "local" or name not in explicit_options:
-            setattr(args, name, value)
-    if args.vision == "off" and args.semantic_layout == "auto":
+        if name in explicit_options and not forced:
+            continue
+        if forced and name in explicit_options and getattr(args, name, value) != value:
+            flag = "--" + name.replace("_", "-")
+            warnings.append(
+                f"`--preset {preset}` forces `{flag} {value}`; ignoring explicit `{flag} {getattr(args, name)}`."
+            )
+        setattr(args, name, value)
+    _disable_vision_dependent_modes(args)
+    args._config_warnings = warnings
+
+
+def _disable_vision_dependent_modes(args: argparse.Namespace) -> None:
+    """`--vision off` means no vision API calls anywhere, so downgrade dependents to local modes."""
+    if args.vision != "off":
+        return
+    if args.semantic_layout in {"auto", "vision"}:
         args.semantic_layout = "local"
+    if args.figure_grounding == "vision":
+        args.figure_grounding = "auto"
+    if args.figure_crop == "vision":
+        args.figure_crop = "off"
 
 
 def _resolve_api_concurrency(args: argparse.Namespace) -> dict[str, int]:

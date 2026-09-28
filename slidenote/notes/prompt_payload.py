@@ -13,7 +13,8 @@ from slidenote.models import Deck, SlidePage
 from slidenote.semantic_layout import semantic_layout_for_prompt
 from slidenote.table_understanding import table_preview
 
-from .assembly import _asset_display_path, _section_contexts, _should_render_screenshot
+from .assets import _asset_display_path, _should_render_screenshot
+from .contexts import _section_contexts
 
 
 def _page_payload_for_prompt(

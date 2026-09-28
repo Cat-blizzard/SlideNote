@@ -8,23 +8,12 @@ from slidenote.image_ranking import sorted_images_by_importance
 from slidenote.models import Deck, SlidePage, TableBlock, TextBlock
 from slidenote.utils import escape_md
 
-from .assembly import (
-    NoteContext,
-    _asset_display_path,
-    _context_heading,
-    _context_heading_title,
-    _document_title,
-    _ensure_sentence,
-    _is_frontmatter_heading,
-    _page_element_ids,
-    _quote_multiline,
-    _render_image,
-    _section_contexts,
-    _should_add_context_headings,
-    _should_render_screenshot,
-    _source_marker,
-    _styled_block_text,
-)
+from .assets import _asset_display_path, _should_render_screenshot
+from .compose import _context_heading, _context_heading_title, _document_title, _should_add_context_headings
+from .contexts import NoteContext, _section_contexts
+from .frontmatter import _is_frontmatter_heading
+from .render_blocks import _ensure_sentence, _quote_multiline, _render_image, _styled_block_text
+from .sources import _page_element_ids, _source_marker
 
 
 def _generate_notes_locally(
@@ -78,6 +67,31 @@ def _generate_notes_locally(
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_local_context(
+    context: NoteContext,
+    asset_map: dict[str, str],
+    source_display: str,
+    note_style: str,
+    screenshot_policy: str,
+    figure_placement: str,
+) -> str:
+    """Rule-based markdown for one context, used when its LLM call fails."""
+    lines: list[str] = []
+    for page in context.pages:
+        lines.extend(
+            _render_local_page(
+                page,
+                asset_map=asset_map,
+                source_display=source_display,
+                note_style=note_style,
+                screenshot_policy=screenshot_policy,
+                figure_placement=figure_placement,
+                heading_level="##",
+            )
+        )
+    return "\n".join(lines).strip()
 
 
 def _render_local_page(

@@ -127,7 +127,8 @@ def test_pdf_export_requires_libreoffice_even_when_docx_can_be_built(tmp_path, m
     assert report["summary"]["blocking_failures"] == 1
     assert report["results"][0]["format"] == "pdf"
     assert report["results"][0]["reason"] == "libreoffice_not_found"
-    assert (tmp_path / "notes.docx").exists()
+    # PDF-only exports build notes.docx in a temp dir; no unreported artifact is left behind.
+    assert not (tmp_path / "notes.docx").exists()
     assert not (tmp_path / "notes.pdf").exists()
 
 
@@ -139,3 +140,77 @@ def test_pandoc_missing_marks_requested_formats_failed(tmp_path, monkeypatch):
     assert report["summary"]["failed"] == 2
     assert report["summary"]["blocking_failures"] == 2
     assert all(result["reason"] == "pandoc_not_found" for result in report["results"])
+
+
+def test_markdown_zip_uses_passed_markdown_not_stale_notes_file(tmp_path, monkeypatch):
+    monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: None)
+    (tmp_path / "notes.md").write_text("# Stale notes\n", encoding="utf-8")
+
+    report = build_export_artifacts("# Fresh notes\n", tmp_path, ["markdown-zip"])
+
+    assert report["summary"]["succeeded"] == 1
+    with zipfile.ZipFile(tmp_path / "notes.zip") as archive:
+        assert archive.read("notes.md").decode("utf-8") == "# Fresh notes\n"
+    assert (tmp_path / "notes.md").read_text(encoding="utf-8") == "# Stale notes\n"
+
+
+def test_latex_only_export_does_not_build_docx_or_pass_pdf_engine(tmp_path, monkeypatch):
+    commands = []
+
+    def fake_run(command, cwd=None, text=None, stdout=None, stderr=None, check=None):
+        commands.append(command)
+        (tmp_path / command[command.index("-o") + 1]).write_bytes(b"tex")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: "pandoc" if name == "pandoc" else None)
+    monkeypatch.setattr("slidenote.exporting.subprocess.run", fake_run)
+
+    report = build_export_artifacts("# Lecture\n\n## Topic\n", tmp_path, ["latex"])
+
+    assert report["summary"]["succeeded"] == 1
+    assert len(commands) == 1
+    assert commands[0][commands[0].index("-o") + 1] == "notes.tex"
+    assert not any(token.startswith("--pdf-engine") for token in commands[0])
+    assert not (tmp_path / "notes.docx").exists()
+
+
+def test_pandoc_nonzero_return_is_reported_and_pdf_depends_on_it(tmp_path, monkeypatch):
+    def fake_run(command, cwd=None, text=None, stdout=None, stderr=None, check=None):
+        return subprocess.CompletedProcess(command, 3, stdout="", stderr="pandoc: boom")
+
+    monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: {"pandoc": "pandoc", "soffice": "soffice"}.get(name))
+    monkeypatch.setattr("slidenote.exporting.subprocess.run", fake_run)
+
+    report = build_export_artifacts("# Lecture\n", tmp_path, ["docx", "pdf"])
+
+    by_format = {result["format"]: result for result in report["results"]}
+    assert by_format["docx"]["status"] == "failed"
+    assert by_format["docx"]["reason"] == "pandoc_failed"
+    assert by_format["docx"]["returncode"] == 3
+    assert "boom" in by_format["docx"]["stderr"]
+    assert by_format["pdf"]["reason"] == "docx_required_failed"
+    assert report["summary"]["blocking_failures"] == 2
+    assert any("docx export failed" in warning for warning in report["warnings"])
+
+
+def test_pdf_only_export_converts_temp_docx_with_libreoffice(tmp_path, monkeypatch):
+    converted = []
+
+    def fake_run(command, cwd=None, text=None, stdout=None, stderr=None, check=None):
+        if command[0] == "pandoc":
+            (tmp_path / command[command.index("-o") + 1]).write_bytes(b"docx")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        converted.append(command[-1])
+        (tmp_path / "notes.pdf").write_bytes(b"pdf")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("slidenote.exporting.shutil.which", lambda name: {"pandoc": "pandoc", "soffice": "soffice"}.get(name))
+    monkeypatch.setattr("slidenote.exporting.subprocess.run", fake_run)
+
+    report = build_export_artifacts("# Lecture\n", tmp_path, ["pdf"])
+
+    assert report["summary"]["succeeded"] == 1
+    assert [result["format"] for result in report["results"]] == ["pdf"]
+    assert converted and not converted[0].startswith(str(tmp_path))
+    assert (tmp_path / "notes.pdf").exists()
+    assert not (tmp_path / "notes.docx").exists()

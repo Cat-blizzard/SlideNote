@@ -8,7 +8,6 @@ from slidenote.models import Deck
 from slidenote.utils import display_path, sum_int
 
 from .prompt_payload import _prompt_brief_hash, _prompt_deck_brief
-from .versions import NOTE_PROMPT_VERSION
 
 
 def _build_usage_report(
@@ -18,34 +17,14 @@ def _build_usage_report(
     options: "NoteOptions",
     contexts: list[dict[str, Any]],
     note_strategy: str,
+    prompt_version: str,
     page_contexts: list[dict[str, Any]] | None = None,
     weave_contexts: list[dict[str, Any]] | None = None,
     teaching_enrichment_contexts: list[dict[str, Any]] | None = None,
     repair_contexts: list[dict[str, Any]] | None = None,
+    warnings: list[str] | None = None,
 ) -> dict[str, Any]:
-    provider = options.provider
-    model = options.model
-    base_url = options.base_url
-    cache_mode = options.cache_mode
-    cache_dir = options.cache_dir
-    max_output_tokens = options.max_output_tokens
-    temperature = options.temperature
-    note_context = options.note_context
-    source_display = options.source_display
-    note_style = options.note_style
-    note_profile = options.note_profile
-    note_depth = options.note_depth
-    note_language = options.note_language
-    term_policy = options.term_policy
-    teaching_enrichment = options.teaching_enrichment
-    weave_dedup = options.weave_dedup
-    page_neighborhood = options.page_neighborhood
-    asset_mode = options.asset_mode
-    screenshot_policy = options.screenshot_policy
-    figure_placement = options.figure_placement
-    deck_brief = options.deck_brief
-    content_guard = options.content_guard
-    prompt_brief = _prompt_deck_brief(deck_brief)
+    prompt_brief = _prompt_deck_brief(options.deck_brief)
     summary = {
         "pages_total": len(deck.pages),
         "contexts_total": len(contexts),
@@ -60,6 +39,7 @@ def _build_usage_report(
         "local_cache_misses": sum(1 for context in contexts if context.get("cache_status") == "miss"),
         "local_cache_refreshes": sum(1 for context in contexts if context.get("cache_status") == "refresh"),
         "cache_disabled_calls": sum(1 for context in contexts if context.get("cache_status") == "disabled"),
+        "failed_contexts": sum(1 for context in contexts if context.get("cache_status") == "failed"),
         "llm_calls": sum(1 for context in contexts if context.get("llm_call")),
         "api_retries": sum(int(context.get("api_retries") or 0) for context in contexts),
         "input_tokens": sum_int(context.get("input_tokens") for context in contexts),
@@ -72,41 +52,40 @@ def _build_usage_report(
         "generated_at": utc_now_iso(),
         "source_path": deck.source_path,
         "source_type": deck.source_type,
-        "provider": provider,
-        "model": model,
-        "base_url": base_url,
-        "prompt_version": NOTE_PROMPT_VERSION,
+        "provider": options.provider,
+        "model": options.model,
+        "base_url": options.base_url,
+        "prompt_version": prompt_version,
         "cache": {
-            "mode": cache_mode,
-            "dir": display_path(cache_dir, output_root),
+            "mode": options.cache_mode,
+            "dir": display_path(options.cache_dir, output_root),
         },
         "request": {
-            "temperature": temperature,
-            "max_output_tokens": max_output_tokens,
-            "note_context": note_context,
+            "temperature": options.temperature,
+            "max_output_tokens": options.max_output_tokens,
+            "note_context": options.note_context,
             "note_strategy": note_strategy,
-            "note_depth": note_depth,
-            "note_profile": note_profile,
-            "note_language": note_language,
-            "term_policy": term_policy,
-            "teaching_enrichment": teaching_enrichment,
-            "weave_dedup": weave_dedup,
-            "page_neighborhood": page_neighborhood,
-            "source_display": source_display,
-            "note_style": note_style,
-            "asset_mode": asset_mode,
-            "screenshot_policy": screenshot_policy,
-            "figure_placement": figure_placement,
+            "note_depth": options.note_depth,
+            "note_profile": options.note_profile,
+            "note_language": options.note_language,
+            "term_policy": options.term_policy,
+            "teaching_enrichment": options.teaching_enrichment,
+            "weave_dedup": options.weave_dedup,
+            "page_neighborhood": options.page_neighborhood,
+            "source_display": options.source_display,
+            "note_style": options.note_style,
+            "asset_mode": options.asset_mode,
+            "screenshot_policy": options.screenshot_policy,
+            "figure_placement": options.figure_placement,
             "deck_brief_used": bool(prompt_brief),
             "deck_brief_hash": _prompt_brief_hash(prompt_brief),
-            "content_guard_used": bool(content_guard),
+            "content_guard_used": bool(options.content_guard),
         },
         "summary": summary,
-        "pages": contexts,
+        "warnings": list(warnings or []),
         "contexts": contexts,
         "page_contexts": page_contexts or [],
         "weave_contexts": weave_contexts or [],
         "teaching_enrichment_contexts": teaching_enrichment_contexts or [],
         "repair_contexts": repair_contexts or [],
     }
-

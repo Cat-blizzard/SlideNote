@@ -1,5 +1,7 @@
 from pathlib import Path
 from typing import Any
+
+from slidenote.utils import as_int
 import re
 
 IMPORTANCE_LABELS = {
@@ -17,16 +19,24 @@ QUESTION_TYPE_LABELS = {
     "comprehensive": "综合题",
 }
 
-def _as_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
+_as_int = as_int
+
+# Only strip real HTML markup (a tag name followed by name=value attributes), so
+# inline math such as "a < b and c > d" or "a<b and c>d" survives.
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", flags=re.DOTALL)
+_HTML_TAG_RE = re.compile(
+    r"</?[A-Za-z][A-Za-z0-9-]*"
+    r"(?:\s+[A-Za-z_:][\w:.-]*\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s\"'<>]+))*"
+    r"\s*/?>"
+)
+
+
+def _strip_html(value: str) -> str:
+    return _HTML_TAG_RE.sub("", _HTML_COMMENT_RE.sub("", value))
+
 
 def _clean_inline(value: Any) -> str:
-    text = str(value or "")
-    text = re.sub(r"<[^>]+>", "", text)
-    text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    text = _strip_html(str(value or ""))
     return " ".join(text.split()).strip()
 
 def _dict_list(value: Any, limit: int = 100) -> list[dict[str, Any]]:

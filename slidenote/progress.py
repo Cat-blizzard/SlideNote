@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from slidenote.llm_cache import utc_now_iso
-from slidenote.utils import write_json
+from slidenote.llm_cache import atomic_write_text, utc_now_iso
 
 
 @dataclass(slots=True)
@@ -101,7 +101,7 @@ class ProgressReporter:
         self.write()
 
     def write(self) -> None:
-        write_json(self.path, self.snapshot())
+        atomic_write_text(self.path, json.dumps(self.snapshot(), ensure_ascii=False, indent=2))
 
     def snapshot(self) -> dict[str, Any]:
         current = _stage_to_dict(self.current_stage) if self.current_stage else None

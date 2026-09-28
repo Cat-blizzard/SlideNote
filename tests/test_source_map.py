@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.source_map import build_source_map
 from slidenote.table_understanding import enrich_deck_with_table_understanding
@@ -127,3 +125,37 @@ def test_source_map_includes_table_understanding_metadata(tmp_path):
     assert ref["element_id"] == "s1_tbl1"
     assert "TCP" in ref["table_conclusion"]
     assert ref["key_rows"][0]["label"] == "TCP"
+
+
+def test_source_map_page_element_ir_uses_deck_source_type_for_pptx_bbox(tmp_path):
+    deck = Deck(
+        source_path="lecture.pptx",
+        source_type="pptx",
+        pages=[
+            SlidePage(
+                slide_id=1,
+                page_width=1000,
+                page_height=500,
+                text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="TCP", bbox=[100, 50, 200, 100])],
+            )
+        ],
+    )
+
+    source_map = build_source_map(deck, "TCP <!-- slidenote-source: p1:s1_t1 -->", tmp_path)
+
+    element = source_map["pages"][0]["element_ir"]["elements"][0]
+    assert element["bbox_format"] == "source_xywh"
+    assert element["bbox_normalized"] == [0.1, 0.1, 0.3, 0.3]
+
+
+def test_source_map_page_element_ir_includes_coverage_state(tmp_path):
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[SlidePage(slide_id=1, text_blocks=[TextBlock(id="s1_t1", type="paragraph", content="TCP")])],
+    )
+    coverage = {"items": [{"id": "s1_t1", "trace_covered": True, "visible_covered": True}]}
+
+    source_map = build_source_map(deck, "TCP", tmp_path, coverage_report=coverage)
+
+    assert source_map["pages"][0]["element_ir"]["elements"][0]["coverage_state"] == "visible_covered"

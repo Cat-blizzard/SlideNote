@@ -5,12 +5,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-from slidenote.content_guard import REQUIRED_CONFIDENCE_THRESHOLD
+from slidenote.content_guard import is_required_item
 from slidenote.exporting import clean_markdown_for_export
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, stable_json, utc_now_iso
 from slidenote.models import Deck, TableBlock, TextBlock
-from slidenote.utils import as_float, display_path
+from slidenote.utils import as_float, display_path, parse_json_object
 
 from .common import (
     IMPORTANCE_LABELS,
@@ -91,18 +91,18 @@ def _build_local_report_item(
     point: str,
     explanation: str,
     slide_id: int | None,
-    importance: str = "key",
     role: str | None = None,
     image_refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     clean_point = _clean_inline(point)
     clean_explanation = _clean_inline(explanation) or clean_point
+    importance = _infer_importance(clean_point + " " + clean_explanation, role)
     return {
         "section": section or "核心知识点",
-        "importance": _infer_importance(clean_point + " " + clean_explanation, role),
+        "importance": importance,
         "point": clean_point or "知识点",
         "explanation": clean_explanation or "需要结合原始笔记复习。",
-        "why": _local_why(_infer_importance(clean_point + " " + clean_explanation, role)),
+        "why": _local_why(importance),
         "pitfall": _local_pitfall(clean_point, role),
         "source_refs": [f"P{slide_id}"] if slide_id else [],
         "image_refs": image_refs or [],
@@ -118,6 +118,12 @@ def _collect_study_items(
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
 
+    def add(item: dict[str, Any]) -> bool:
+        """Add ``item`` if new; return True once the limit is reached."""
+        _add_unique(items, item, seen)
+        return len(items) >= limit
+
+    # Priority order: required guard items, then per-page tables, figures, text, then note headings.
     for guard_item in _guard_items(content_guard):
         element_id = str(guard_item.get("element_id") or "")
         element = lookup.get(element_id, {})
@@ -132,18 +138,15 @@ def _collect_study_items(
             slide_id=_as_int(guard_item.get("slide_id") or element.get("slide_id"), 0) or None,
             role=str(guard_item.get("learning_role") or element.get("kind") or ""),
         )
-        if _add_unique(items, item, seen):
-            continue
-        if len(items) >= limit:
+        if add(item):
             return items
 
     for page in deck.pages:
         section = page.title or f"第 {page.slide_id} 页"
         for table in page.tables:
             text = table.table_conclusion or table.table_summary or _table_text(table)
-            if text:
-                item = _build_local_report_item(section, _point_from_text(text), text, page.slide_id, role="table_conclusion")
-                _add_unique(items, item, seen)
+            if text and add(_build_local_report_item(section, _point_from_text(text), text, page.slide_id, role="table_conclusion")):
+                return items
         for image in page.images:
             if image.ignored:
                 continue
@@ -157,21 +160,18 @@ def _collect_study_items(
                     role="figure_explanation",
                     image_refs=[{"id": image.id, "title": image.caption or f"P{page.slide_id} 图示", "path": image.path, "source_ref": f"P{page.slide_id}"}],
                 )
-                _add_unique(items, item, seen)
+                if add(item):
+                    return items
         for block in page.text_blocks:
             text = _text_block_text(block)
             if _skip_text(text):
                 continue
-            item = _build_local_report_item(section, _point_from_text(text), text, page.slide_id, role=block.type)
-            _add_unique(items, item, seen)
-            if len(items) >= limit:
+            if add(_build_local_report_item(section, _point_from_text(text), text, page.slide_id, role=block.type)):
                 return items
 
     for heading in _headings_from_notes(notes_markdown):
-        item = _build_local_report_item("笔记结构", heading, heading, None, role="heading")
-        _add_unique(items, item, seen)
-        if len(items) >= limit:
-            break
+        if add(_build_local_report_item("笔记结构", heading, heading, None, role="heading")):
+            return items
     if not items:
         items.append(
             {
@@ -184,7 +184,7 @@ def _collect_study_items(
                 "source_refs": [],
             }
         )
-    return items[:limit]
+    return items
 
 def _content_guard_for_prompt(content_guard: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not content_guard:
@@ -192,7 +192,7 @@ def _content_guard_for_prompt(content_guard: dict[str, Any] | None) -> list[dict
     result = []
     for item in _dict_list(content_guard.get("items"), limit=300):
         confidence = as_float(item.get("confidence"), 0.0)
-        if item.get("must_explain") or confidence >= REQUIRED_CONFIDENCE_THRESHOLD:
+        if is_required_item(item):
             result.append(
                 {
                     "slide_id": item.get("slide_id"),
@@ -367,7 +367,6 @@ def _generate_llm_data(
         "content_guard_hash": sha256_text(stable_json(content_guard or {})),
         "system_prompt_hash": sha256_text(STUDY_PACK_SYSTEM_PROMPT),
         "user_prompt_hash": sha256_text(prompt),
-        "user_prompt": prompt,
     }
     cache_key = make_cache_key(cache_key_payload)
     cache_path = cache.path_for(cache_key)
@@ -423,7 +422,7 @@ def _generate_llm_data(
         warnings.append(f"study_pack_llm_failed:{type(exc).__name__}:{exc}")
         return None, _llm_record(runtime, cache_key, cache_path, output_root, prompt_hash, "error", llm_call, usage), warnings
 
-    parsed = _parse_json_object(raw_text)
+    parsed = parse_json_object(raw_text)
     if parsed is None:
         warnings.append("study_pack_invalid_json")
         return None, _llm_record(runtime, cache_key, cache_path, output_root, prompt_hash, cache_status, llm_call, usage), warnings
@@ -435,11 +434,7 @@ def _guard_items(content_guard: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not content_guard:
         return []
     items = _dict_list(content_guard.get("items"), limit=1000)
-    result = []
-    for item in items:
-        if item.get("must_explain") or as_float(item.get("confidence"), 0.0) >= REQUIRED_CONFIDENCE_THRESHOLD:
-            result.append(item)
-    return result
+    return [item for item in items if is_required_item(item)]
 
 def _llm_record(
     runtime: dict[str, Any],
@@ -494,6 +489,7 @@ def _normalize_exam(raw: dict[str, Any] | None, fallback: dict[str, Any], questi
             options = _string_list(question.get("options"), limit=8)
             if len(options) < 2:
                 normalized["type"] = "short"
+                normalized["points"] = _as_int(question.get("points"), _default_points("short"))
                 normalized["answer"] = _clean_inline(question.get("answer")) or normalized["explanation"]
             else:
                 normalized["options"] = options
@@ -521,6 +517,7 @@ def _normalize_review(raw: dict[str, Any] | None, fallback: dict[str, Any]) -> d
                 "why": _clean_inline(item.get("why")),
                 "pitfall": _clean_inline(item.get("pitfall")),
                 "source_refs": _string_list(item.get("source_refs"), limit=12),
+                "image_refs": _normalize_image_refs(item.get("image_refs")),
             }
         )
     if not checklist:
@@ -539,24 +536,6 @@ def _normalize_study_data(raw: dict[str, Any], fallback: dict[str, Any], questio
     normalized_review = _normalize_review(review, fallback.get("review") or {})
     normalized_exam = _normalize_exam(exam, fallback.get("exam") or {}, question_count)
     return {"review": normalized_review, "exam": normalized_exam}
-
-def _parse_json_object(text: str) -> dict[str, Any] | None:
-    raw = (text or "").strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw)
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError:
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start < 0 or end <= start:
-            return None
-        try:
-            value = json.loads(raw[start : end + 1])
-        except json.JSONDecodeError:
-            return None
-    return value if isinstance(value, dict) else None
 
 def _skip_text(text: str) -> bool:
     clean = _clean_inline(text)

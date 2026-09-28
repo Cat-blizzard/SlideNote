@@ -1,32 +1,36 @@
 from __future__ import annotations
 
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from PIL import Image
+from PIL import Image, ImageMath
 
 from slidenote.image_assets import image_metadata
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, utc_now_iso
 from slidenote.modality import page_has_hint, page_has_manual_modality
+from slidenote.geometry import normalize_asset_bbox, normalize_page_bbox
 from slidenote.models import Deck, ImageAsset, SlidePage, normalize_rel_path
 from slidenote.utils import (
+    advance_progress,
+    error_summary,
+    run_target_jobs,
     as_float,
     bbox_area,
     cleanup_temp_image,
     display_path,
     file_sha256,
     page_by_id,
+    parse_json_object,
     pixel_box,
     prepare_image_for_api,
     sum_int,
     union_bbox,
 )
+from slidenote.vision import page_prompt_context
 from slidenote.semantic_layout import semantic_context_for_page, semantic_layout_for_prompt
-from slidenote.table_understanding import table_preview
 
 FIGURE_PROMPT_VERSION = "figure-crop-v1"
 
@@ -128,25 +132,14 @@ def enrich_deck_with_figures(
         )
         return index, target, record, crops
 
-    results = []
-    if workers == 1:
-        for index, target in enumerate(targets):
-            result = process(index, target)
-            results.append(result)
-            if progress_callback:
-                _, completed_target, record, _ = result
-                progress_callback({"event": "advance", "record": record, "slide_id": completed_target.slide_id})
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(process, index, target): (index, target) for index, target in enumerate(targets)}
-            for future in as_completed(futures):
-                result = future.result()
-                results.append(result)
-                if progress_callback:
-                    _, completed_target, record, _ = result
-                    progress_callback({"event": "advance", "record": record, "slide_id": completed_target.slide_id})
+    def failed(index: int, target: FigureTarget, exc: Exception) -> tuple[int, FigureTarget, dict[str, Any], list[ImageAsset]]:
+        record = _skipped_record(target, "api_error")
+        record.update({"cache_status": "error", "error": error_summary(exc)})
+        return index, target, record, []
 
-    for index, target, record, crops in sorted(results, key=lambda item: item[0]):
+    results = run_target_jobs(targets, process, workers=workers, on_error=failed, on_result=advance_progress(progress_callback))
+
+    for index, target, record, crops in results:
         page = page_by_id(deck, target.slide_id)
         if page is not None:
             page.images.extend(crops)
@@ -195,11 +188,11 @@ def _process_figure_target(
 ) -> tuple[dict[str, Any], list[ImageAsset]]:
     source_path = (output_root / target.path).resolve()
     if not source_path.exists():
-        return _skipped_record(target, "missing_file", output_root), []
+        return _skipped_record(target, "missing_file"), []
 
     prepared = prepare_image_for_api(source_path, max_edge=max_edge)
     if prepared is None:
-        return _skipped_record(target, "unsupported_or_unreadable_image", output_root), []
+        return _skipped_record(target, "unsupported_or_unreadable_image"), []
 
     prepared_path, image_meta = prepared
     try:
@@ -250,6 +243,7 @@ def _process_figure_target(
                 base_url=runtime["base_url"],
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
+                for_vision=True,
             )
             llm_result = client.generate_image_with_usage(prepared_path, prompt, system_prompt=FIGURE_SYSTEM_PROMPT, image_detail=detail)
             result_json = llm_result.text
@@ -294,9 +288,10 @@ def _process_figure_target(
             max_crops_per_page=max_crops_per_page,
             min_confidence=min_confidence,
             min_area=min_area,
-            start_index=_next_figure_index(page),
+            start_index=next_figure_index(page),
             page=page,
             source_type=source_type,
+            model_image_size=_prepared_size(image_meta),
         )
         record["result"] = parsed
         record["crops"] = crop_records
@@ -320,6 +315,7 @@ def _crop_figures(
     start_index: int = 1,
     page: SlidePage | None = None,
     source_type: str | None = None,
+    model_image_size: tuple[int, int] | None = None,
 ) -> tuple[list[ImageAsset], list[dict[str, Any]], list[dict[str, Any]]]:
     crops: list[ImageAsset] = []
     crop_records: list[dict[str, Any]] = []
@@ -332,7 +328,7 @@ def _crop_figures(
             image = image.convert("RGB")
             normalized_candidates: list[tuple[dict[str, Any], NormalizedFigure]] = []
             for candidate in figures:
-                normalized = _normalize_candidate(candidate, width=width, height=height)
+                normalized = _normalize_candidate(candidate, *(model_image_size or (width, height)))
                 if normalized is None:
                     skipped.append({"reason": "invalid_bbox", "candidate": candidate})
                     continue
@@ -481,31 +477,14 @@ def _page_layout_boxes(page: SlidePage, source_type: str | None) -> tuple[list[l
     for image in page.images:
         if image.ignored or image.role == "page_image":
             continue
-        bbox = _normalize_page_bbox(image.crop_bbox or image.bbox, page, source_type)
+        bbox = normalize_asset_bbox(source_type, page, image)
         if bbox:
             visual_boxes.append(bbox)
     return text_boxes, visual_boxes
 
 
 def _normalize_page_bbox(bbox: list[float] | None, page: SlidePage, source_type: str | None) -> list[float] | None:
-    if not bbox or len(bbox) != 4:
-        return None
-    try:
-        values = [float(value) for value in bbox]
-    except (TypeError, ValueError):
-        return None
-    if all(-0.001 <= value <= 1.001 for value in values):
-        return _round_bbox(values)
-    width = page.page_width or 0.0
-    height = page.page_height or 0.0
-    if width <= 0 or height <= 0:
-        return None
-    x1, y1, third, fourth = values
-    if source_type == "pptx":
-        x2, y2 = x1 + third, y1 + fourth
-    else:
-        x2, y2 = third, fourth
-    return _round_bbox([x1 / width, y1 / height, x2 / width, y2 / height])
+    return normalize_page_bbox(source_type, bbox, page)
 
 
 def _looks_normalized_bbox(value: object) -> bool:
@@ -534,10 +513,13 @@ def _normalize_candidate(candidate: dict[str, Any], width: int, height: int) -> 
     except (TypeError, ValueError):
         return None
 
+    # The prompt asks for 0..1 coordinates. Models sometimes answer in percent or
+    # in pixels of the image they were shown (the downscaled copy, whose size is
+    # passed in as width/height).
     max_value = max(values)
     if max_value > 100:
         values = [values[0] / width, values[1] / height, values[2] / width, values[3] / height]
-    elif max_value > 1.5:
+    elif max_value > 1.001:
         values = [value / 100 for value in values]
 
     x1, y1, x2, y2 = values
@@ -647,19 +629,14 @@ def _foreground_touching_edges(crop: Image.Image) -> list[str]:
     width, height = crop.width, crop.height
     if width <= 4 or height <= 4:
         return []
-    background = _estimate_background(crop)
-    pixels = crop.load()
+    mask = _foreground_mask(crop, _estimate_background(crop))
     margin_x = max(3, int(round(width * 0.018)))
     margin_y = max(3, int(round(height * 0.018)))
     center_area = max(1, (width - 2 * margin_x) * (height - 2 * margin_y))
 
     def density(x_start: int, x_end: int, y_start: int, y_end: int) -> float:
         total = max(1, (x_end - x_start) * (y_end - y_start))
-        foreground = 0
-        for y in range(y_start, y_end):
-            for x in range(x_start, x_end):
-                if _is_foreground_pixel(pixels[x, y], background):
-                    foreground += 1
+        foreground = sum(mask[y * width + x_start : y * width + x_end].count(255) for y in range(y_start, y_end))
         return foreground / total
 
     center_density = density(margin_x, max(margin_x + 1, width - margin_x), margin_y, max(margin_y + 1, height - margin_y)) if center_area else 0.0
@@ -838,14 +815,8 @@ def _foreground_row_bands(crop: Image.Image) -> list[tuple[int, int, float]]:
     background = _estimate_background(crop)
     x_step = max(1, width // 650)
     samples_per_row = max(1, (width + x_step - 1) // x_step)
-    densities: list[float] = []
-    pixels = crop.load()
-    for y in range(height):
-        foreground = 0
-        for x in range(0, width, x_step):
-            if _is_foreground_pixel(pixels[x, y], background):
-                foreground += 1
-        densities.append(foreground / samples_per_row)
+    mask = _foreground_mask(crop, background)
+    densities = [mask[y * width : (y + 1) * width : x_step].count(255) / samples_per_row for y in range(height)]
     max_density = max(densities) if densities else 0.0
     if max_density < 0.006:
         return []
@@ -945,6 +916,32 @@ def _is_foreground_pixel(pixel: tuple[int, ...], background: tuple[int, int, int
     if distance >= 55:
         return True
     return background_brightness >= 235 and brightness <= 235 and distance >= 24
+
+
+def _foreground_mask(crop: Image.Image, background: tuple[int, int, int]) -> bytes:
+    """Row-major bytes (255 = foreground) equal to ``_is_foreground_pixel`` per pixel."""
+    red, green, blue = crop.convert("RGB").split()
+    bg_red, bg_green, bg_blue = background
+    light_background = sum(background) / 3 >= 235
+
+    def expression(args: dict[str, Any]) -> Any:
+        distance = abs(args["r"] - bg_red) + abs(args["g"] - bg_green) + abs(args["b"] - bg_blue)
+        mask = distance >= 55
+        if light_background:
+            # brightness <= 235  <=>  r + g + b <= 705
+            mask = mask | (((args["r"] + args["g"] + args["b"]) <= 705) & (distance >= 24))
+        return mask
+
+    if hasattr(ImageMath, "lambda_eval"):
+        result = ImageMath.lambda_eval(expression, r=red, g=green, b=blue)
+    else:  # Pillow < 10.3
+        light = f" | (((r + g + b) <= 705) & ({_distance_expr(background)} >= 24))" if light_background else ""
+        result = ImageMath.eval(f"({_distance_expr(background)} >= 55){light}", r=red, g=green, b=blue)
+    return result.convert("L").point(lambda value: 255 if value else 0).tobytes()
+
+
+def _distance_expr(background: tuple[int, int, int]) -> str:
+    return f"(abs(r - {background[0]}) + abs(g - {background[1]}) + abs(b - {background[2]}))"
 
 
 def _is_code_content(content_type: str) -> bool:
@@ -1065,23 +1062,9 @@ def _page_deserves_figure_crop(page: SlidePage) -> bool:
 
 
 def _page_context(page: SlidePage | None, limit: int = 1000) -> str:
-    if page is None:
-        return ""
-    pieces: list[str] = []
-    if page.title:
-        pieces.append(f"标题：{page.title}")
-    for block in page.text_blocks[:8]:
-        pieces.append(f"{block.id}({block.type})：{block.content}")
-    for table in page.tables[:2]:
-        preview = table_preview(table, limit=260, raw_rows=3)
-        pieces.append(f"{table.id}(table)：{preview}")
-    semantic_context = semantic_context_for_page(page, limit=420)
-    if semantic_context:
-        pieces.append(f"semantic_layout：{semantic_context}")
-    text = "\n".join(piece for piece in pieces if piece.strip())
-    if len(text) > limit:
-        return text[: limit - 1] + "…"
-    return text
+    semantic_context = semantic_context_for_page(page, limit=420) if page else ""
+    extra = [f"semantic_layout：{semantic_context}"] if semantic_context else None
+    return page_prompt_context(page, limit=limit, extra=extra)
 
 
 def _semantic_layout_json_for_prompt(page: SlidePage | None) -> str:
@@ -1105,16 +1088,18 @@ def _figure_prompt(target: FigureTarget, page: SlidePage | None) -> str:
     )
 
 
+def _prepared_size(image_meta: dict[str, Any]) -> tuple[int, int] | None:
+    prepared = image_meta.get("prepared") or {}
+    width, height = prepared.get("width"), prepared.get("height")
+    if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
+        return width, height
+    return None
+
+
 def _parse_figure_json(text: str) -> dict[str, Any]:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        return {"figures": [], "warnings": ["model_output_not_json"], "raw_text": cleaned}
+    parsed = parse_json_object(text)
+    if parsed is None:
+        return {"figures": [], "warnings": ["model_output_not_json"], "raw_text": text.strip()}
     figures = parsed.get("figures")
     if not isinstance(figures, list):
         parsed["figures"] = []
@@ -1143,6 +1128,7 @@ def _build_report(
         "llm_calls": sum(1 for record in records if record.get("llm_call")),
         "api_retries": sum(int(record.get("api_retries") or 0) for record in records),
         "skipped": sum(1 for record in records if record.get("cache_status") == "skipped"),
+        "failed": sum(1 for record in records if record.get("cache_status") == "error"),
         "skipped_candidates": sum(len(record.get("skipped_candidates", [])) for record in records),
         "input_tokens": sum_int(record.get("input_tokens") for record in records),
         "output_tokens": sum_int(record.get("output_tokens") for record in records),
@@ -1183,7 +1169,7 @@ def _base_record(target: FigureTarget, cache_key: str, cache_path: Path, output_
     }
 
 
-def _skipped_record(target: FigureTarget, status: str, output_root: Path) -> dict[str, Any]:
+def _skipped_record(target: FigureTarget, status: str) -> dict[str, Any]:
     return {
         "slide_id": target.slide_id,
         "kind": "page_screenshot",
@@ -1197,7 +1183,7 @@ def _skipped_record(target: FigureTarget, status: str, output_root: Path) -> dic
     }
 
 
-def _next_figure_index(page: SlidePage | None) -> int:
+def next_figure_index(page: SlidePage | None) -> int:
     if page is None:
         return 1
     next_index = 1

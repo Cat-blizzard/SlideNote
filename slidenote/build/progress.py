@@ -40,21 +40,18 @@ def _llm_progress(progress: ProgressReporter):
     return callback
 
 
-def _stage_metrics(progress: ProgressReporter) -> dict[str, Any]:
+def _stage_metrics(progress: ProgressReporter, limit: int = 3) -> dict[str, Any]:
     snapshot = progress.snapshot()
-    stages = snapshot.get("stages") if isinstance(snapshot, dict) else []
-    stage_records = [stage for stage in stages if isinstance(stage, dict)]
+    stage_records = [stage for stage in snapshot.get("stages") or [] if isinstance(stage, dict)]
     return {
-        "elapsed_seconds": snapshot.get("elapsed_seconds") if isinstance(snapshot, dict) else None,
+        "elapsed_seconds": snapshot.get("elapsed_seconds"),
         "stages": stage_records,
-        "slowest_stages": _slowest_stage_records(stage_records, limit=3),
+        "slowest_stages": _slowest_stage_records(stage_records, limit=limit),
     }
 
 
 def _slowest_stages(progress: ProgressReporter, limit: int = 3) -> list[dict[str, Any]]:
-    snapshot = progress.snapshot()
-    stages = snapshot.get("stages") if isinstance(snapshot, dict) else []
-    return _slowest_stage_records([stage for stage in stages if isinstance(stage, dict)], limit=limit)
+    return _stage_metrics(progress, limit=limit)["slowest_stages"]
 
 
 def _slowest_stage_records(stages: list[dict[str, Any]], limit: int = 3) -> list[dict[str, Any]]:

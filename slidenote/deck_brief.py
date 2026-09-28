@@ -10,6 +10,8 @@ from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_k
 from slidenote.models import Deck, SlidePage
 from slidenote.table_understanding import table_preview
 from slidenote.utils import (
+    int_or_none,
+    parse_json_object,
     display_path,
     str_or_none,
 )
@@ -121,7 +123,7 @@ def build_deck_brief(
             warnings=warnings,
         )
 
-    parsed = _parse_json_object(result_text)
+    parsed = parse_json_object(result_text)
     if parsed is None:
         warnings.append("deck_brief_invalid_json")
         brief = _empty_brief()
@@ -348,31 +350,6 @@ def _page_digest(deck: Deck) -> str:
     return sha256_text(stable_json([_page_payload(page) for page in deck.pages]))
 
 
-def _parse_json_object(text: str) -> dict[str, Any] | None:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-    for candidate in (cleaned, _json_object_slice(cleaned)):
-        if not candidate:
-            continue
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            return parsed
-    return None
-
-
-def _json_object_slice(text: str) -> str | None:
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    return text[start : end + 1]
-
-
 def _normalize_brief(parsed: dict[str, Any], deck: Deck, section_plan: dict[str, Any] | None) -> dict[str, Any]:
     raw = parsed.get("brief") if isinstance(parsed.get("brief"), dict) else parsed
     chapter_outline = _dict_list(raw.get("chapter_outline") or raw.get("chapters"), limit=60)
@@ -405,7 +382,7 @@ def _normalize_page_roles(raw_roles: Any, deck: Deck) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     seen: set[int] = set()
     for role in roles:
-        slide_id = _int_or_none(role.get("slide_id") or role.get("page") or role.get("page_id"))
+        slide_id = int_or_none(role.get("slide_id") or role.get("page") or role.get("page_id"))
         if slide_id is None or slide_id not in valid_ids or slide_id in seen:
             continue
         role["slide_id"] = slide_id
@@ -461,13 +438,13 @@ def _filter_by_slide_ids(items: list[dict[str, Any]], wanted: set[int]) -> list[
 def _slide_ids_from_item(item: dict[str, Any]) -> set[int]:
     ids: set[int] = set()
     for key in ("slide_id", "first_slide_id", "from_slide_id", "to_slide_id", "start_slide_id", "end_slide_id"):
-        value = _int_or_none(item.get(key))
+        value = int_or_none(item.get(key))
         if value is not None:
             ids.add(value)
     raw_ids = item.get("slide_ids") or item.get("page_ids") or item.get("pages")
     if isinstance(raw_ids, list):
         for raw in raw_ids:
-            value = _int_or_none(raw)
+            value = int_or_none(raw)
             if value is not None:
                 ids.add(value)
     return ids
@@ -513,16 +490,6 @@ def _clean_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _clean_value(raw_value) for key, raw_value in value.items() if raw_value not in (None, "", [], {})}
     return value
-
-
-def _int_or_none(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str) and value.strip().isdigit():
-        return int(value.strip())
-    return None
 
 
 def _truncate(text: str | None, limit: int) -> str:

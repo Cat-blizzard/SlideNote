@@ -8,10 +8,12 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable, Iterable, Sequence, TypeVar
 
 from PIL import Image
 
+from slidenote import geometry
 from slidenote.models import Deck, SlidePage
 
 
@@ -86,6 +88,24 @@ def display_path(path: Path | None, output_root: Path | None) -> str | None:
         return str(path)
 
 
+def as_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def int_or_none(value: Any) -> int | None:
+    """Strict integer parsing for model output: ints and digit strings only (no bools/floats)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
 def as_float(value: Any, default: float | None = None) -> float | None:
     try:
         return float(value)
@@ -149,20 +169,32 @@ def context_title(pages: list[SlidePage], index: int) -> str:
 
 
 def parse_json_object(text: str) -> dict[str, Any] | None:
-    cleaned = text.strip()
+    """Parse a model reply that should be a JSON object.
+
+    Accepts fenced code blocks and replies with prose around the object; returns
+    ``None`` for anything that is not a JSON object (lists, strings, invalid JSON).
+    """
+    cleaned = str(text or "").strip()
     if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    sliced = cleaned[start : end + 1] if 0 <= start < end else None
+    for candidate in (cleaned, sliced):
+        if not candidate:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 def looks_normalized(bbox: list[float]) -> bool:
-    return len(bbox) == 4 and all(-0.001 <= float(value) <= 1.001 for value in bbox)
+    return geometry.looks_normalized(bbox)
 
 
 def union_bbox(boxes: list[list[float]]) -> list[float]:
@@ -189,12 +221,7 @@ def bbox_area(bbox: list[float]) -> float:
 
 
 def clamp_normalized_bbox(bbox: list[float]) -> list[float]:
-    x1, y1, x2, y2 = [max(0.0, min(1.0, float(value))) for value in bbox]
-    if x2 < x1:
-        x1, x2 = x2, x1
-    if y2 < y1:
-        y1, y2 = y2, y1
-    return [round(x1, 4), round(y1, 4), round(x2, 4), round(y2, 4)]
+    return geometry.clamp_bbox(bbox, 4)
 
 
 def layout_order_from_bbox(bbox: list[float] | None) -> float:
@@ -204,7 +231,11 @@ def layout_order_from_bbox(bbox: list[float] | None) -> float:
 
 
 def file_sha256(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes().hex().encode("utf-8")).hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
 
 
 def cleanup_temp_image(path: Path) -> None:
@@ -232,7 +263,7 @@ def image_area(path: Path) -> int | None:
         return None
 
 
-def prepare_image_for_api(path: Path, max_edge: int) -> tuple[Path, dict[str, Any]] | None:
+def prepare_image_for_api(path: Path, max_edge: int, quality: int = 85) -> tuple[Path, dict[str, Any]] | None:
     try:
         with Image.open(path) as image:
             original = {"width": image.width, "height": image.height, "mode": image.mode, "format": image.format}
@@ -243,7 +274,7 @@ def prepare_image_for_api(path: Path, max_edge: int) -> tuple[Path, dict[str, An
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
             tmp_path = Path(tmp.name)
             tmp.close()
-            image.save(tmp_path, format="JPEG", quality=85, optimize=True)
+            image.save(tmp_path, format="JPEG", quality=quality, optimize=True)
             meta = {
                 "original": original,
                 "prepared": {"width": image.width, "height": image.height, "mime_type": "image/jpeg", "bytes": tmp_path.stat().st_size},
@@ -263,3 +294,64 @@ def page_by_id(deck: Deck, slide_id: int) -> SlidePage | None:
 
 def source_tokens(markdown: str) -> set[str]:
     return set(re.findall(r"\bs\d+_(?:t|tbl|img|fig)\d+\b", markdown))
+
+
+T = TypeVar("T")
+R = TypeVar("R")
+
+
+def run_target_jobs(
+    targets: Sequence[T],
+    process: Callable[[int, T], R],
+    *,
+    workers: int,
+    on_error: Callable[[int, T, Exception], R],
+    on_result: Callable[[R], None] | None = None,
+) -> list[R]:
+    """Run ``process(index, target)`` for every target, serially or in a thread pool.
+
+    A failing target is converted into a result by ``on_error`` so one bad image does
+    not abort the whole stage. If every target fails, the first error is re-raised so
+    configuration problems (missing keys, unreachable endpoint) stay visible.
+    """
+    results: list[tuple[int, R]] = []
+    errors: list[Exception] = []
+
+    def finish(index: int, target: T, run: Callable[[], R]) -> None:
+        try:
+            result = run()
+        except Exception as exc:  # noqa: BLE001 - per-target isolation
+            errors.append(exc)
+            result = on_error(index, target, exc)
+        results.append((index, result))
+        if on_result:
+            on_result(result)
+
+    if workers <= 1:
+        for index, target in enumerate(targets):
+            finish(index, target, lambda index=index, target=target: process(index, target))
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(process, index, target): (index, target) for index, target in enumerate(targets)}
+            for future in as_completed(futures):
+                index, target = futures[future]
+                finish(index, target, future.result)
+    if targets and len(errors) == len(targets):
+        raise errors[0]
+    return [result for _, result in sorted(results, key=lambda item: item[0])]
+
+
+def error_summary(exc: Exception) -> str:
+    return preview(f"{type(exc).__name__}: {exc}", 300)
+
+
+def advance_progress(progress_callback: Callable[[dict[str, Any]], None] | None) -> Callable[[tuple[Any, ...]], None] | None:
+    """``on_result`` hook for run_target_jobs results shaped ``(index, target, record, ...)``."""
+    if progress_callback is None:
+        return None
+
+    def advance(result: tuple[Any, ...]) -> None:
+        _, target, record = result[:3]
+        progress_callback({"event": "advance", "record": record, "slide_id": target.slide_id})
+
+    return advance

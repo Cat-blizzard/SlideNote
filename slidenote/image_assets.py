@@ -22,6 +22,13 @@ def image_metadata(path: Path) -> dict[str, Any]:
     return meta
 
 
+TINY_FILE_BYTES = 512
+TINY_AREA_PX = 10_000
+TINY_DIMENSION_PX = 24
+THIN_ASPECT_RATIO = 8
+THIN_MAX_AREA_PX = 150_000
+
+
 def classify_image_asset(meta: dict[str, Any]) -> tuple[str, bool, str | None]:
     width = meta.get("width")
     height = meta.get("height")
@@ -29,20 +36,28 @@ def classify_image_asset(meta: dict[str, Any]) -> tuple[str, bool, str | None]:
     if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
         return "unknown", False, None
 
+    if isinstance(file_size, int) and file_size < TINY_FILE_BYTES:
+        return "decorative", True, "tiny_file"
+    reason = tiny_image_reason(width, height)
+    if reason:
+        return "decorative", True, reason
+    return "content", False, None
+
+
+def tiny_image_reason(width: int, height: int) -> str | None:
+    """Dimension rules for decorative images, usable before an image is decoded."""
+    if width <= 0 or height <= 0:
+        return None
     area = width * height
     min_dim = min(width, height)
-    max_dim = max(width, height)
-    aspect_ratio = max_dim / max(1, min_dim)
-
-    if isinstance(file_size, int) and file_size < 512:
-        return "decorative", True, "tiny_file"
-    if area < 10_000:
-        return "decorative", True, "tiny_area"
-    if min_dim < 24:
-        return "decorative", True, "tiny_dimension"
-    if aspect_ratio >= 8 and area < 150_000:
-        return "decorative", True, "thin_decoration"
-    return "content", False, None
+    aspect_ratio = max(width, height) / max(1, min_dim)
+    if area < TINY_AREA_PX:
+        return "tiny_area"
+    if min_dim < TINY_DIMENSION_PX:
+        return "tiny_dimension"
+    if aspect_ratio >= THIN_ASPECT_RATIO and area < THIN_MAX_AREA_PX:
+        return "thin_decoration"
+    return None
 
 
 def refine_image_role_for_placement(

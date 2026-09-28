@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -96,30 +97,21 @@ def build_export_artifacts(notes_markdown: str, output_root: Path, formats: list
                 )
             warnings.append("Pandoc was not found on PATH; docx/pdf/latex exports were not generated.")
         else:
-            docx_path: Path | None = None
-            docx_result: dict[str, Any] | None = None
-
-            if "docx" in pandoc_formats or "pdf" in pandoc_formats:
+            if "docx" in pandoc_formats:
                 docx_result = _run_pandoc(pandoc, source, output_root, "docx")
-                if docx_result["status"] == "ok":
-                    docx_path = output_root / "notes.docx"
-                if "docx" in pandoc_formats:
-                    results.append(docx_result)
-                    if docx_result["status"] != "ok":
-                        warnings.append(f"docx export failed: {docx_result.get('reason') or docx_result.get('stderr') or 'unknown error'}")
+                results.append(docx_result)
+                if docx_result["status"] != "ok":
+                    warnings.append(f"docx export failed: {docx_result.get('reason') or docx_result.get('stderr') or 'unknown error'}")
 
             if "pdf" in pandoc_formats:
-                if docx_path is None:
-                    pdf_result = {
-                        "format": "pdf",
-                        "status": "failed",
-                        "path": "notes.pdf",
-                        "reason": "docx_required_failed",
-                        "blocking": True,
-                        "dependency": docx_result,
-                    }
+                if "docx" in pandoc_formats:
+                    pdf_result = _pdf_from_docx_result(docx_result, output_root / "notes.docx", output_root)
                 else:
-                    pdf_result = _run_pdf_from_docx(docx_path, output_root)
+                    # PDF-only: keep the intermediate notes.docx out of the output directory.
+                    with tempfile.TemporaryDirectory(prefix="slidenote-export-") as temp_dir:
+                        temp_docx = Path(temp_dir) / "notes.docx"
+                        intermediate = _run_pandoc(pandoc, source, output_root, "docx", output_path=temp_docx)
+                        pdf_result = _pdf_from_docx_result(intermediate, temp_docx, output_root)
                 results.append(pdf_result)
                 if pdf_result["status"] != "ok":
                     warnings.append(f"pdf export failed: {pdf_result.get('reason') or pdf_result.get('stderr') or 'unknown error'}")
@@ -265,15 +257,13 @@ def _write_pandoc_source(markdown: str, output_root: Path) -> Path:
 
 def _build_markdown_zip(notes_markdown: str, output_root: Path) -> dict[str, Any]:
     output_path = output_root / MARKDOWN_ZIP_NAME
-    notes_path = output_root / "notes.md"
     try:
-        if not notes_path.exists():
-            write_text(notes_path, notes_markdown)
         if output_path.exists():
             output_path.unlink()
         asset_files = _markdown_asset_files(output_root)
         with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.write(notes_path, "notes.md")
+            # Package the markdown we were given, not whatever notes.md is on disk.
+            archive.writestr("notes.md", notes_markdown)
             for asset_path in asset_files:
                 archive.write(asset_path, asset_path.relative_to(output_root).as_posix())
             archive.writestr(
@@ -307,12 +297,14 @@ def _markdown_asset_files(output_root: Path) -> list[Path]:
     return sorted(path for path in assets_root.rglob("*") if path.is_file())
 
 
-def _run_pandoc(pandoc: str, source: Path, output_root: Path, fmt: str) -> dict[str, Any]:
+def _run_pandoc(pandoc: str, source: Path, output_root: Path, fmt: str, output_path: Path | None = None) -> dict[str, Any]:
     output_name = _output_name(fmt)
-    output_path = output_root / output_name
-    command = [pandoc, "-f", "markdown-implicit_figures", display_path(source, output_root), "-o", output_name]
+    target = output_name if output_path is None else str(output_path)
+    output_path = output_path or output_root / output_name
+    # pandoc runs from output_root so relative image paths in the notes resolve.
+    command = [pandoc, "-f", "markdown-implicit_figures", display_path(source, output_root), "-o", target]
     if fmt == "latex":
-        command.extend(["--standalone", "--pdf-engine=xelatex", "-V", "documentclass=ctexart", "-V", "geometry:margin=1in"])
+        command.extend(["--standalone", "-V", "documentclass=ctexart", "-V", "geometry:margin=1in"])
 
     result: dict[str, Any] = {
         "format": fmt,
@@ -343,10 +335,23 @@ def _run_pandoc(pandoc: str, source: Path, output_root: Path, fmt: str) -> dict[
     return result
 
 
+def _pdf_from_docx_result(docx_result: dict[str, Any], docx_path: Path, output_root: Path) -> dict[str, Any]:
+    if docx_result["status"] != "ok":
+        return {
+            "format": "pdf",
+            "status": "failed",
+            "path": "notes.pdf",
+            "reason": "docx_required_failed",
+            "blocking": True,
+            "dependency": docx_result,
+        }
+    return _run_pdf_from_docx(docx_path, output_root)
+
+
 def _run_pdf_from_docx(docx_path: Path, output_root: Path) -> dict[str, Any]:
     output_name = "notes.pdf"
     output_path = output_root / output_name
-    libreoffice = _find_libreoffice()
+    libreoffice = find_libreoffice()
     result: dict[str, Any] = {
         "format": "pdf",
         "path": output_name,
@@ -396,7 +401,7 @@ def _run_pdf_from_docx(docx_path: Path, output_root: Path) -> dict[str, Any]:
     return result
 
 
-def _find_libreoffice() -> str | None:
+def find_libreoffice() -> str | None:
     for executable in _LIBREOFFICE_CANDIDATES:
         found = shutil.which(executable)
         if found:

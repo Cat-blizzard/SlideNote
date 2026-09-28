@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from slidenote.geometry import bbox_format, coerce_bbox, normalize_page_bbox
 from slidenote.ir_context import IRBuildContext
 from slidenote.models import SlidePage
-from slidenote.utils import (
-    as_float,
-    looks_normalized,
-)
+from slidenote.utils import as_float
 
 
 def standard_fields(
@@ -27,7 +25,7 @@ def standard_fields(
     layout_order: Any = None,
 ) -> dict[str, Any]:
     raw = coerce_bbox(raw_bbox)
-    normalized = _normalize_bbox(context.deck.source_type, raw, page)
+    normalized = normalize_page_bbox(context.deck.source_type, raw, page, precision=6)
     resolved_confidence, confidence_source = _resolve_confidence(
         semantic=semantic,
         guard_item=context.guard_item(element_id),
@@ -50,7 +48,7 @@ def standard_fields(
         "role": role,
         "confidence": resolved_confidence,
         "confidence_source": confidence_source,
-        "bbox_format": _bbox_format(context.deck.source_type, raw),
+        "bbox_format": bbox_format(context.deck.source_type, raw),
         "bbox_normalized": normalized,
         "bbox_source": bbox_source if raw else None,
         "layout_order": resolved_layout_order,
@@ -106,15 +104,6 @@ def semantic_value(semantic: dict[str, Any] | None, key: str, default: Any = Non
         return default
     value = semantic.get(key)
     return default if value is None else value
-
-
-def coerce_bbox(value: Any) -> list[float] | None:
-    if not isinstance(value, (list, tuple)) or len(value) != 4:
-        return None
-    try:
-        return [float(part) for part in value]
-    except (TypeError, ValueError):
-        return None
 
 
 def compact(values: dict[str, Any]) -> dict[str, Any]:
@@ -182,46 +171,6 @@ def _coverage_state(
         "required": required,
         "structural": False,
     }
-
-
-def _normalize_bbox(source_type: str, bbox: list[float] | None, page: SlidePage) -> list[float] | None:
-    if not bbox:
-        return None
-    if looks_normalized(bbox):
-        return _clamp_bbox(bbox)
-    width = as_float(page.page_width, None)
-    height = as_float(page.page_height, None)
-    if not width or not height or width <= 0 or height <= 0:
-        return None
-    x1, y1, third, fourth = bbox
-    if source_type == "pptx":
-        x2 = x1 + third
-        y2 = y1 + fourth
-    else:
-        x2 = third
-        y2 = fourth
-    return _clamp_bbox([x1 / width, y1 / height, x2 / width, y2 / height])
-
-
-def _bbox_format(source_type: str, bbox: list[float] | None) -> str | None:
-    if not bbox:
-        return None
-    if looks_normalized(bbox):
-        return "normalized_xyxy"
-    if source_type == "pptx":
-        return "source_xywh"
-    if source_type == "pdf":
-        return "source_xyxy"
-    return "source_xyxy"
-
-
-def _clamp_bbox(bbox: list[float]) -> list[float]:
-    x1, y1, x2, y2 = [max(0.0, min(1.0, float(value))) for value in bbox]
-    if x2 < x1:
-        x1, x2 = x2, x1
-    if y2 < y1:
-        y1, y2 = y2, y1
-    return [round(x1, 6), round(y1, 6), round(x2, 6), round(y2, 6)]
 
 
 def _order_from_bbox(bbox: list[float] | None) -> float | None:

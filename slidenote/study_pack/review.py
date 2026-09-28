@@ -6,6 +6,7 @@ from .common import (
     _dict_list,
     _source_title,
     _string_list,
+    _strip_html,
 )
 
 def _headings_from_notes(markdown: str) -> list[str]:
@@ -13,7 +14,7 @@ def _headings_from_notes(markdown: str) -> list[str]:
     for line in markdown.splitlines():
         match = re.match(r"^#{2,4}\s+(.+?)\s*$", line.strip())
         if match:
-            heading = re.sub(r"<[^>]+>", "", match.group(1)).strip()
+            heading = _strip_html(match.group(1)).strip()
             if heading:
                 headings.append(heading)
     return headings[:20]

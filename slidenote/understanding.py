@@ -5,10 +5,12 @@ from collections import Counter
 from typing import Any
 
 from slidenote.content_guard import learning_items_for_page
+from slidenote.geometry import normalize_asset_bbox
 from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_preview
 from slidenote.utils import (
+    int_or_none,
     as_float,
     preview,
     str_or_none,
@@ -138,7 +140,7 @@ def _page_understanding(
 ) -> dict[str, Any]:
     role = _page_role(page, role_record)
     tables = [_table_record(table) for table in page.tables]
-    figures = [_figure_record(page, image) for image in _page_figures(page)]
+    figures = [_figure_record(deck, page, image) for image in _page_figures(page)]
     semantic = {
         "blocks": _semantic_blocks(page.semantic_blocks),
         "groups": page.semantic_groups[:12],
@@ -260,7 +262,7 @@ def _brief(deck_brief_report: dict[str, Any] | None) -> dict[str, Any]:
 def _page_roles_from_brief(brief: dict[str, Any]) -> dict[int, dict[str, Any]]:
     roles: dict[int, dict[str, Any]] = {}
     for item in _dict_list(brief.get("page_roles"), limit=1000):
-        slide_id = _int_or_none(item.get("slide_id"))
+        slide_id = int_or_none(item.get("slide_id"))
         if slide_id is not None:
             roles[slide_id] = item
     return roles
@@ -312,7 +314,7 @@ def _page_figures(page: SlidePage) -> list[ImageAsset]:
     )
 
 
-def _figure_record(page: SlidePage, image: ImageAsset) -> dict[str, Any]:
+def _figure_record(deck: Deck, page: SlidePage, image: ImageAsset) -> dict[str, Any]:
     return {
         "id": image.id,
         "slide_id": page.slide_id,
@@ -331,6 +333,7 @@ def _figure_record(page: SlidePage, image: ImageAsset) -> dict[str, Any]:
         "anchor_reason": image.anchor_reason,
         "grounding_confidence": image.grounding_confidence,
         "bbox": image.bbox,
+        "bbox_normalized": normalize_asset_bbox(deck.source_type, page, image),
         "crop_source_path": image.crop_source_path,
         "crop_bbox": image.crop_bbox,
         "crop_quality": image.crop_quality,
@@ -431,12 +434,3 @@ def _dedupe(values: list[str]) -> list[str]:
             result.append(normalized)
             seen.add(normalized)
     return result
-
-
-def _int_or_none(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None

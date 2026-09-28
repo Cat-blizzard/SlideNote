@@ -217,20 +217,21 @@ def _table_summary(headers: list[str], data_rows: list[tuple[int, list[str]]], w
         dimensions = _join_terms(headers[:4])
         suffix = f"等 {len(headers)} 个维度" if len(headers) > 4 else "这些维度"
         count_text = f"{data_count} 条记录" if data_count else "表头维度"
-        return f"表格围绕「{dimensions}」{suffix}组织，主要用于对比或归纳 {count_text}。"
+        return f"表格按「{dimensions}」{suffix}列出 {count_text}。"
     row_count = data_count
-    return f"表格包含 {row_count} 行、{width} 列信息，主要用于并列展示相关条目。"
+    return f"表格包含 {row_count} 行、{width} 列信息。"
 
 
 def _table_conclusion(key_rows: list[dict[str, Any]], headers: list[str], has_header: bool) -> str | None:
     if not key_rows:
         return None
+    # Describe what the table lists; interpreting it is left to the note writer.
     if has_header and len(headers) >= 2:
         row_summaries = [_key_row_sentence(row) for row in key_rows[:3]]
         dimensions = _join_terms(headers[1:4])
-        return f"表格重点比较 {_join_terms([str(row.get('label') or '') for row in key_rows[:3]])}，差异主要落在「{dimensions}」等维度；{_join_terms(row_summaries, sep='；')}。"
+        return f"表格列出了 {_join_terms([str(row.get('label') or '') for row in key_rows[:3]])} 在「{dimensions}」等维度上的取值；{_join_terms(row_summaries, sep='；')}。"
     labels = [str(row.get("label") or "") for row in key_rows[:3]]
-    return f"表格中的 {_join_terms(labels)} 是需要优先关注的代表性条目。"
+    return f"表格中的代表性条目包括 {_join_terms(labels)}。"
 
 
 def _key_row_sentence(row: dict[str, Any]) -> str:

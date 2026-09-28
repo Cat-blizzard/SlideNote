@@ -9,11 +9,11 @@ from typing import Any
 from slidenote.llm import LLMClient, resolve_provider_runtime
 from slidenote.llm_cache import LLM_CACHE_SCHEMA_VERSION, LLMCache, make_cache_key, sha256_text, utc_now_iso
 from slidenote.modality import page_has_hint, page_has_manual_modality
+from slidenote.geometry import normalize_asset_bbox, normalize_page_bbox
 from slidenote.models import Deck, ImageAsset, SlidePage, TableBlock, TextBlock
 from slidenote.table_understanding import table_preview
 from slidenote.utils import (
     as_float,
-    clamp_normalized_bbox as _clamp_bbox,
     cleanup_temp_image,
     display_path,
     file_sha256,
@@ -135,7 +135,9 @@ def enrich_deck_with_semantic_layout(
             if vision_record.get("status") == "applied":
                 result = vision_record["result"]
                 page_method = "vision_enhanced_v1"
-                confidence = float(vision_record.get("confidence") or confidence)
+                model_confidence = as_float(vision_record.get("confidence"), None)
+                if model_confidence is not None:
+                    confidence = round(max(0.0, min(1.0, model_confidence)), 3)
                 vision_pages += 1
             else:
                 fallback_pages += 1
@@ -231,7 +233,7 @@ def analyze_page_semantic_layout(deck: Deck, page: SlidePage) -> dict[str, Any]:
         blocks.append(_image_block_record(deck, page, image))
     blocks = sorted(blocks, key=lambda block: (_layout_order(block), str(block["id"])))
     groups = _semantic_groups(page, blocks)
-    relations = _semantic_relations(blocks, groups)
+    relations = _semantic_relations(blocks)
     return {"blocks": blocks, "groups": groups, "relations": relations}
 
 
@@ -333,6 +335,7 @@ def _process_semantic_layout_vision_page(
                 base_url=runtime["base_url"],
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
+                for_vision=True,
             )
             llm_result = client.generate_image_with_usage(
                 prepared_path,
@@ -697,7 +700,7 @@ def _text_block_record(deck: Deck, page: SlidePage, block: TextBlock) -> dict[st
     block_type = _classify_text_block(block)
     learning_role = _learning_role_for_block(block_type, block.content)
     must_explain = learning_role not in {"structural", "decorative"}
-    bbox = _normalize_bbox(deck.source_type, block.bbox, (page.page_width, page.page_height))
+    bbox = normalize_page_bbox(deck.source_type, block.bbox, page)
     return {
         "id": block.id,
         "kind": "text",
@@ -715,7 +718,7 @@ def _text_block_record(deck: Deck, page: SlidePage, block: TextBlock) -> dict[st
 
 
 def _table_block_record(deck: Deck, page: SlidePage, table: TableBlock) -> dict[str, Any]:
-    bbox = _normalize_bbox(deck.source_type, table.bbox, (page.page_width, page.page_height))
+    bbox = normalize_page_bbox(deck.source_type, table.bbox, page)
     return {
         "id": table.id,
         "kind": "table",
@@ -733,7 +736,7 @@ def _table_block_record(deck: Deck, page: SlidePage, table: TableBlock) -> dict[
 
 
 def _image_block_record(deck: Deck, page: SlidePage, image: ImageAsset) -> dict[str, Any]:
-    bbox = _normalize_bbox(deck.source_type, image.crop_bbox or image.bbox, (page.page_width, page.page_height))
+    bbox = normalize_asset_bbox(deck.source_type, page, image)
     block_type = "figure" if image.role in {"figure_crop", "composite_figure"} else image.role or "image"
     return {
         "id": image.id,
@@ -802,8 +805,7 @@ def _cluster_key_blocks(blocks: list[dict[str, Any]]) -> list[list[dict[str, Any
     return clusters
 
 
-def _semantic_relations(blocks: list[dict[str, Any]], groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    del groups
+def _semantic_relations(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     relations: list[dict[str, Any]] = []
     code_blocks = [block for block in blocks if block.get("block_type") == "code"]
     output_blocks = [block for block in blocks if block.get("block_type") == "output"]
@@ -858,40 +860,43 @@ def _classify_text_block(block: TextBlock) -> str:
     return "explanation"
 
 
+_CODE_PATTERNS = [
+    r"#\s*include\b",
+    r"\busing\s+namespace\b",
+    r"\bmain\s*\(",
+    r"\bstd::",
+    r"\bcout\s*<<",
+    r"\bcin\s*>>",
+    r"\bgetline\s*\(",
+    r"\bprintf\s*\(",
+    r"\bdef\s+\w+\s*\(",
+    r"\breturn\b[^\n]*;",
+    r"\b(?:int|char|string|float|double|bool|void|long)\s+[A-Za-z_]\w*\s*(?:[;=,(\[]|$)",
+]
+
+
 def _looks_like_code(text: str) -> bool:
-    signals = [
-        "#include",
-        "using namespace",
-        "main()",
-        "cout",
-        "cin",
-        "getline",
-        "std::",
-        "return ",
-        "char ",
-        "string ",
-        "int ",
-    ]
-    lowered = text.lower()
-    if any(signal in lowered for signal in signals):
+    if any(re.search(pattern, text, re.IGNORECASE | re.MULTILINE) for pattern in _CODE_PATTERNS):
         return True
     code_chars = sum(text.count(char) for char in "{};<>=")
-    return code_chars >= 4 and bool(re.search(r"\b(if|for|while|void|int|char|string|cout|cin)\b", lowered))
+    return code_chars >= 4 and bool(re.search(r"\b(if|for|while|void|int|char|string|cout|cin)\b", text, re.IGNORECASE))
 
 
 def _looks_like_output(text: str) -> bool:
-    lowered = text.lower()
-    if re.search(r"\benter\s+(your|student)", lowered):
+    # Console transcripts: prompts such as "Enter your name:" or labelled I/O lines.
+    if re.search(r"^\s*(?:please\s+)?(?:enter|input|type)\s+[^\n:]{1,40}:", text, re.IGNORECASE | re.MULTILINE):
         return True
-    return any(signal in text for signal in ["Data Entered", "Student Number", "Student Name", "Hello John", "输入", "输出"]) and ":" in text
+    return bool(re.search(r"^\s*(?:输入|输出|运行结果|output|input)\s*[:：]", text, re.IGNORECASE | re.MULTILINE))
 
 
 def _contains_cause_signal(text: str) -> bool:
-    return bool(re.search(r"因为|由于|导致|所以|因此|异常|留在|依然|被接下来|流提取|换行符|空白字符|缓冲|before|after", text, re.IGNORECASE))
+    return bool(re.search(r"因为|由于|导致|造成|之所以|原因|\bbecause\b|\bdue to\b|\bcaused by\b", text, re.IGNORECASE))
 
 
 def _contains_fix_signal(text: str) -> bool:
-    return bool(re.search(r"cin\.ignore|ignore\(|需要|必须|清空|清除|丢弃|解决|修复|避免|之前|之后", text, re.IGNORECASE))
+    if re.search(r"(?:需要|应该|应当|要先)\s*(?:调用|使用)?\s*[A-Za-z_][\w.:]*\s*\(", text):
+        return True
+    return bool(re.search(r"解决|修复|避免|清空|清除|丢弃|改为|改成|\bfix(?:es|ed)?\b|\bto avoid\b|\bsolution\b|\bworkaround\b", text, re.IGNORECASE))
 
 
 def _contains_visual_annotation(text: str) -> bool:
@@ -975,8 +980,9 @@ def _learning_goal(blocks: list[dict[str, Any]], scene_type: str) -> str:
     previews = [str(block.get("preview") or "") for block in blocks]
     text = " ".join(previews)
     if scene_type == "code_causal_explanation":
-        if re.search(r"getline|cin|换行符|空白字符|ignore", text, re.IGNORECASE):
-            return "讲清 cin 提取运算符与 getline 混用时的换行符残留问题、现象和修复方法。"
+        cause = next((str(block.get("preview") or "") for block in blocks if block.get("learning_role") == "cause"), "")
+        if cause:
+            return f"讲清代码示例的运行现象、原因和修复方法：{preview(cause, 100)}"
         return "讲清代码示例的运行现象、原因和修复方法。"
     if scene_type == "code_example_with_output":
         return "把代码与运行输出对应起来，说明示例验证了什么行为。"
@@ -985,28 +991,6 @@ def _learning_goal(blocks: list[dict[str, Any]], scene_type: str) -> str:
     if scene_type == "visual_explanation":
         return "将图示与邻近概念合并讲解，避免把图单独堆放。"
     return preview(text, 140) or "讲解本组核心概念。"
-
-
-def _normalize_bbox(source_type: str, bbox: list[float] | None, page_size: tuple[float | None, float | None] | None) -> list[float] | None:
-    if not bbox or len(bbox) != 4:
-        return None
-    if all(-0.001 <= float(value) <= 1.001 for value in bbox):
-        return _clamp_bbox(bbox)
-    width, height = page_size or (None, None)
-    if not width or not height:
-        return None
-    x1, y1, third, fourth = [float(value) for value in bbox]
-    if source_type == "pptx":
-        x2, y2 = x1 + third, y1 + fourth
-    else:
-        x2, y2 = third, fourth
-    return _clamp_bbox([x1 / width, y1 / height, x2 / width, y2 / height])
-
-
-def _page_size_for_bbox(deck: Deck, page: SlidePage | None) -> tuple[float | None, float | None] | None:
-    if page is not None:
-        return page.page_width, page.page_height
-    return None
 
 
 def _layout_order(block: dict[str, Any]) -> float:

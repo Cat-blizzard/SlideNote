@@ -146,3 +146,43 @@ def test_ocr_enrichment_cleans_temp_image_on_api_error(tmp_path, monkeypatch):
         enrich_deck_with_ocr(deck, tmp_path, mode="auto", provider="baidu", api_key="k", secret_key="s", cache_dir=tmp_path / "cache")
 
     assert seen["path"].exists() is False
+
+
+def test_ocr_enrichment_records_single_target_failure_without_aborting(tmp_path, monkeypatch):
+    shots = tmp_path / "screenshots"
+    shots.mkdir()
+    for slide_id in (1, 2):
+        Image.new("RGB", (800, 450), "white").save(shots / f"slide{slide_id}.png")
+    deck = Deck(
+        source_path="lecture.pdf",
+        source_type="pdf",
+        pages=[SlidePage(slide_id=slide_id, page_screenshot=f"screenshots/slide{slide_id}.png") for slide_id in (1, 2)],
+    )
+    created = {"count": 0}
+
+    class PartlyFailingOCRClient:
+        def __init__(self, **kwargs):
+            created["count"] += 1
+
+        def recognize(self, image_path: Path):
+            if created.setdefault("calls", 0) == 0:
+                created["calls"] = 1
+                raise ValueError("bad image")
+
+            class Result:
+                text = "UDP"
+                usage = {}
+                raw = {}
+
+            return Result()
+
+    monkeypatch.setattr("slidenote.ocr.OCRClient", PartlyFailingOCRClient)
+
+    report = enrich_deck_with_ocr(deck, tmp_path, mode="auto", provider="baidu", api_key="k", secret_key="s", cache_dir=tmp_path / "cache")
+
+    assert created["count"] == 1
+    assert report["summary"]["failed"] == 1
+    assert report["targets"][0]["cache_status"] == "error"
+    assert "bad image" in report["targets"][0]["error"]
+    assert deck.pages[0].page_ocr_status == "failed"
+    assert deck.pages[1].page_ocr_text == "UDP"
