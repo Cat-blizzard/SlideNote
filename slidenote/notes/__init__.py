@@ -63,7 +63,7 @@ class NoteOptions:
     note_language: str = "zh"
     term_policy: str = "bilingual"
     teaching_enrichment: str = "auto"
-    weave_dedup: str = "soft"
+    weave_dedup: str = "normal"
     page_neighborhood: int = 1
     screenshot_policy: str = "fallback"
     figure_placement: str = "inline"
@@ -129,7 +129,7 @@ def generate_notes(
     note_language: str = "zh",
     term_policy: str = "bilingual",
     teaching_enrichment: str = "auto",
-    weave_dedup: str = "soft",
+    weave_dedup: str = "normal",
     page_neighborhood: int = 1,
     screenshot_policy: str = "fallback",
     figure_placement: str = "inline",

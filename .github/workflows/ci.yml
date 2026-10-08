@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,llm]"
+          python -m pip install -e ".[dev,llm,gui]"
 
       - name: Run test suite
         run: python -m pytest

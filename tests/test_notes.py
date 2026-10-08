@@ -661,9 +661,10 @@ def test_article_prompt_prefers_study_notes_over_slide_translation():
 
     assert "像学生课后笔记一样" in prompt
     assert "不要逐字段翻译 PPT" in prompt
-    assert "article 不是摘要模式" in prompt
-    assert "详细讲义式学习笔记" in prompt
-    assert "不降低讲解深度" in prompt
+    assert "中间证据卡" in prompt
+    assert "不要为单页固定生成学习目标" in prompt
+    assert "完整保留当前页独有证据" in prompt
+    assert "不表示为每页写一篇完整讲义" in prompt
     assert "封面" in prompt
     assert "目录" in prompt
     assert "只保留该页所有元素的来源标记" in prompt
@@ -709,7 +710,7 @@ def test_lecture_notes_profile_prompt_requests_teaching_reconstruction():
 
     assert "不是在总结幻灯片" in prompt
     assert "教学重构" in prompt
-    assert "是什么、为什么重要、如何运作" in prompt
+    assert "详细讲解留给章节编织阶段" in prompt
     assert "coverage 只是最后质检" in prompt
 
 
@@ -989,11 +990,18 @@ def test_lecture_notes_profile_runs_teaching_enrichment_after_weave(tmp_path, mo
                 )
             elif '"task": "teaching_enrichment"' in prompt:
                 result.text = (
-                    "### 本节核心问题\n\n"
-                    "本节要解释为什么复制之后还需要 quorum 来维持读写可见性。 <!-- slidenote-source: p1:s1_t1,s2_t1 -->\n\n"
+                    "## 本讲目标\n\n"
+                    "理解复制与 quorum 如何共同影响可用性和读写可见性。 <!-- slidenote-source: p1:s1_t1,s2_t1 -->\n\n"
+                    "## 复制与 Quorum\n\n"
+                    "### 两个机制如何衔接\n\n"
+                    "复制提高可用性，而 quorum 通过读写集合相交约束可见性，两者共同构成一致性机制。 <!-- slidenote-source: p1:s1_t1,s2_t1 -->\n\n"
+                    "### 检查读写集合的例子\n\n"
+                    "例如，可以检查一次读取所访问的副本集合是否必然与最近一次写入集合相交。 <!-- slidenote-source: p2:s2_t1 -->\n\n"
                     "### 易错点\n\n"
                     "不要把副本数量简单等同于一致性；关键是读集合和写集合是否相交。 <!-- slidenote-source: p2:s2_t1 -->\n\n"
-                    "### 自测问题\n\n"
+                    "## 本讲总结\n\n"
+                    "复制先提供冗余，quorum 再用集合交集建立读写之间的可见性联系。 <!-- slidenote-source: p1:s1_t1,s2_t1 -->\n\n"
+                    "## 章节自测\n\n"
                     "如果读集合和写集合不相交，会出现什么风险？ <!-- slidenote-source: p1:s1_t1,s2_t1 -->"
                 )
             else:
@@ -1025,8 +1033,10 @@ def test_lecture_notes_profile_runs_teaching_enrichment_after_weave(tmp_path, mo
     assert result.llm_usage["summary"]["teaching_enrichment_calls"] == 1
     assert result.llm_usage["request"]["note_profile"] == "lecture-notes"
     assert result.llm_usage["request"]["note_depth"] == "very-detailed"
-    assert "### 本节核心问题" in result.markdown
-    assert "### 自测问题" in result.markdown
+    assert "稳定的全文结构契约" in prompts[-1]
+    assert "## 本讲目标" in result.markdown
+    assert "## 复制与 Quorum" in result.markdown
+    assert "## 章节自测" in result.markdown
     assert analyze_coverage(deck, result.markdown)["missing"] == 0
 
 

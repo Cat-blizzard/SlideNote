@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "description": "SlideNote 固定评测样本清单。每次改动在同一个 manifest 上运行 scripts/eval_decks.py，保证结果可比。",
+  "cases": [
+    {
+      "case_id": "synthetic-os-basics",
+      "source": "benchmarks/samples/synthetic_course.pdf",
+      "description": "固定合成样例：文字密集页、对比表、公式、折线图、扫描页，共 18 页；由 scripts/make_sample_deck.py 生成，可重复生成且可提交仓库。",
+      "features": ["text-dense", "table", "formula", "chart", "scanned", "long"],
+      "language": "zh",
+      "expected_pages": 18,
+      "source_origin": "generated",
+      "preset": "local",
+      "export": "markdown-zip",
+      "manual_notes": null,
+      "allow_fewshot": false
+    }
+  ]
+}

@@ -52,6 +52,57 @@ python -m slidenote build path\to\lecture.pdf --out outputs\baseline-lecture --e
 
 ---
 
+## 固定样本集与自动评测（benchmarks/，P0）
+
+`benchmarks/` 目录把上面的手工流程固化为可重复执行的评测，改动前后跑同一份
+manifest 即可对比耗时、tokens、覆盖与启发式分数，失败用例自动留档：
+
+```powershell
+# 1. 生成固定合成样例（覆盖文字密集/表格/公式/图表/扫描页/长课件）
+python scripts/make_sample_deck.py
+
+# 2. 跑基线（local 预设，无 API；正式评测改用 lecture 预设并配置 key）
+python scripts/eval_decks.py benchmarks/samples.manifest.json --out benchmarks/runs/<日期>-baseline
+
+# 3. 改动后用同一 manifest 复跑并对比
+python scripts/eval_decks.py benchmarks/samples.manifest.json --out benchmarks/runs/<日期>-after --baseline benchmarks/runs/<日期>-baseline
+```
+
+- `eval_report.md` / `eval_report.json`：每个用例的硬门槛结果、耗时、阶段耗时、
+  tokens 与成本估算、coverage 与启发式分数；`--baseline` 生成逐项差值。
+- 硬门槛失败（关键报告缺失/无效、必讲内容漏项 > 0、lecture 产物出现"第 N 页"标题、构建/导出失败）
+  会把 notes/coverage/质量报告复制到 `runs/<run>/failures/<case_id>/`，作为可复核
+  的失败案例。
+- manifest 的 `case_id` 只允许字母、数字、点、下划线和连字符；工具会再次校验
+  输出路径位于评测根目录内。`--out` 和 `--baseline` 可使用仓库外的绝对路径。
+- local 预览按设计可保留逐页标题；评测报告会显示“有（未作为硬门槛）”，避免把
+  “不拦截”误写成“未检测到”。
+- 真实课件请按 `benchmarks/README.md` 的说明加入 manifest（不要提交课件本体）；
+  人工抽查用 `benchmarks/spot-check.template.md`，评分用 `benchmarks/rubric.template.json`。
+- 启发式分数只用于跨运行比较，不能代表内容正确性；质量结论以人工抽查为准。
+
+## 导出排版验收（P0）
+
+评测通过后，用排版验收工具检查实际阅读排版（标题层级、空章节、图片 alt 与
+邻近解释、超宽表格、代码围栏/公式闭合、Word 表格行列一致、PDF 文本溢出、
+图文重叠、空白页、页尾孤立标题）。每个问题都报告样本、文件和页码：
+
+```powershell
+# 对一个 build 输出目录（docx/pdf 未导出时该项显示 skipped 并给原因）
+python scripts/verify_note_layout.py outputs\baseline-lecture
+
+# 一次检查整个评测运行的所有用例
+python scripts/verify_note_layout.py benchmarks\runs\<日期>-after\outputs
+
+# 保留结构化报告；--strict 让警告也导致失败
+python scripts/verify_note_layout.py outputs\baseline-lecture --json layout_report.json --strict
+```
+
+工具只做启发式检查：能发现断页、溢出、图文错位的常见模式并定位到样本与页，
+但最终排版是否可读仍建议人工翻阅一次导出文件。
+
+---
+
 ## 实验分支附录：Agent 后端（experiment/dsh-backend）
 
 以下命令只在实验分支存在。`agent-eval` 内置的 `local` 对照适合检查实验流程能否运行及其结构指标；它与使用文本模型的 Agent 输入条件不同，不能据此断言 Agent 的讲义质量优于主线 `lecture`。质量对比应另跑同一课件的 `lecture`，记录所用模型、视觉/OCR 配置、缓存状态，并人工盲评笔记。

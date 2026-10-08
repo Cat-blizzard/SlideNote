@@ -28,6 +28,7 @@ Ingest -> Understand -> Write -> Guard -> Export
 - 已生成 `notes.md`、coverage、source map 和启发式质量报告。Coverage 能提示部分漏项和来源标记问题，不能证明解释准确或学习效果。
 - 独立的 `study-pack` 命令可生成 review、exam、交互式 `exam.html`、结构化学习包与错题复盘提示词；答题记录尚未形成持久化闭环。
 - 已有 GUI 查看与下载、进度报告，以及 Markdown、Word、PDF、LaTeX 等输出能力；导出排版仍需用真实课件系统验收。
+- 已有固定样本评测脚手架（`benchmarks/` + `scripts/eval_decks.py`，记录耗时/tokens/成本/硬门槛并留档失败案例）、导出排版验收（`scripts/verify_note_layout.py`），以及 lecture 讲义结构契约与确定性文档框架（`structure_contract` / `document_frame`）；真实课件样本与人工评分仍在收集。
 
 ## 建议优先级
 

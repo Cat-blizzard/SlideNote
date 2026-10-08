@@ -8,12 +8,24 @@ from .sources import SOURCE_COMMENT_PREFIX, _source_marker
 
 
 def _postprocess_llm_markdown(markdown: str, source_display: str) -> str:
-    text = _unwrap_code_images(markdown)
-    text = _fill_empty_image_alts(text)
-    text = _remove_meta_paragraphs(text)
+    text = _clean_llm_markdown(markdown)
     text = _normalize_chunk_headings(text)
     text = _convert_visible_sources(text, source_display)
     return text.strip()
+
+
+def _postprocess_document_markdown(markdown: str, source_display: str) -> str:
+    """Clean a full-document rewrite without changing its heading hierarchy."""
+    text = _clean_llm_markdown(markdown)
+    text = _convert_visible_sources(text, source_display)
+    return text.strip()
+
+
+def _clean_llm_markdown(markdown: str) -> str:
+    text = _unwrap_code_images(markdown)
+    text = _fill_empty_image_alts(text)
+    text = _remove_meta_paragraphs(text)
+    return text
 
 
 def _unwrap_code_images(markdown: str) -> str:
