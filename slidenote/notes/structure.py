@@ -100,6 +100,9 @@ def assess_lecture_note_structure(markdown: str) -> dict[str, Any]:
     """
 
     headings = _heading_sections(markdown)
+    h1_titles = [heading["title"] for heading in headings if heading["level"] == 1]
+    h1_count = len(h1_titles)
+    title_pass = h1_count == 1 and bool(h1_titles[0])
     matched: dict[str, str] = {}
     empty_matches: dict[str, str] = {}
     for slot, aliases in LECTURE_NOTE_STRUCTURE_SLOTS.items():
@@ -152,7 +155,9 @@ def assess_lecture_note_structure(markdown: str) -> dict[str, Any]:
     scored = required + recommended
     score = round(len(matched.keys() & set(scored)) / len(scored), 4)
     return {
-        "schema_version": 2,
+        "schema_version": 3,
+        "h1_count": h1_count,
+        "title_pass": title_pass,
         "required_slots": required,
         "recommended_slots": recommended,
         "matched_slots": matched,
@@ -167,7 +172,7 @@ def assess_lecture_note_structure(markdown: str) -> dict[str, Any]:
         "repeated_global_sections": repeated_global,
         "mechanical_repetition_pass": mechanical_repetition_pass,
         "score": score,
-        "passed": not missing and mechanical_repetition_pass,
+        "passed": title_pass and not missing and mechanical_repetition_pass,
     }
 
 
@@ -207,23 +212,57 @@ def lecture_section_style_prompt_rule(note_language: str) -> str:
 
 
 def structure_missing_labels(assessment: dict[str, Any]) -> list[str]:
-    return [LECTURE_NOTE_SLOT_LABELS_ZH.get(slot, slot) for slot in assessment.get("missing_slots", [])]
+    labels = [LECTURE_NOTE_SLOT_LABELS_ZH.get(slot, slot) for slot in assessment.get("missing_slots", [])]
+    if assessment.get("title_pass") is False:
+        labels.insert(0, "唯一的 H1 课程标题")
+    return labels
 
 
 def _heading_sections(markdown: str) -> list[dict[str, Any]]:
-    matches = list(re.finditer(r"(?m)^(#{1,4})\s+(.+?)\s*$", markdown))
+    visible_markdown = _mask_fenced_code(markdown)
+    matches = list(re.finditer(r"(?m)^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*\r?$", visible_markdown))
     sections: list[dict[str, Any]] = []
     for index, match in enumerate(matches):
         start = match.end()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(markdown)
+        title = markdown[match.start(2) : match.end(2)].strip()
+        title = re.sub(r"(?:^|[ \t]+)#+[ \t]*$", "", title).strip()
         sections.append(
             {
                 "level": len(match.group(1)),
-                "title": match.group(2).strip(),
+                "title": title,
                 "body": markdown[start:end].strip(),
+                "start": match.start(),
+                "end": match.end(),
             }
         )
     return sections
+
+
+def _mask_fenced_code(markdown: str) -> str:
+    """Hide fenced code from structural parsing without changing text offsets."""
+
+    fence_char = ""
+    fence_length = 0
+    lines: list[str] = []
+    for line in markdown.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        if fence_char:
+            lines.append(re.sub(r"[^\r\n]", " ", line))
+            closing = re.fullmatch(r" {0,3}([`~]+)[ \t]*", content)
+            if closing and set(closing.group(1)) == {fence_char} and len(closing.group(1)) >= fence_length:
+                fence_char = ""
+                fence_length = 0
+            continue
+
+        opening = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", content)
+        if opening and (opening.group(1)[0] != "`" or "`" not in opening.group(2)):
+            fence_char = opening.group(1)[0]
+            fence_length = len(opening.group(1))
+            lines.append(re.sub(r"[^\r\n]", " ", line))
+        else:
+            lines.append(line)
+    return "".join(lines)
 
 
 def _heading_matches(title: str, aliases: tuple[str, ...]) -> bool:

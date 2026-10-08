@@ -10,10 +10,10 @@ from slidenote.llm_cache import LLMCache
 from slidenote.models import Deck
 
 from .contexts import NoteContext
-from .postprocess import _postprocess_llm_markdown
+from .postprocess import _postprocess_document_markdown, _postprocess_llm_markdown
 from .llm_calls import _generate_cached_llm_text
 from .prompt_templates import _llm_repair_prompt, _llm_structure_repair_prompt
-from .structure import assess_lecture_note_structure
+from .structure import _heading_sections, assess_lecture_note_structure
 from .versions import STRUCTURE_REPAIR_PROMPT_VERSION
 
 
@@ -273,8 +273,11 @@ def _repair_note_structure_once(
         record["error_type"] = type(exc).__name__
         return markdown, record
 
-    repaired = _postprocess_llm_markdown(repaired, source_display=options.source_display)
+    repaired = _postprocess_document_markdown(repaired, source_display=options.source_display)
     after = assess_lecture_note_structure(repaired)
+    original_titles = [heading["title"] for heading in _heading_sections(markdown) if heading["level"] == 1]
+    candidate_titles = [heading["title"] for heading in _heading_sections(repaired) if heading["level"] == 1]
+    title_preserved = len(original_titles) == 1 and candidate_titles == original_titles
     before_coverage = analyze_coverage(deck, markdown, content_guard=options.content_guard)
     after_coverage = analyze_coverage(deck, repaired, content_guard=options.content_guard)
     lost_trace = _covered_ids(before_coverage, "trace_covered") - _covered_ids(after_coverage, "trace_covered")
@@ -288,6 +291,8 @@ def _repair_note_structure_once(
         reasons.append("empty_repair")
     if not after["passed"]:
         reasons.append("structure_contract_still_failing")
+    if not title_preserved:
+        reasons.append("document_title_not_preserved")
     if after["score"] < before["score"]:
         reasons.append("structure_score_regression")
     if lost_trace or lost_visible:
@@ -310,6 +315,9 @@ def _repair_note_structure_once(
         "after_score": after["score"],
         "before_score": before["score"],
         "after_contract_passed": after["passed"],
+        "original_document_titles": original_titles,
+        "candidate_document_titles": candidate_titles,
+        "document_title_preserved": title_preserved,
         "lost_trace_items": sorted(lost_trace),
         "lost_visible_items": sorted(lost_visible),
         "lost_source_markers": sorted(lost_sources),

@@ -2,7 +2,7 @@
 import re
 from typing import Any
 
-from .structure import LECTURE_NOTE_STRUCTURE_SLOTS
+from .structure import LECTURE_NOTE_STRUCTURE_SLOTS, _heading_matches, _heading_sections
 
 
 _GLOBAL_HEADINGS_ZH = ("本讲目标", "本讲总结", "章节自测")
@@ -136,36 +136,30 @@ def _review_items(brief: dict[str, Any], topics: list[str], note_language: str) 
 
 
 def _insert_after_h1(markdown: str, section: str) -> str:
-    match = re.search(r"(?m)^#\s+.+?\s*$", markdown)
-    if not match:
+    h1 = next((heading for heading in _heading_sections(markdown) if heading["level"] == 1), None)
+    if not h1:
         return section + markdown.lstrip()
-    return markdown[: match.end()].rstrip() + "\n\n" + section + markdown[match.end() :].lstrip("\r\n")
+    return markdown[: h1["end"]].rstrip() + "\n\n" + section + markdown[h1["end"] :].lstrip("\r\n")
 
 
 def _insert_before_first_body(markdown: str, heading: str) -> str:
-    match = re.search(r"(?m)^#\s+.+?\s*$", markdown)
-    if not match:
-        return heading + markdown.lstrip()
-    return markdown[: match.end()].rstrip() + "\n\n" + heading + markdown[match.end() :].lstrip("\r\n")
+    return _insert_after_h1(markdown, heading)
 
 
 def _h2_titles(markdown: str) -> list[str]:
-    return [match.group(1).strip() for match in re.finditer(r"(?m)^##\s+(.+?)\s*$", markdown)]
+    return [heading["title"] for heading in _heading_sections(markdown) if heading["level"] == 2]
 
 
 def _has_global_h2(markdown: str, slot: str) -> bool:
-    aliases = {_normalize(alias) for alias in LECTURE_NOTE_STRUCTURE_SLOTS[slot]}
-    return any(_normalize(_clean_numbering(title)) in aliases for title in _h2_titles(markdown))
+    return any(_heading_matches(title, LECTURE_NOTE_STRUCTURE_SLOTS[slot]) for title in _h2_titles(markdown))
 
 
 def _is_global_heading(title: str, note_language: str) -> bool:
     del note_language
-    aliases = {
-        _normalize(alias)
+    return any(
+        _heading_matches(title, LECTURE_NOTE_STRUCTURE_SLOTS[slot])
         for slot in ("orientation", "summary", "self_test")
-        for alias in LECTURE_NOTE_STRUCTURE_SLOTS[slot]
-    }
-    return _normalize(_clean_numbering(title)) in aliases
+    )
 
 
 def _usable_topic(title: str) -> bool:

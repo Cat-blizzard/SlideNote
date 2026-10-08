@@ -51,21 +51,49 @@ def _visible(text: str) -> str:
     return text.strip()
 
 
+def _mask_fenced_code(text: str) -> tuple[str, bool]:
+    """Hide code syntax from layout checks while preserving source offsets."""
+    masked_lines: list[str] = []
+    fence_marker = ""
+    fence_length = 0
+    for line in text.splitlines(keepends=True):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line.rstrip("\r\n"))
+        if fence_marker:
+            if (
+                marker
+                and marker.group(1)[0] == fence_marker
+                and len(marker.group(1)) >= fence_length
+                and not marker.group(2).strip()
+            ):
+                fence_marker = ""
+            masked_lines.append(re.sub(r"[^\r\n]", " ", line))
+        elif marker and (marker.group(1)[0] == "~" or "`" not in marker.group(2)):
+            fence_marker = marker.group(1)[0]
+            fence_length = len(marker.group(1))
+            masked_lines.append(re.sub(r"[^\r\n]", " ", line))
+        else:
+            masked_lines.append(line)
+    return "".join(masked_lines), bool(fence_marker)
+
+
 def check_markdown(notes_path: Path) -> tuple[list[dict], dict]:
     issues: list[dict] = []
     text = notes_path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
+    layout_text, unclosed_fence = _mask_fenced_code(text)
+    layout_lines = layout_text.splitlines()
     sample = notes_path.parent.name
     stats = {"headings": 0, "h1": 0, "images": 0, "tables": 0, "chars": len(_visible(text))}
 
-    h1_count = sum(1 for line in lines if re.match(r"^#\s+\S", line))
+    h1_count = sum(1 for line in layout_lines if re.match(r"^#\s+\S", line))
     stats["h1"] = h1_count
     if h1_count == 0:
         issues.append(issue("error", sample, "notes.md", None, "missing_h1", "文档缺少一个 H1 标题。"))
     elif h1_count > 1:
         issues.append(issue("error", sample, "notes.md", None, "multiple_h1", f"发现 {h1_count} 个 H1，应只有一个课程标题。"))
 
-    headings = [(index, len(match.group(1)), match.group(2).strip()) for index, line in enumerate(lines) if (match := re.match(r"^(#{1,6})\s+(.*)$", line))]
+    headings = [(index, len(match.group(1)), match.group(2).strip()) for index, line in enumerate(layout_lines) if (match := re.match(r"^(#{1,6})\s+(.*)$", line))]
+    heading_lines = {index for index, _level, _title in headings}
     stats["headings"] = len(headings)
     previous_level = 0
     for index, level, title in headings:
@@ -88,8 +116,9 @@ def check_markdown(notes_path: Path) -> tuple[list[dict], dict]:
             if next_level <= level:
                 end = next_index
                 break
-        section_text = "\n".join(lines[index + 1: end])
-        section_text = re.sub(r"(?m)^#{1,6}\s+.*$", "", section_text)
+        # Code examples are section content, even when their lines resemble
+        # headings. Remove only the real Markdown headings identified above.
+        section_text = "\n".join(lines[line_index] for line_index in range(index + 1, end) if line_index not in heading_lines)
         body = _visible(section_text)
         if not body:
             issues.append(issue(
@@ -97,35 +126,36 @@ def check_markdown(notes_path: Path) -> tuple[list[dict], dict]:
                 f"标题“{title}”（第 {index + 1} 行）下没有正文内容。",
             ))
 
-    fences = sum(1 for line in lines if re.match(r"^\s*```", line))
-    if fences % 2:
-        issues.append(issue("error", sample, "notes.md", None, "unbalanced_code_fence", "代码围栏 ``` 数量为奇数，存在未闭合代码块。"))
-    if text.count("$$") % 2:
+    if unclosed_fence:
+        issues.append(issue("error", sample, "notes.md", None, "unbalanced_code_fence", "存在未闭合的代码围栏；结束围栏须使用相同字符且长度不少于开始围栏。"))
+    if layout_text.count("$$") % 2:
         issues.append(issue("error", sample, "notes.md", None, "unbalanced_math", "$$ 定界符数量为奇数，公式块可能未闭合。"))
 
-    image_positions = [match for match in re.finditer(r"(?m)^!\[([^\]]*)\]\(([^)]+)\)", text)]
+    image_positions = [match for match in re.finditer(r"(?m)^!\[([^\]]*)\]\(([^)]+)\)", layout_text)]
     stats["images"] = len(image_positions)
     for match in image_positions:
         alt, target = match.group(1).strip(), match.group(2).strip()
-        line_no = text.count("\n", 0, match.start()) + 1
+        line_no = layout_text.count("\n", 0, match.start()) + 1
         if not alt:
             issues.append(issue("error", sample, "notes.md", None, "image_missing_alt", f"第 {line_no} 行图片缺少 alt 文本：{target}"))
-        window = _visible(text[match.end(): match.end() + 600])
-        before = _visible(text[max(0, match.start() - 600): match.start()])
+        window = _visible(layout_text[match.end(): match.end() + 600])
+        before = _visible(layout_text[max(0, match.start() - 600): match.start()])
         if len(window) < IMAGE_EXPLANATION_MIN_CHARS and len(before) < IMAGE_EXPLANATION_MIN_CHARS:
             issues.append(issue(
                 "warning", sample, "notes.md", None, "image_without_explanation",
                 f"第 {line_no} 行图片“{alt or target}”前后 600 字符内没有讲解文字。",
             ))
 
-    table_rows: list[list[str]] = []
+    table_rows: list[list[list[str]]] = []
     table_starts: list[int] = []
-    for index, line in enumerate(lines):
+    previous_table_row: int | None = None
+    for index, line in enumerate(layout_lines):
         if re.match(r"^\s*\|.*\|\s*$", line):
-            if not table_starts or index > table_starts[-1] + 1:
+            if previous_table_row is None or index != previous_table_row + 1:
                 table_starts.append(index)
                 table_rows.append([])
             table_rows[-1].append([cell.strip() for cell in line.strip().strip("|").split("|")])
+            previous_table_row = index
     stats["tables"] = len(table_rows)
     for table_index, rows in enumerate(table_starts and table_rows or []):
         if not rows:
@@ -137,11 +167,12 @@ def check_markdown(notes_path: Path) -> tuple[list[dict], dict]:
                 "warning", sample, "notes.md", None, "wide_table",
                 f"第 {line_no} 行表格有 {columns} 列（>{MAX_TABLE_COLUMNS}），导出后大概率横向溢出。",
             ))
-        for row in rows:
+        for row_index, row in enumerate(rows):
+            row_line_no = table_starts[table_index] + row_index + 1
             if len(row) != columns:
                 issues.append(issue(
                     "error", sample, "notes.md", None, "ragged_table_row",
-                    f"第 {line_no} 行附近的表格行列数不一致（{len(row)} != {columns}）。",
+                    f"第 {row_line_no} 行表格行列数不一致（{len(row)} != {columns}）。",
                 ))
                 break
             for cell in row:

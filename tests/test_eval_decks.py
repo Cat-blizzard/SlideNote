@@ -7,6 +7,7 @@ from scripts.eval_decks import (
     collect_case_metrics,
     display_path,
     safe_case_dir,
+    structure_page_headings,
     validate_case_id,
     write_markdown_report,
 )
@@ -68,3 +69,11 @@ def test_case_id_validation_blocks_path_traversal(tmp_path):
 
 def test_display_path_accepts_paths_outside_repository(tmp_path):
     assert display_path(tmp_path) == str(tmp_path.resolve())
+
+
+@pytest.mark.parametrize("fence", ["```markdown", "~~~markdown"])
+def test_evaluation_page_heading_gate_ignores_code_examples(fence):
+    closing = fence[:3]
+    notes = f"# Course\n\n{fence}\n## Slide 1 - Code example\n{closing}\n\n## Slide 2 - Actual listing\n"
+
+    assert structure_page_headings(notes) == ["Slide 2 - Actual listing"]

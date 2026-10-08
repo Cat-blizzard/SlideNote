@@ -23,6 +23,20 @@ from .prompt_rules import (
 from .structure import lecture_note_structure_prompt_rule, lecture_section_style_prompt_rule
 
 
+def _context_structure_prompt_rule(note_context: str, note_language: str) -> str:
+    if note_context != "document":
+        return lecture_section_style_prompt_rule(note_language)
+    # Composition supplies the document title after this body is generated.
+    rule = lecture_note_structure_prompt_rule(note_language)
+    return rule.replace(
+        "keep exactly one H1 title; ",
+        "the system supplies the sole H1 title, so do not emit H1; ",
+    ).replace(
+        "保留且只保留一个 H1 课程标题；",
+        "H1 课程标题由系统添加，本阶段不要输出 H1；",
+    )
+
+
 def _llm_context_prompt(
     context,
     supports_image_input: bool,
@@ -301,10 +315,11 @@ def _llm_weave_prompt(
     profile_rule = _note_profile_prompt_rule(note_profile)
     language_rule = _language_prompt_rule(note_language)
     term_rule = _term_policy_prompt_rule(note_language, term_policy)
-    structure_rule = (
-        lecture_note_structure_prompt_rule(note_language)
+    structure_rule = _context_structure_prompt_rule(note_context, note_language)
+    heading_rule = (
+        "3. 全文正文使用 H2 组织全局栏目和课程主题，章内小标题使用 H3 或更低级；H1 课程标题由系统添加，不要输出 H1。\n"
         if note_context == "document"
-        else lecture_section_style_prompt_rule(note_language)
+        else "3. 外层章节标题由系统统一添加；正文小标题只能使用 H3 或更低级，不要输出全文 H1，也不要用“课程笔记”当标题。\n"
     )
     style_rule = (
         "\u7b14\u8bb0\u4f18\u5148\uff1a\u6309\u6982\u5ff5\u548c\u63a8\u7406\u94fe\u7ec4\u7ec7\u5c0f\u8282\uff0c\u53ef\u4ee5\u6253\u6563 page_notes \u7684\u9010\u9875\u7ed3\u6784\uff1b\u5c01\u9762\u3001\u76ee\u5f55\u3001\u7ae0\u8282\u5bfc\u822a\u548c\u91cd\u590d\u5b57\u6bb5\u53ea\u4fdd\u7559\u9690\u85cf\u6765\u6e90\u6807\u8bb0\u5373\u53ef\u3002"
@@ -330,7 +345,7 @@ def _llm_weave_prompt(
         "\u786c\u6027\u8981\u6c42\uff1a\n"
         "1. \u4fdd\u7559 page_notes \u4e2d\u5df2\u7ecf\u5199\u51fa\u7684\u56fe\u7247 Markdown \u548c\u9690\u85cf\u6765\u6e90\u6807\u8bb0\u3002\n"
         "2. \u5bf9\u6b63\u6587\u53ef\u4ee5\u6309\u6982\u5ff5\u8c03\u6574\u987a\u5e8f\u3001\u5408\u5e76\u6bb5\u843d\u3001\u5220\u53bb\u7ed3\u6784\u6027\u8bf4\u660e\uff1b\u4e0d\u8981\u4e3a\u4e86\u4fdd\u7559\u6bcf\u4e2a source marker \u800c\u9010\u5b57\u6bb5\u590d\u8ff0\u3002page_notes.learning_items 中 must_explain=true 且达到阈值的内容不能在 weave 时被删掉。\n"
-        "3. \u5916\u5c42\u7ae0\u8282\u6807\u9898\u7531\u7cfb\u7edf\u7edf\u4e00\u6dfb\u52a0\uff1b\u6b63\u6587\u5c0f\u6807\u9898\u53ea\u80fd\u4f7f\u7528 ### \u6216\u66f4\u4f4e\u7ea7\u6807\u9898\uff0c\u4e0d\u8981\u8f93\u51fa\u5168\u6587 H1\uff0c\u4e5f\u4e0d\u8981\u7528\u201c\u8bfe\u7a0b\u7b14\u8bb0\u201d\u5f53\u6807\u9898\u3002\n"
+        f"{heading_rule}"
         f"4. {source_rule}\n"
         "5. \u56fe\u7247 alt \u6587\u672c\u4e0d\u80fd\u4e3a\u7a7a\uff1b\u4e25\u7981\u8f93\u51fa\u201c\u597d\u7684\uff0c\u8fd9\u662f\u201d\u201c\u6839\u636e JSON\u201d\u201c\u7b14\u8bb0\u5df2\u4e25\u683c\u9075\u5faa\u201d\u201c\u65e0\u6cd5\u89c6\u89c9\u89e3\u6790\u201d\u7b49\u5143\u53d9\u8ff0\u3002\n"
         "6. \u4e25\u7981\u4f7f\u7528\u201c\u8fd9\u4e00\u9875\u201d\u201c\u672c\u9875\u201d\u201c\u5e7b\u706f\u7247\u201d\u201c\u4e0a\u4e00\u9875\u201d\u201c\u4e0b\u4e00\u9875\u201d\u201c\u6b64\u9875\u201d\u7b49 PPT \u9875\u9762\u7ed3\u6784\u8868\u8ff0\uff1b\u76f4\u63a5\u8bb2\u77e5\u8bc6\uff0c\u81ea\u7136\u8fc7\u6e21\u3002\n"
@@ -384,11 +399,7 @@ def _llm_teaching_enrichment_prompt(
     term_rule = _term_policy_prompt_rule(note_language, term_policy)
     depth_rule = _note_depth_rule(note_depth)
     profile_rule = _note_profile_prompt_rule(note_profile)
-    structure_rule = (
-        lecture_note_structure_prompt_rule(note_language)
-        if note_context == "document"
-        else lecture_section_style_prompt_rule(note_language)
-    )
+    structure_rule = _context_structure_prompt_rule(note_context, note_language)
     return (
         "\u8bf7\u628a current_markdown \u4fee\u8ba2\u6210\u66f4\u50cf\u8001\u5e08\u91cd\u65b0\u8bb2\u4e00\u904d\u7684 Markdown \u8bb2\u4e49\u5c0f\u8282\u3002\n"
         "\u4f60\u4e0d\u662f\u5728\u603b\u7ed3\u5e7b\u706f\u7247\uff0c\u800c\u662f\u5728\u505a\u6559\u5b66\u91cd\u6784\uff1a\u5148\u7406\u89e3\u672c\u8282\u5171\u540c\u89e3\u51b3\u4ec0\u4e48\u95ee\u9898\uff0c\u518d\u7528\u5b66\u751f\u80fd\u8ddf\u4e0a\u7684\u987a\u5e8f\u8bb2\u6e05\u695a\u3002\n"

@@ -96,10 +96,13 @@ def read_json(path: Path) -> dict | None:
 
 
 def structure_page_headings(notes: str) -> list[str]:
-    from slidenote.notes.structure import _is_page_heading
+    from slidenote.notes.structure import _heading_sections, _is_page_heading
 
-    headings = re.findall(r"(?m)^#{2,4}\s+(.+?)\s*$", notes)
-    return [title for title in headings if _is_page_heading(title)]
+    return [
+        heading["title"]
+        for heading in _heading_sections(notes)
+        if 2 <= heading["level"] <= 4 and _is_page_heading(heading["title"])
+    ]
 
 
 def collect_case_metrics(output_dir: Path, wall_seconds: float, returncode: int, stderr_tail: str) -> dict:
