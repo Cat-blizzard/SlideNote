@@ -1042,6 +1042,7 @@ def _cached_output_zip(output_dir: str, signature: tuple[tuple[str, int, int], .
 def _render_quality_panel(output_dir: Path) -> None:
     coverage = read_json(output_dir / "coverage.json") or {}
     run_summary = read_json(output_dir / "run_summary.json") or {}
+    quality = read_json(output_dir / "quality_report.json") or {}
     summary = coverage_summary(coverage)
     score = summary["ratio"] * 100
     label = "Visible coverage" if summary["visible"] else "Coverage"
@@ -1051,6 +1052,13 @@ def _render_quality_panel(output_dir: Path) -> None:
     q3.metric("Not explained", summary["missing"])
     q4.metric("Pages", (run_summary.get("counts") or {}).get("pages", "—"))
     st.progress(min(max(score / 100, 0), 1))
+    st.caption(
+        "How to read these signals: **coverage** is a structural clue about whether slide elements "
+        "are referenced and explained — it cannot prove the explanations are correct. The scores in "
+        "**quality_report** are heuristic signals computed from text patterns — they can only flag "
+        "obvious regressions. The final quality verdict always requires a **manual review against "
+        "the original slides** (see the Page explorer tab)."
+    )
     if summary["required_total"]:
         st.caption(f"Required items not explained: {summary['required_missing']} / {summary['required_total']}")
 
@@ -1064,7 +1072,98 @@ def _render_quality_panel(output_dir: Path) -> None:
     else:
         st.success("No missing coverage items reported.")
 
+    _render_manual_review_panel(coverage, quality)
     _render_stage_timings(run_summary)
+
+
+def _render_manual_review_panel(coverage: dict, quality: dict) -> None:
+    """Join coverage gaps and heuristic quality signals into one review queue.
+
+    This is the GUI half of the P0 boundary rule: structural coverage, heuristic
+    quality scores and manual content review are presented side by side but never
+    merged into a single number, and each review row names where to look.
+    """
+    rows: list[dict] = []
+    missing_pages = sorted(
+        {
+            int(item["slide_id"])
+            for item in coverage_missing_items(coverage)
+            if item.get("slide_id")
+        }
+    )
+    required_missing = (coverage.get("required_visible_coverage") or {}).get("missing") or 0
+    for page in missing_pages:
+        rows.append(
+            {
+                "Page": page,
+                "Signal": "coverage",
+                "Reason": "Elements from this slide are not explained in the visible note text.",
+                "Where to look": f"Original slide {page} vs the note section referencing p{page} (Page explorer tab).",
+            }
+        )
+    if quality:
+        risk = str(quality.get("hallucination_risk") or "")
+        if risk == "high":
+            rows.append(
+                {
+                    "Page": "—",
+                    "Signal": "heuristic",
+                    "Reason": "High hallucination risk: few source markers relative to prose (and/or missing required items).",
+                    "Where to look": "Spot-check expanded claims in notes.md against the slides.",
+                }
+            )
+        elif risk == "medium":
+            rows.append(
+                {
+                    "Page": "—",
+                    "Signal": "heuristic",
+                    "Reason": "Medium hallucination risk: some explanations may lack a source marker.",
+                    "Where to look": "Spot-check a sample of paragraphs against the slides.",
+                }
+            )
+        if quality.get("mechanical_structure_pass") is False:
+            rows.append(
+                {
+                    "Page": "—",
+                    "Signal": "heuristic",
+                    "Reason": "Note still reads like a page listing (page-number headings or repeated template sections).",
+                    "Where to look": "Compare note headings with the deck outline in Page explorer.",
+                }
+            )
+        contract = quality.get("structure_contract") or {}
+        if contract.get("enforced") and contract.get("missing_slots"):
+            labels = ", ".join(str(slot) for slot in contract["missing_slots"])
+            rows.append(
+                {
+                    "Page": "—",
+                    "Signal": "heuristic",
+                    "Reason": f"Lecture structure contract is missing slots: {labels}.",
+                    "Where to look": "Check whether the deck actually supports these sections before adding them.",
+                }
+            )
+        figure_coverage = coverage.get("figure_coverage") or {}
+        for figure in figure_coverage.get("figures") or []:
+            if figure.get("covered"):
+                continue
+            page = figure.get("slide_id")
+            rows.append(
+                {
+                    "Page": page,
+                    "Signal": "coverage",
+                    "Reason": "A non-decorative image from this slide is missing or unexplained in the note.",
+                    "Where to look": f"Original slide {page}: compare figure {figure.get('id')} with the surrounding note text.",
+                }
+            )
+    if rows:
+        st.markdown("#### Suggested manual review")
+        st.info(
+            "These rows come from different signals and are **not** a quality score. Work top-down; "
+            "clear rows disappear as builds improve, and anything not listed here still deserves a read-through."
+        )
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+    elif quality:
+        st.markdown("#### Suggested manual review")
+        st.caption("No high-risk signals flagged. Heuristics cannot certify correctness — do a quick read-through before relying on the notes.")
 
 
 def _render_stage_timings(run_summary: dict[str, Any]) -> None:

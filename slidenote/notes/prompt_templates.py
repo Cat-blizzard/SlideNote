@@ -20,6 +20,7 @@ from .prompt_rules import (
     _source_prompt_rule,
     _term_policy_prompt_rule,
 )
+from .structure import lecture_note_structure_prompt_rule, lecture_section_style_prompt_rule
 
 
 def _llm_context_prompt(
@@ -182,7 +183,12 @@ def _llm_page_lecture_prompt(
         }
     if prompt_brief:
         payload["deck_brief"] = prompt_brief
-    depth_rule = _note_depth_rule(note_depth)
+    depth_rule = {
+        "concise": "中间证据卡密度：只保留当前页不可替代的结论。",
+        "balanced": "中间证据卡密度：保留当前页新增的定义、条件、例子、公式和图表结论。",
+        "detailed": "中间证据卡密度：完整保留当前页独有证据，但不要把一个要点扩写成多组模板栏目。",
+        "very-detailed": "中间证据卡密度：不得遗漏当前页独有证据；详细讲解留给章节编织阶段，单页仍须短而准确。",
+    }[note_depth]
     profile_rule = _note_profile_prompt_rule(note_profile)
     source_rule = _source_prompt_rule(source_display)
     language_rule = _language_prompt_rule(note_language)
@@ -193,9 +199,9 @@ def _llm_page_lecture_prompt(
         else "\u8bf7\u5c3d\u91cf\u4fdd\u7559 current_page \u539f\u59cb\u6761\u76ee\u987a\u5e8f\uff0c\u4f46\u4ecd\u8981\u5199\u6210\u53ef\u4ee5\u76f4\u63a5\u9605\u8bfb\u7684\u77e5\u8bc6\u70b9\u8bb2\u89e3\uff0c\u800c\u4e0d\u662f\u590d\u5236\u6e05\u5355\u6216\u63cf\u8ff0\u9875\u9762\u6784\u6210\u3002"
     )
     style_depth_rule = (
-        "\u91cd\u8981\uff1aarticle \u4e0d\u662f\u6458\u8981\u6a21\u5f0f\uff0c\u53ea\u6539\u53d8\u7ec4\u7ec7\u65b9\u5f0f\uff0c\u4e0d\u964d\u4f4e\u8bb2\u89e3\u6df1\u5ea6\uff1b\u5f53 note_depth=detailed \u65f6\uff0c\u9ed8\u8ba4\u5199\u6210\u8be6\u7ec6\u8bb2\u4e49\u5f0f\u5b66\u4e60\u7b14\u8bb0\uff0c\u4e0d\u8981\u628a\u6982\u5ff5\u3001\u516c\u5f0f\u3001\u4f8b\u5b50\u3001\u6761\u4ef6\u6216\u56fe\u8868\u7ed3\u8bba\u538b\u6210\u4e00\u53e5\u8bdd\u3002"
+        "article 在此阶段表示按知识增量整理证据，不表示为每页写一篇完整讲义；不得遗漏独有定义、条件、公式、代码或图表结论。"
         if note_style == "article"
-        else "\u91cd\u8981\uff1afaithful \u4f18\u5148\u4fdd\u7559 PPT \u987a\u5e8f\uff1b\u8bb2\u89e3\u8be6\u7ec6\u7a0b\u5ea6\u4ecd\u7531 note_depth \u63a7\u5236\u3002"
+        else "faithful 优先保留当前页顺序和独有细节，但仍然只输出供章节编织使用的简洁证据。"
     )
     structural_rule = (
         "\u5982\u679c current_page \u4e3b\u8981\u662f\u5c01\u9762\u3001\u76ee\u5f55\u3001\u7ae0\u8282\u5bfc\u822a\u3001\u8bb2\u5e08/\u8054\u7cfb\u65b9\u5f0f\u6216\u5176\u4ed6\u975e\u5b66\u4e60\u5185\u5bb9\uff0c"
@@ -216,6 +222,12 @@ def _llm_page_lecture_prompt(
         "\u82e5 current_page.text_blocks \u542b style_runs/color\uff0c\u8fd9\u662f\u5df2\u62bd\u53d6\u7684\u5f69\u8272\u6587\u5b57\uff0c\u4e0d\u662f\u56fe\u7247\uff1b"
         "\u9700\u8981\u4fdd\u7559\u7ea2\u5b57\u5f3a\u8c03\u65f6\u7528 `<span style=\"color:#C00000\">...</span>`\uff0c\u9ed1\u5b57\u7528\u666e\u901a\u6b63\u6587\u3002"
     )
+    intermediate_rule = (
+        "这是供后续章节编织使用的中间证据卡，不是最终讲义。只记录 current_page 新增且有材料依据的知识："
+        "通常使用一到四个短段落；仅当代码、公式或表格确实需要时使用一个自然小标题。"
+        "不要为单页固定生成学习目标、核心概念、易错点、小结或自测问题，也不要重复 nearby_pages 已经讲过而 current_page 没有新增的信息。"
+        "代码和伪代码必须完整保真；材料不足时宁可只保留图片和来源标记，也不能凭常识补写具体结论。"
+    )
     return (
         "\u8bf7\u53ea\u8bb2\u89e3 JSON \u4e2d\u7684 current_page \u5305\u542b\u7684\u77e5\u8bc6\u5185\u5bb9\uff0c\u4e0d\u8981\u66ff\u5176\u4ed6\u9875\u9762\u5199\u6b63\u6587\u3002\n"
         "nearby_pages \u53ea\u7528\u4e8e\u7406\u89e3\u524d\u540e\u903b\u8f91\u548c\u51cf\u5c11\u91cd\u590d\uff0c\u4e0d\u80fd\u628a\u90bb\u8fd1\u9875\u5185\u5bb9\u5f53\u4f5c current_page \u7684\u5185\u5bb9\u5c55\u5f00\u3002\n"
@@ -227,6 +239,7 @@ def _llm_page_lecture_prompt(
         f"{table_rule}\n"
         f"{semantic_rule}\n"
         f"{text_style_rule}\n"
+        f"{intermediate_rule}\n"
         f"{language_rule}\n"
         f"{term_rule}\n"
         f"{depth_rule}\n"
@@ -288,14 +301,19 @@ def _llm_weave_prompt(
     profile_rule = _note_profile_prompt_rule(note_profile)
     language_rule = _language_prompt_rule(note_language)
     term_rule = _term_policy_prompt_rule(note_language, term_policy)
+    structure_rule = (
+        lecture_note_structure_prompt_rule(note_language)
+        if note_context == "document"
+        else lecture_section_style_prompt_rule(note_language)
+    )
     style_rule = (
         "\u7b14\u8bb0\u4f18\u5148\uff1a\u6309\u6982\u5ff5\u548c\u63a8\u7406\u94fe\u7ec4\u7ec7\u5c0f\u8282\uff0c\u53ef\u4ee5\u6253\u6563 page_notes \u7684\u9010\u9875\u7ed3\u6784\uff1b\u5c01\u9762\u3001\u76ee\u5f55\u3001\u7ae0\u8282\u5bfc\u822a\u548c\u91cd\u590d\u5b57\u6bb5\u53ea\u4fdd\u7559\u9690\u85cf\u6765\u6e90\u6807\u8bb0\u5373\u53ef\u3002"
         if note_style == "article"
         else "\u4fdd\u771f\u4f18\u5148\uff1a\u5c3d\u91cf\u6cbf\u7740 page_notes \u7684\u987a\u5e8f\u7ec4\u7ec7\u5185\u5bb9\uff0c\u4f46\u4ecd\u8981\u5408\u5e76\u91cd\u590d\u6bb5\u843d\u5e76\u5220\u53bb\u7eaf\u7ed3\u6784\u6027\u8bf4\u660e\u3002"
     )
     dedup_rule = {
-        "soft": "\u53ea\u5408\u5e76\u660e\u663e\u91cd\u590d\u7684\u53e5\u5b50\u548c\u5b8c\u5168\u76f8\u540c\u7684\u5b9a\u4e49\uff1b\u5b81\u53ef\u7565\u957f\uff0c\u4e5f\u4e0d\u8981\u5220\u6389 page_notes \u4e2d\u7684\u5173\u952e\u89e3\u91ca\u3002",
-        "normal": "\u5408\u5e76\u91cd\u590d\u5b9a\u4e49\u548c\u76f8\u8fd1\u4f8b\u5b50\uff0c\u4f46\u4fdd\u7559\u6bcf\u9875\u7684\u5173\u952e\u77e5\u8bc6\u70b9\u3001\u56fe\u8868\u89e3\u91ca\u548c\u63a8\u7406\u6b65\u9aa4\u3002",
+        "soft": "合并明显重复的句子、定义和例子；保留每个独有知识增量，但不要为每一页保留一份完整说明。",
+        "normal": "先建立本节知识点清单；同一概念只解释一次，把不同页面新增的条件、例子、公式和图示合并到该解释中。",
         "aggressive": "\u53ef\u4ee5\u66f4\u4e3b\u52a8\u5730\u538b\u7f29\u91cd\u590d\u5185\u5bb9\uff0c\u4f46\u4e0d\u5f97\u5220\u9664\u72ec\u6709\u7684\u5b9a\u4e49\u3001\u6761\u4ef6\u3001\u516c\u5f0f\u3001\u4f8b\u5b50\u548c\u56fe\u8868\u89e3\u91ca\u3002",
     }[weave_dedup]
     return (
@@ -307,6 +325,7 @@ def _llm_weave_prompt(
         f"{language_rule}\n"
         f"{term_rule}\n"
         f"{depth_rule}\n"
+        f"{structure_rule}\n"
         f"\u53bb\u91cd\u7b56\u7565\uff1a{dedup_rule}\n"
         "\u786c\u6027\u8981\u6c42\uff1a\n"
         "1. \u4fdd\u7559 page_notes \u4e2d\u5df2\u7ecf\u5199\u51fa\u7684\u56fe\u7247 Markdown \u548c\u9690\u85cf\u6765\u6e90\u6807\u8bb0\u3002\n"
@@ -314,7 +333,9 @@ def _llm_weave_prompt(
         "3. \u5916\u5c42\u7ae0\u8282\u6807\u9898\u7531\u7cfb\u7edf\u7edf\u4e00\u6dfb\u52a0\uff1b\u6b63\u6587\u5c0f\u6807\u9898\u53ea\u80fd\u4f7f\u7528 ### \u6216\u66f4\u4f4e\u7ea7\u6807\u9898\uff0c\u4e0d\u8981\u8f93\u51fa\u5168\u6587 H1\uff0c\u4e5f\u4e0d\u8981\u7528\u201c\u8bfe\u7a0b\u7b14\u8bb0\u201d\u5f53\u6807\u9898\u3002\n"
         f"4. {source_rule}\n"
         "5. \u56fe\u7247 alt \u6587\u672c\u4e0d\u80fd\u4e3a\u7a7a\uff1b\u4e25\u7981\u8f93\u51fa\u201c\u597d\u7684\uff0c\u8fd9\u662f\u201d\u201c\u6839\u636e JSON\u201d\u201c\u7b14\u8bb0\u5df2\u4e25\u683c\u9075\u5faa\u201d\u201c\u65e0\u6cd5\u89c6\u89c9\u89e3\u6790\u201d\u7b49\u5143\u53d9\u8ff0\u3002\n"
-        "6. \u4e25\u7981\u4f7f\u7528\u201c\u8fd9\u4e00\u9875\u201d\u201c\u672c\u9875\u201d\u201c\u5e7b\u706f\u7247\u201d\u201c\u4e0a\u4e00\u9875\u201d\u201c\u4e0b\u4e00\u9875\u201d\u201c\u6b64\u9875\u201d\u7b49 PPT \u9875\u9762\u7ed3\u6784\u8868\u8ff0\uff1b\u76f4\u63a5\u8bb2\u77e5\u8bc6\uff0c\u81ea\u7136\u8fc7\u6e21\u3002\n\n"
+        "6. \u4e25\u7981\u4f7f\u7528\u201c\u8fd9\u4e00\u9875\u201d\u201c\u672c\u9875\u201d\u201c\u5e7b\u706f\u7247\u201d\u201c\u4e0a\u4e00\u9875\u201d\u201c\u4e0b\u4e00\u9875\u201d\u201c\u6b64\u9875\u201d\u7b49 PPT \u9875\u9762\u7ed3\u6784\u8868\u8ff0\uff1b\u76f4\u63a5\u8bb2\u77e5\u8bc6\uff0c\u81ea\u7136\u8fc7\u6e21\u3002\n"
+        "7. 丢弃 page_notes 自带的重复标题、重复自测和重复小结；渐进演示页要合成一次完整过程，而不是按步骤重新讲多遍。\n"
+        "8. 不得新增 page_notes、learning_items 或 deck_brief 未支持的具体事实、数字、代码行为、效率结论或使用建议。\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
@@ -363,6 +384,11 @@ def _llm_teaching_enrichment_prompt(
     term_rule = _term_policy_prompt_rule(note_language, term_policy)
     depth_rule = _note_depth_rule(note_depth)
     profile_rule = _note_profile_prompt_rule(note_profile)
+    structure_rule = (
+        lecture_note_structure_prompt_rule(note_language)
+        if note_context == "document"
+        else lecture_section_style_prompt_rule(note_language)
+    )
     return (
         "\u8bf7\u628a current_markdown \u4fee\u8ba2\u6210\u66f4\u50cf\u8001\u5e08\u91cd\u65b0\u8bb2\u4e00\u904d\u7684 Markdown \u8bb2\u4e49\u5c0f\u8282\u3002\n"
         "\u4f60\u4e0d\u662f\u5728\u603b\u7ed3\u5e7b\u706f\u7247\uff0c\u800c\u662f\u5728\u505a\u6559\u5b66\u91cd\u6784\uff1a\u5148\u7406\u89e3\u672c\u8282\u5171\u540c\u89e3\u51b3\u4ec0\u4e48\u95ee\u9898\uff0c\u518d\u7528\u5b66\u751f\u80fd\u8ddf\u4e0a\u7684\u987a\u5e8f\u8bb2\u6e05\u695a\u3002\n"
@@ -370,14 +396,15 @@ def _llm_teaching_enrichment_prompt(
         f"{language_rule}\n"
         f"{term_rule}\n"
         f"{depth_rule}\n"
-        "\u53ef\u4f7f\u7528\u7684\u8bb2\u4e49\u7ed3\u6784\uff1a### \u672c\u8282\u6838\u5fc3\u95ee\u9898\u3001### \u80cc\u666f\u4e0e\u76f4\u89c9\u3001### \u8be6\u7ec6\u8bb2\u89e3\u3001### \u56fe\u8868/\u516c\u5f0f\u89e3\u8bfb\u3001### \u6613\u9519\u70b9\u3001### \u672c\u8282\u5c0f\u7ed3\u3001### \u81ea\u6d4b\u95ee\u9898\u3002\u5982\u67d0\u9879\u786e\u5b9e\u4e0d\u9002\u7528\uff0c\u53ef\u5408\u5e76\u5230\u76f8\u90bb\u5c0f\u8282\u3002\n"
+        f"{structure_rule}\n"
         "\u786c\u6027\u8981\u6c42\uff1a\n"
         "1. \u4fdd\u7559 current_markdown \u4e2d\u5df2\u6709\u7684 Markdown \u56fe\u7247\u94fe\u63a5\u548c HTML source marker\uff1b\u65b0\u589e\u6216\u79fb\u52a8\u6bb5\u843d\u65f6\u4e5f\u8981\u4fdd\u7559\u5bf9\u5e94 source marker\u3002\n"
         "2. \u4e0d\u8981\u628a\u7ae0\u8282\u6539\u56de\u201c\u7b2c 1 \u9875\u8bb2 A\u3001\u7b2c 2 \u9875\u8bb2 B\u201d\u7684\u6e05\u5355\uff1bcoverage \u53ea\u662f\u6700\u540e\u8d28\u68c0\uff0c\u4e0d\u662f\u6b63\u6587\u6a21\u677f\u3002\n"
         "3. \u5bf9\u6838\u5fc3\u6982\u5ff5\uff0c\u89e3\u91ca\u5b83\u662f\u4ec0\u4e48\u3001\u4e3a\u4ec0\u4e48\u91cd\u8981\u3001\u5982\u4f55\u8fd0\u4f5c\u3001\u4e0e\u524d\u540e\u5185\u5bb9\u7684\u5173\u7cfb\u3002\n"
         "4. \u5bf9\u516c\u5f0f\u3001\u56fe\u8868\u3001\u6d41\u7a0b\u56fe\u3001\u622a\u56fe\uff0c\u4e0d\u8981\u53ea\u5199\u201c\u56fe\u4e2d\u5c55\u793a\u4e86\u201d\uff0c\u8981\u8bf4\u660e\u5b83\u652f\u6491\u4e86\u54ea\u4e2a\u6982\u5ff5\u6216\u63a8\u7406\u6b65\u9aa4\u3002\n"
-        "5. \u53ef\u4ee5\u8865\u5145\u5fc5\u8981\u7684\u901a\u7528\u80cc\u666f\u3001\u76f4\u89c9\u89e3\u91ca\u3001\u7b80\u77ed\u4f8b\u5b50\u6216\u7c7b\u6bd4\uff0c\u4f46\u4e0d\u5f97\u65b0\u589e\u8bfe\u4ef6\u6ca1\u6709\u4f9d\u636e\u7684\u5177\u4f53\u6570\u5b57\u3001\u5b9e\u9a8c\u7ed3\u679c\u3001\u4f5c\u8005\u89c2\u70b9\u6216\u7ed3\u8bba\u3002\u901a\u7528\u80cc\u666f\u8981\u7528\u201c\u4e3a\u4e86\u5e2e\u52a9\u7406\u89e3\u201d\u8fd9\u7c7b\u8bed\u6c14\u6807\u660e\u3002\n"
-        f"6. {source_rule}\n\n"
+        "5. 只允许补充不改变事实含义的直觉解释或最小类比；不得新增材料没有依据的具体数字、实验结果、代码行为、作者观点、效率结论或使用建议。\n"
+        "6. 把同一概念的重复段落合并为一次最清楚的解释。不同页面只是逐步演示同一过程时，保留最终完整过程和真正新增的步骤，不逐页复述。\n"
+        f"7. {source_rule}\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
@@ -408,5 +435,33 @@ def _llm_repair_prompt(
         f"{source_rule}\n"
         f"{language_rule}\n"
         f"{term_rule}\n"
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    )
+
+
+def _llm_structure_repair_prompt(
+    markdown: str,
+    assessment: dict[str, Any],
+    source_display: str,
+    note_language: str,
+    term_policy: str,
+) -> str:
+    payload = {
+        "task": "repair_human_note_structure",
+        "current_markdown": markdown,
+        "missing_structure_slots": assessment.get("missing_slots", []),
+        "empty_slot_headings": assessment.get("empty_slot_headings", {}),
+    }
+    return (
+        "请把 current_markdown 修订为自然、完整、像学生认真整理过的电子讲义。只输出修订后的完整 Markdown。\n"
+        f"{lecture_note_structure_prompt_rule(note_language)}\n"
+        "优先重组和复用已有内容，不要用同一句话填充多个栏目。必须保留全部 Markdown 图片链接和 HTML source marker。\n"
+        "不要新增课件没有依据的具体数字、实验结果、人物观点或结论；允许使用不引入新事实的最小理解例。\n"
+        "不要出现“第几页”“本页”“幻灯片展示”“根据 JSON”“以下是生成的笔记”等机械或元叙述。\n"
+        "这是完整文档修订：必须保留且只保留一个现有 H1；主题章节使用 H2，章节内部按内容需要使用 H3。\n"
+        "学习目标、本讲总结和章节自测在全文各出现一次，不能复制到每个主题章节。\n"
+        f"{_source_prompt_rule(source_display)}\n"
+        f"{_language_prompt_rule(note_language)}\n"
+        f"{_term_policy_prompt_rule(note_language, term_policy)}\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )

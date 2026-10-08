@@ -7,6 +7,8 @@ from slidenote.llm_cache import utc_now_iso
 from slidenote.models import Deck
 from slidenote.utils import round_score
 
+from .structure import assess_lecture_note_structure, structure_missing_labels
+
 
 def build_note_quality_report(
     deck: Deck,
@@ -34,6 +36,10 @@ def build_note_quality_report(
     mechanical_page_listing_score = _mechanical_page_listing_score(notes_markdown)
     self_test_score = _keyword_score(notes_markdown, ["自测", "检查自己", "思考题", "quiz", "self-test"], base=0.0)
     pitfall_score = _keyword_score(notes_markdown, ["易错", "误解", "注意", "陷阱", "常见错误", "pitfall", "misconception"], base=0.0)
+    structure_contract = assess_lecture_note_structure(notes_markdown)
+    structure_contract["enforced"] = note_profile in {"lecture-notes", "study-guide"}
+    structure_contract_pass = structure_contract["passed"] if structure_contract["enforced"] else None
+    mechanical_structure_pass = structure_contract.get("mechanical_repetition_pass", True)
     hallucination_risk = _hallucination_risk(
         paragraphs=paragraphs,
         source_markers=source_markers,
@@ -49,6 +55,8 @@ def build_note_quality_report(
         self_test_score=self_test_score,
         pitfall_score=pitfall_score,
         image_total=image_total,
+        missing_structure_labels=structure_missing_labels(structure_contract) if structure_contract["enforced"] else [],
+        mechanical_structure_pass=mechanical_structure_pass,
     )
     return {
         "schema_version": 1,
@@ -68,6 +76,11 @@ def build_note_quality_report(
         "mechanical_page_listing_score": mechanical_page_listing_score,
         "self_test_score": self_test_score,
         "pitfall_score": pitfall_score,
+        "human_note_structure_score": structure_contract["score"],
+        "structure_contract_pass": structure_contract_pass,
+        "mechanical_structure_pass": mechanical_structure_pass,
+        "repetitive_subheading_counts": structure_contract.get("repetitive_subheading_counts", {}),
+        "structure_contract": structure_contract,
         # Question quality belongs to `study-pack`; build keeps the documented null keys.
         "question_quality": None,
         "question_quality_score": None,
@@ -83,6 +96,12 @@ def build_note_quality_report(
             "required_visible_missing": (coverage_report.get("required_visible_coverage") or {}).get("missing") if coverage_report else None,
             "question_quality_score": None,
             "suggested_repairs": len(suggested_repairs),
+            "structure_contract_pass": structure_contract_pass,
+            "missing_structure_slots": structure_contract["missing_slots"] if structure_contract["enforced"] else [],
+            "missing_recommended_structure_slots": structure_contract.get("missing_recommended_slots", [])
+            if structure_contract["enforced"]
+            else [],
+            "mechanical_structure_pass": mechanical_structure_pass,
         },
     }
 
@@ -174,6 +193,8 @@ def _suggest_repairs(
     self_test_score: float,
     pitfall_score: float,
     image_total: int,
+    missing_structure_labels: list[str],
+    mechanical_structure_pass: bool,
 ) -> list[str]:
     suggestions: list[str] = []
     if explanation_depth_score < 0.55:
@@ -188,4 +209,8 @@ def _suggest_repairs(
         suggestions.append("增加本节自测问题，帮助学生检查是否真正理解。")
     if pitfall_score < 0.25:
         suggestions.append("补充易错点或常见误解。")
+    if missing_structure_labels:
+        suggestions.append("补齐人工讲义结构栏目：" + "、".join(missing_structure_labels) + "。")
+    if not mechanical_structure_pass:
+        suggestions.append("合并重复的学习目标、小结和自测，并把逐页标题改成按真实课程主题组织的章节。")
     return suggestions

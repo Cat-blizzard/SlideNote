@@ -68,6 +68,31 @@ content_guard.json
 
 未来可以增加轻量 LLM 审阅 pass，但不应该让同一个写作模型无约束地自己审自己。
 
+### 三层质量信号及其边界（重要）
+
+SlideNote 有三层互相**不可替代**的质量信号，不要把任何一层当作最终结论：
+
+| 层 | 产物 | 能回答 | 不能回答 |
+| --- | --- | --- | --- |
+| 结构性 coverage | `coverage.json` / `coverage.md` | 关键元素有没有进入可见正文、来源标记是否成立、哪些页有漏项 | 讲得对不对、讲得好不好、有没有编造 |
+| 启发式质量分数 | `quality_report.json` | 笔记是否出现明显回归（逐页复述、缺自测/易错点栏目、来源密度骤降） | 段落之间是否真有逻辑、例子是否有帮助、内容是否正确 |
+| 人工内容复核 | `coverage.md` + 原课件 + `source_map.json` | 事实是否正确、遗漏是否关键、图文是否对应 | ——（这是最终结论的唯一来源） |
+
+`hallucination_risk` 只是复核优先级提示：`high` 表示来源标记密度低且/或有必讲漏项，应优先抽查；它不做事实核查，`low` 也不代表内容正确。
+
+GUI 的 Quality 标签页按上述边界展示数据，并把 coverage 缺项、figure 缺失和启发式风险合并成一个"建议人工复核"清单——清单每行都标注信号来源和查看位置，但不合并成任何总分。
+
+### 讲义结构契约（structure contract）
+
+对 `lecture-notes` / `study-guide` profile，`quality_report.json` 额外包含全文结构契约评估（`structure_contract` 字段）：
+
+- 必备栏目：`orientation`（本讲目标）、`topic_sections`（按真实课程主题命名的 H2 章节）、`summary`（本讲总结）、`self_test`（章节自测），全文各出现一次；
+- 推荐栏目：`example_application`（有材料依据的例子/应用）、`pitfalls`（真正必要的易错点）；
+- 机械复述检查（`mechanical_repetition_pass`）：正文不应出现"第 N 页"/`Slide N` 式 H2-H4 标题，不应重复出现同名的目标/总结/自测栏目，也不应在多章重复同一组通用 H3 模板；
+- `human_note_structure_score` 是上述栏目的覆盖比例（0-1），只用于跨运行比较。
+
+生成管线在 lecture-weave 收尾时由确定性代码补齐缺失的文档框架（`document_frame`，从 deck brief 提取，不新增课件外事实）；只有当补齐后契约仍不通过（例如残留逐页标题）时，才会触发一次全文结构修订。修订稿必须让契约通过、正文至少保留 80%、精确保留已有来源标记和图片目标、coverage 不回退且输出未截断，才会被采纳；否则保留原稿并在 `llm_usage.json` 的 `repair_contexts` 记录拒绝原因。
+
 ## 教师讲义模式
 
 `lecture` preset 的目标是“教学重构”，不是简单总结。

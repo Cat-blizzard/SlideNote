@@ -12,7 +12,9 @@ from slidenote.models import Deck
 from .contexts import NoteContext
 from .postprocess import _postprocess_llm_markdown
 from .llm_calls import _generate_cached_llm_text
-from .prompt_templates import _llm_repair_prompt
+from .prompt_templates import _llm_repair_prompt, _llm_structure_repair_prompt
+from .structure import assess_lecture_note_structure
+from .versions import STRUCTURE_REPAIR_PROMPT_VERSION
 
 
 _IMAGE_LINK = re.compile(r"!\[[^\]]*]\(([^)]+)\)")
@@ -40,6 +42,15 @@ def _image_targets(markdown: str) -> set[str]:
         if match:
             targets.add(match.group(1) or match.group(2))
     return targets
+
+
+def _source_marker_payloads(markdown: str) -> set[str]:
+    """Return the exact source-marker payloads carried by a note draft."""
+    return {
+        match.strip()
+        for match in re.findall(r"<!--\s*slidenote-source:\s*([^>]+?)\s*-->", markdown)
+        if match.strip()
+    }
 
 
 def _body_chars(markdown: str) -> int:
@@ -183,3 +194,132 @@ def _fits_output_budget(markdown: str, max_output_tokens: int | None) -> bool:
         return True
     estimated_tokens = len(markdown) * REPAIR_ESTIMATED_TOKENS_PER_CHAR
     return estimated_tokens <= max_output_tokens * REPAIR_OUTPUT_BUDGET_HEADROOM
+
+
+def _repair_note_structure_once(
+    deck: Deck,
+    context: NoteContext,
+    markdown: str,
+    output_root: Path,
+    cache: LLMCache,
+    options: "NoteOptions",
+) -> tuple[str, dict[str, Any] | None]:
+    """Rewrite the whole document when the lecture structure contract still fails.
+
+    Runs only for lecture note profiles and only when the deterministic document
+    frame could not make the contract pass (page-listing headings or repeated
+    global sections). The candidate replaces the draft only when the structure
+    contract passes, the body is substantially preserved, and no source,
+    coverage or image target is lost.
+    """
+    if options.note_profile not in {"lecture-notes", "study-guide"}:
+        return markdown, None
+    before = assess_lecture_note_structure(markdown)
+    if before["passed"]:
+        return markdown, None
+
+    record: dict[str, Any] = {
+        "stage": "structure_repair",
+        "context_id": context.id,
+        "slide_ids": [page.slide_id for page in context.pages],
+        "before": before,
+        "accepted": False,
+        "rejection_reasons": [],
+        "llm": None,
+    }
+    if not _fits_output_budget(markdown, options.max_output_tokens):
+        record["rejection_reasons"] = ["input_too_long_for_output_budget"]
+        record["input_chars"] = len(markdown)
+        return markdown, record
+
+    prompt = _llm_structure_repair_prompt(
+        markdown=markdown,
+        assessment=before,
+        source_display=options.source_display,
+        note_language=options.note_language,
+        term_policy=options.term_policy,
+    )
+    try:
+        repaired, llm_record = _generate_cached_llm_text(
+            context=NoteContext(
+                id=f"repair_structure_{context.id}",
+                kind=f"repair_structure_{context.kind}",
+                title=context.title,
+                pages=context.pages,
+            ),
+            output_root=output_root,
+            cache=cache,
+            cache_mode=options.cache_mode,
+            provider=options.provider,
+            model=options.model,
+            api_key=options.api_key,
+            base_url=options.base_url,
+            max_output_tokens=options.max_output_tokens,
+            temperature=options.temperature,
+            user_prompt=prompt,
+            prompt_version=STRUCTURE_REPAIR_PROMPT_VERSION,
+            generation_stage="structure_repair",
+            request_options={
+                "source_display": options.source_display,
+                "note_language": options.note_language,
+                "term_policy": options.term_policy,
+                "missing_slots": before["missing_slots"],
+            },
+            force_refresh=False,
+        )
+    except Exception as exc:
+        # This optional repair must not discard an already generated draft.
+        record["rejection_reasons"] = ["generation_error"]
+        record["error_type"] = type(exc).__name__
+        return markdown, record
+
+    repaired = _postprocess_llm_markdown(repaired, source_display=options.source_display)
+    after = assess_lecture_note_structure(repaired)
+    before_coverage = analyze_coverage(deck, markdown, content_guard=options.content_guard)
+    after_coverage = analyze_coverage(deck, repaired, content_guard=options.content_guard)
+    lost_trace = _covered_ids(before_coverage, "trace_covered") - _covered_ids(after_coverage, "trace_covered")
+    lost_visible = _covered_ids(before_coverage, "visible_covered") - _covered_ids(after_coverage, "visible_covered")
+    lost_sources = _source_marker_payloads(markdown) - _source_marker_payloads(repaired)
+    lost_images = _image_targets(markdown) - _image_targets(repaired)
+    original_chars = _body_chars(markdown)
+    candidate_chars = _body_chars(repaired)
+    reasons: list[str] = []
+    if not candidate_chars:
+        reasons.append("empty_repair")
+    if not after["passed"]:
+        reasons.append("structure_contract_still_failing")
+    if after["score"] < before["score"]:
+        reasons.append("structure_score_regression")
+    if lost_trace or lost_visible:
+        reasons.append("coverage_regression")
+    if lost_sources:
+        reasons.append("missing_source_markers")
+    if lost_images:
+        reasons.append("missing_images")
+    if candidate_chars < original_chars * MIN_BODY_RETENTION:
+        reasons.append("body_truncated")
+    response_usage = llm_record.get("provider_usage") or llm_record.get("cached_entry_usage") or {}
+    finish_reason = str(response_usage.get("finish_reason") or "").lower()
+    if finish_reason in _INCOMPLETE_FINISH_REASONS:
+        reasons.append("incomplete_generation")
+
+    record["after"] = after
+    record["llm"] = llm_record
+    record["rejection_reasons"] = reasons
+    record["validation"] = {
+        "after_score": after["score"],
+        "before_score": before["score"],
+        "after_contract_passed": after["passed"],
+        "lost_trace_items": sorted(lost_trace),
+        "lost_visible_items": sorted(lost_visible),
+        "lost_source_markers": sorted(lost_sources),
+        "lost_image_targets": sorted(lost_images),
+        "original_body_chars": original_chars,
+        "candidate_body_chars": candidate_chars,
+        "finish_reason": finish_reason or None,
+    }
+    if reasons:
+        return markdown, record
+
+    record["accepted"] = True
+    return repaired, record

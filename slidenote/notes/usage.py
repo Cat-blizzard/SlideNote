@@ -35,6 +35,7 @@ def _build_usage_report(
         "page_note_calls": sum(1 for context in (page_contexts or []) if context.get("llm_call")),
         "weave_calls": sum(1 for context in (weave_contexts or []) if context.get("llm_call")),
         "teaching_enrichment_calls": sum(1 for context in (teaching_enrichment_contexts or []) if context.get("llm_call")),
+        "repair_calls": sum(1 for context in (repair_contexts or []) if context.get("llm_call")),
         "local_cache_hits": sum(1 for context in contexts if context.get("cache_status") == "local_hit"),
         "local_cache_misses": sum(1 for context in contexts if context.get("cache_status") == "miss"),
         "local_cache_refreshes": sum(1 for context in contexts if context.get("cache_status") == "refresh"),

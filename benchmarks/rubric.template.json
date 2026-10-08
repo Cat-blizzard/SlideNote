@@ -1,0 +1,90 @@
+{
+  "$comment": "SlideNote 人工评分 rubric 模板（1-5 分）。复制本文件到 benchmarks/runs/<run>/rubric.<case_id>.json 后打分；两位评审分别打分，不要共享分数。分数只用于横向比较，不是产品指标。",
+  "schema_version": 1,
+  "case_id": "<case_id>",
+  "reviewer": "<姓名/代号>",
+  "compared_against": "<notes.md 路径或 run 目录>",
+  "scale": {
+    "1": "完全不符合",
+    "2": "大部分不符合",
+    "3": "一半符合",
+    "4": "大部分符合",
+    "5": "完全符合"
+  },
+  "dimensions": [
+    {
+      "id": "structure",
+      "name": "组织结构",
+      "question": "正文是否按知识逻辑组织成章节，而不是逐页复述课件？",
+      "anchor_1": "整篇是'第 N 页讲了什么'的列表。",
+      "anchor_5": "章节按概念与推理链命名并展开，页码只出现在来源标记里。"
+    },
+    {
+      "id": "coherence",
+      "name": "连贯性",
+      "question": "段落之间是否有真实的逻辑衔接，能被连续阅读？",
+      "anchor_1": "段落之间没有关联，像独立卡片堆放。",
+      "anchor_5": "前后概念按依赖顺序展开，过渡自然。"
+    },
+    {
+      "id": "explanation_depth",
+      "name": "解释深度",
+      "question": "核心概念是否讲清了是什么、为什么重要、如何运作？",
+      "anchor_1": "只罗列术语和原句。",
+      "anchor_5": "核心概念均有机制、原因与前后关系解释，深度接近讲义。"
+    },
+    {
+      "id": "information_selection",
+      "name": "信息取舍",
+      "question": "是否区分了核心知识与装饰性/结构性内容，没有为了凑覆盖而堆砌？",
+      "anchor_1": "目录、页眉、重复 bullet 全部照搬。",
+      "anchor_5": "只保留有学习价值的增量，结构页仅保留来源标记。"
+    },
+    {
+      "id": "figure_relation",
+      "name": "图文关系",
+      "question": "图表是否出现在相关解释附近，并且说明补充了图表支撑的概念？",
+      "anchor_1": "图片全部堆在页尾或章节末，说明只有'图中展示了'。",
+      "anchor_5": "每张图靠近使用它的段落，说明指出图表支撑的推理或结论。"
+    },
+    {
+      "id": "redundancy",
+      "name": "重复度",
+      "question": "同一概念是否只解释一次，没有把渐进演示复述成多遍？",
+      "anchor_1": "同一定义出现多次，练习页被重复讲解。",
+      "anchor_5": "重复内容合并为一次最清楚的解释。"
+    },
+    {
+      "id": "note_likeness",
+      "name": "电子笔记观感",
+      "question": "整体是否像学生认真整理的电子笔记（层级、密度、标题习惯）？",
+      "anchor_1": "像 PPT 转录或机器输出。",
+      "anchor_5": "像可直接留档复习的讲义笔记。"
+    },
+    {
+      "id": "source_correctness",
+      "name": "来源正确性",
+      "question": "抽查 10 处来源标记，是否指向正确的页面与元素？",
+      "anchor_1": "多数标记错位或缺失。",
+      "anchor_5": "抽查全部正确。"
+    }
+  ],
+  "scores": {
+    "structure": null,
+    "coherence": null,
+    "explanation_depth": null,
+    "information_selection": null,
+    "figure_relation": null,
+    "redundancy": null,
+    "note_likeness": null,
+    "source_correctness": null
+  },
+  "failure_examples": [
+    {
+      "location": "<章节/段落>",
+      "evidence": "<摘录原文>",
+      "problem": "<问题描述>",
+      "suggestion": "<期望的写法>"
+    }
+  ]
+}
