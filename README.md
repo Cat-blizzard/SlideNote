@@ -162,3 +162,7 @@ The SlideNote name, logo, and other brand assets are not licensed for standalone
 - SlideNote's future retrieval, source tracing, and post-generation QA direction is informed by systems such as [RAGFlow](https://github.com/infiniflow/ragflow). These projects are references and inspirations, not bundled dependencies unless explicitly listed elsewhere.
 - Thanks to [LEO690201](https://github.com/LEO690201) for contributing bug fixes that improved SlideNote's reliability.
 - SlideNote's development has also benefited from code analysis, implementation, and debugging assistance provided by Codex, Claude Code, and DeepSeek Harness. All AI-assisted changes remain subject to maintainer review and project testing.
+
+## Awards
+
+SlideNote received the **Excellence Award (优秀奖)** in the University of Science and Technology of China's 2026 “一〇七” Cup Computing Power and AI Agent Development Competition (算力与智能体开发大赛). The award certificate was issued by the university's Academic Affairs Office and Network Information Center in September 2026.
