@@ -42,6 +42,7 @@
 - [Optional GUI](#optional-gui)
 - [Textbook Chunks](#textbook-chunks)
 - [Origin](#origin)
+- [Retrospective](#retrospective)
 - [Setup and Docs](#setup-and-docs)
 - [License](#license)
 - [Acknowledgements](#acknowledgements)
@@ -133,6 +134,28 @@ For a digital PDF with selectable text, try `--ocr off`. The `auto` setting uses
 I learn more comfortably by reading and revisiting material at my own pace. Lecture slides, however, are often prompts for a live explanation: the logic is scattered, and important details may be in figures, tables, formulas, or what the teacher says. Rewriting them into notes after class takes time and can miss details.
 
 SlideNote grew from the idea of turning slides into structured study notes that preserve images and links to their source pages, with coverage reports that point to material worth checking. The aim is to make courseware easier to read and review while keeping the original material available for verification.
+
+## Retrospective
+
+*Written in November 2026*
+
+In April 2026, on a whim, I decided to build a tool that turned slides into notes. I did not enjoy taking notes (or, honestly, attending lectures), and slides always felt too sparse to read smoothly on their own. So I designed a workflow and had Codex write the code—back in the GPT-5.4 days—to turn courseware into denser, more readable notes.
+
+The plan sounded good: build the project and share it on WeChat Moments to spread the word. When it became too much for one person, I brought in jhz and hgl. The three of us spent two months on it, but the notes produced by our rigid workflow still felt stiff and painfully unreadable. Most of the project's stars came from supportive friends. Eventually, I set it aside.
+
+Then GPT-6 Astra arrived. Around that time, I heard the idea that “a sufficiently capable model will swallow the harness.” By harness, I mean the rules and workflows built around a model: as the model becomes more capable, it may take over steps that previously needed explicit orchestration. At first, I understood this only vaguely.
+
+That changed in early October. On a whim, I gave Astra a short, casual prompt for the task I had left unfinished:
+
+> Turn the lecture slides in the current folder into LaTeX notes.
+
+After a while, it produced a set of clear, beautifully formatted notes. The result was far beyond what I had managed through repeated workflow design. That was when “swallowing the harness” became something I had experienced firsthand.
+
+> **机关算尽，不如 Astra 轻描一笔。**
+>
+> All my elaborate planning fell short of Astra's effortless stroke.
+
+A pile of rules I had written by hand had been overtaken by greater intelligence. So where does intelligence reach its limits? What is left for us to orchestrate?
 
 ## Setup and Docs
 
